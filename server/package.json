@@ -1,0 +1,24 @@
+{
+  "name": "shloop-server",
+  "author": "Skeli",
+  "main": "server.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "mocha",
+    "test-all": "mocha tests/**/*.test.js",
+    "latest-pkg": "yarn upgrade --latest --network-timeout 600000"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "status-code-enum": "^1.0.0"
+  },
+  "devDependencies": {
+    "chai": "^6.2.2",
+    "mocha": "^11.8.0",
+    "supertest": "^7.2.2"
+  }
+}
