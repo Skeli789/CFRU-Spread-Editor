@@ -55,7 +55,6 @@ const REPOSITORY_FILES =
     cfru:
     {
         ...CFRU_SOURCE_FILES,
-        "include/new/frontier.h": "struct BattleTowerSpread {};\n",
         "src/Tables/battle_moves.c": BATTLE_MOVES,
     },
     dpe: DPE_FILES,

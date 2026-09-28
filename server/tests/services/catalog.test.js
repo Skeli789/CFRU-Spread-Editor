@@ -12,7 +12,7 @@ const path = require("path");
 const { BATTLE_MOVES, CLOUD_FILES, DPE_FILES, createPokeApiFetch } = require("../helpers/catalog-fixtures");
 const { CFRU_SOURCE_FILES } = require("../helpers/spread-fixtures");
 const { getBallIcon, getItemIcon, getSpeciesSprites, getTypeIcon } = require("../../services/assets");
-const { parseBattleMoves, parseCompatibilityFile, parseEggMoves, parseEvolutionTable, parseLevelUpLearnsets, parseTeachableTables } = require("../../services/data-parser");
+const { parseBattleMoves, parseCompatibilityFile, parseEggMoves, parseEvolutionTable, parseLevelUpLearnsets, parseTeachableTables, parseTeamTypes } = require("../../services/data-parser");
 const { buildBattleForms, buildLearnsets, parseDpeSources } = require("../../services/learnsets");
 const { createPokeApiIndex } = require("../../services/pokeapi");
 const { evaluatePreprocessor } = require("../../services/preprocessor");
@@ -153,6 +153,30 @@ describe("Game data parser", () =>
         expect(evolutions.SPECIES_CHARIZARD.map((evolution) => evolution.target)).to.deep.equal(["SPECIES_CHARIZARD_MEGA_X", "SPECIES_CHARIZARD_MEGA_Y", "SPECIES_CHARIZARD_GIGA"]);
         expect(evolutions.SPECIES_BULBASAUR[0]).to.deep.equal({ method: "EVO_LEVEL", parameter: 16, target: "SPECIES_IVYSAUR", variant: 0 });
         expect(diagnostics.map((diagnostic) => diagnostic.code)).to.deep.equal(["EVOLUTION_UNREADABLE"]);
+    });
+
+    it("should read the doubles team types from the compiled branch", () =>
+    {
+        const header = CFRU_SOURCE_FILES["include/new/frontier.h"];
+        expect(parseTeamTypes(header, CFRU_MACROS)).to.deep.equal(
+        {
+            teamTypes:
+            [
+                { name: "DOUBLES_ANY_TEAM", value: 0 },
+                { name: "DOUBLES_SUN_TEAM", value: 1 },
+                { name: "DOUBLES_TRICK_ROOM_TEAM", value: 7 },
+                { name: "DOUBLES_TAILWIND_TEAM", value: 8 },
+            ],
+            diagnostics: [],
+        });
+        expect(parseTeamTypes(header, new Map()).teamTypes.map((teamType) => teamType.name)).to.include("DOUBLES_VANILLA_TEAM");
+    });
+
+    it("should report missing doubles team types", () =>
+    {
+        const { teamTypes, diagnostics } = parseTeamTypes("enum { CURR_STREAK };\n", CFRU_MACROS);
+        expect(teamTypes).to.equal(null);
+        expect(diagnostics[0].code).to.equal("TEAM_TYPES_NOT_FOUND");
     });
 });
 

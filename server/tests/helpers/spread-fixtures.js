@@ -255,9 +255,38 @@ const FRONTIER_TRAINERS =
     "",
 ].join(CRLF);
 
+// Team types with a configuration-dependent member, an explicit value and a macro that does not parse
+const FRONTIER_HEADER =
+[
+    "#pragma once",
+    "",
+    "u32 GetAIFlagsInBattleFrontier(unusedArg u8 bank);",
+    "",
+    "enum",
+    "{",
+    "\tCURR_STREAK,",
+    "\tMAX_STREAK,",
+    "};",
+    "",
+    "enum",
+    "{",
+    "\tDOUBLES_ANY_TEAM,",
+    "\tDOUBLES_SUN_TEAM,",
+    "#ifndef UNBOUND",
+    "\tDOUBLES_VANILLA_TEAM,",
+    "#endif",
+    "\tDOUBLES_TRICK_ROOM_TEAM = 7,",
+    "\tDOUBLES_TAILWIND_TEAM,",
+    "};",
+    "",
+    "struct BattleTowerSpread {};",
+    "",
+].join(CRLF);
+
 const CFRU_SOURCE_FILES =
 {
     "src/config.h": CONFIG_UNBOUND,
+    "include/new/frontier.h": FRONTIER_HEADER,
     "src/Tables/battle_frontier_trainers.c": FRONTIER_TRAINERS,
     "src/Tables/battle_tower_spreads.h": BATTLE_TOWER_SPREADS,
     "src/Tables/frontier_special_trainer_spreads.h": SPECIAL_TRAINER_SPREADS,

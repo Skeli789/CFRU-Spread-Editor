@@ -11,11 +11,13 @@ const { StatusCode } = require("status-code-enum");
 
 const { ApiError } = require("../middleware/errors");
 const { readGameData } = require("./catalog");
+const { parseTeamTypes } = require("./data-parser");
 const { CACHE_DIRECTORY, createParseCache, getDataDirectory, getParserVersion, hashMacros } = require("./parse-cache");
 const { evaluatePreprocessor } = require("./preprocessor");
 const
 {
-    CFRU_CONFIG_FILE, CFRU_SPREAD_FILES, CFRU_TRAINERS_FILE, REPOSITORY_CFRU, getRootKey, readOwnedBuffer, resolveOwnedFile,
+    CFRU_CONFIG_FILE, CFRU_FRONTIER_HEADER, CFRU_SPREAD_FILES, CFRU_TRAINERS_FILE, REPOSITORY_CFRU, getRootKey, readOwnedBuffer,
+    resolveOwnedFile,
 } = require("./repositories");
 const { ROLE_LITTLE_CUP, SPREAD_FIELDS, isAutomaticSize, parseSpreadFile, parseTrainerTables } = require("./spread-parser");
 const { applyEdits, buildSetEdits, createSpreadFields, isSameValue, mergeSpreadFields, toAbilityName } = require("./spread-writer");
@@ -28,10 +30,14 @@ const SPREAD_CATEGORIES =
     [MULTI_PARTNER_FILE]: "multiPartner",
     [RAID_PARTNER_FILE]: "raidPartner",
 };
-const INPUT_FILES = [CFRU_CONFIG_FILE, CFRU_TRAINERS_FILE, ...CFRU_SPREAD_FILES];
+const INPUT_FILES = [CFRU_CONFIG_FILE, CFRU_FRONTIER_HEADER, CFRU_TRAINERS_FILE, ...CFRU_SPREAD_FILES];
 const LITTLE_CUP_POOLS = new Set(["gLittleCupSpreads"]);
 const ABILITY_DATA_KEYS = ["hiddenAbility", "ability1", "ability2"];
 const BASE_STATS_KEY = "baseStats";
+const TEAM_TYPE_FIELD = "specificTeamType";
+
+// An omitted specificTeamType is 0, the first team type
+const TEAM_TYPE_OMITTED = 0;
 
 const BYTE_ORDER_MARK = "\uFEFF";
 const LINE_ENDING_CRLF = "\r\n";
@@ -40,6 +46,7 @@ const HASH_ALGORITHM = "sha256";
 
 const CACHE_SPREAD_FILE = "spread-file";
 const CACHE_TRAINER_TABLES = "trainer-tables";
+const CACHE_TEAM_TYPES = "team-types";
 const JOURNAL_DIRECTORY = "journal";
 const BACKUP_DIRECTORY = "backups";
 const JOURNAL_EXTENSION = ".json";
@@ -300,6 +307,7 @@ async function buildState(workspace, inputs, cache)
         sets: new Map(),
         entries: new Map(),
         trainers: [],
+        teamTypes: null,
         diagnostics: withFile(configuration.diagnostics, CFRU_CONFIG_FILE),
         nextId: 0,
         stale: false,
@@ -328,6 +336,10 @@ async function buildState(workspace, inputs, cache)
         state.trainers.push(...trainers.map((trainer) => ({ ...trainer, id: `${file}#${trainer.id}`, file })));
         state.diagnostics.push(...withFile(diagnostics, file));
     }
+
+    const { teamTypes, diagnostics: teamTypeDiagnostics } = await parse(CACHE_TEAM_TYPES, CFRU_FRONTIER_HEADER, () => parseTeamTypes(decoded.get(CFRU_FRONTIER_HEADER).text, macros));
+    state.teamTypes = teamTypes;
+    state.diagnostics.push(...withFile(teamTypeDiagnostics, CFRU_FRONTIER_HEADER));
 
     describeSets(state);
     return state;
@@ -395,6 +407,7 @@ function toPayload(state)
         sets,
         entries,
         trainers: state.trainers.map(({ id, file, table, kind, name, line, links }) => ({ id, file, table, kind, name, line, links: links.map(({ role, setId, ranks }) => ({ role, setId, ranks: ranks ?? null })) })),
+        teamTypes: state.teamTypes ?? [],
     };
 }
 
@@ -420,6 +433,20 @@ function getAbilityName(baseStats, fields)
 {
     const species = baseStats != null && typeof fields.species === "string" && Object.hasOwn(baseStats, fields.species) ? baseStats[fields.species] : null;
     return toAbilityName(species?.[ABILITY_DATA_KEYS[fields.ability]]);
+}
+
+/**
+ * Checks that a new or changed doubles team type is one frontier.h defines, so the source still compiles.
+ *
+ * @param {object} state The spread state.
+ * @param {string|number} value The specificTeamType value.
+ */
+function checkTeamType(state, value)
+{
+    if (value === TEAM_TYPE_OMITTED || state.teamTypes?.some((teamType) => teamType.name === value))
+        return;
+
+    invalid(`${value} is not a doubles team type in ${CFRU_FRONTIER_HEADER}.`);
 }
 
 /**
@@ -468,6 +495,8 @@ function buildPlans(state, operations, baseStats)
 
                 const plan = getPlan(set);
                 const fields = mergeSpreadFields(operation.fields, plan.updates.get(entry.model)?.fields ?? entry.model.fields);
+                if (fields[TEAM_TYPE_FIELD] !== entry.model.fields[TEAM_TYPE_FIELD])
+                    checkTeamType(state, fields[TEAM_TYPE_FIELD]);
                 plan.updates.set(entry.model, { fields, abilityName: getAbilityName(baseStats, fields) });
                 break;
             }
@@ -492,6 +521,7 @@ function buildPlans(state, operations, baseStats)
                 }
 
                 const fields = createSpreadFields(operation.fields);
+                checkTeamType(state, fields[TEAM_TYPE_FIELD]);
                 getPlan(set).additions.push({ key: operation.tempId, after, fields, abilityName: getAbilityName(baseStats, fields) });
                 break;
             }

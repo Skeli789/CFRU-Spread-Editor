@@ -23,7 +23,7 @@ const SPREAD_FILES = [BATTLE_TOWER, SPECIAL_TRAINERS, MULTI_SPREADS, RAID_PARTNE
 const GAME_WITH_ABILITIES = "zeta";
 const RETRY_DELAY_MS = 1;
 const FIXTURE_TIMEOUT_MS = 20000;
-const PARSED_FILE_COUNT = 6;
+const PARSED_FILE_COUNT = 7;
 
 const NEW_SPREAD =
 {
@@ -174,6 +174,13 @@ describe("Spread Saving", function ()
             expect(findSet(spreads, "gFrontierSpreads").canInsert).to.equal(true);
             expect(findEntry(spreads, "SPECIES_GOLEM").editable).to.equal(false);
         });
+
+        it("should list the doubles team types frontier.h compiles", async () =>
+        {
+            const { spreads } = await load();
+            expect(spreads.teamTypes.map((teamType) => teamType.name)).to.deep.equal(["DOUBLES_ANY_TEAM", "DOUBLES_SUN_TEAM", "DOUBLES_TRICK_ROOM_TEAM", "DOUBLES_TAILWIND_TEAM"]);
+            expect(findEntry(spreads, "SPECIES_CHARIZARD").fields.specificTeamType).to.equal("DOUBLES_SUN_TEAM");
+        });
     });
 
     describe("Parse cache", () =>
@@ -289,6 +296,25 @@ describe("Spread Saving", function ()
             await store.saveSpreads(workspace, { revision: spreads.revision, operations: [{ type: "update", entryId: venusaur.id, fields: { atkEv: 4 } }] });
             expect(changedLines(before, readText(BATTLE_TOWER))).to.deep.equal({ removed: [], added: ["\t\t.atkEv = 4,\r"] });
             expect(readText(BATTLE_TOWER)).to.include("\t\t.hpEv = 252,\r\n\t\t.atkEv = 4,\r\n\t\t.defEv = 252,\r\n");
+        });
+
+        it("should change and add doubles team types", async () =>
+        {
+            const before = readText(BATTLE_TOWER);
+            const { store, workspace, spreads } = await load();
+            const charizard = findEntry(spreads, "SPECIES_CHARIZARD");
+            const venusaur = findEntry(spreads, "SPECIES_VENUSAUR");
+
+            const result = await store.saveSpreads(workspace, { revision: spreads.revision, operations:
+            [
+                { type: "update", entryId: charizard.id, fields: { specificTeamType: "DOUBLES_TRICK_ROOM_TEAM" } },
+                { type: "update", entryId: venusaur.id, fields: { specificTeamType: "DOUBLES_SUN_TEAM" } },
+            ] });
+            const after = readText(BATTLE_TOWER);
+            expect(after).to.include("\t\t.modifyMovesDoubles = TRUE,\r\n\t\t.specificTeamType = DOUBLES_SUN_TEAM,\r\n\t},\r\n\t//Gen 8");
+            expect(after).to.include(".gigantamax = TRUE,\r\n\t\t.specificTeamType = DOUBLES_TRICK_ROOM_TEAM,\r\n");
+            expect(after.split("\n")).to.have.length(before.split("\n").length + 1);
+            expect(findEntry(result.spreads, "SPECIES_VENUSAUR").fields.specificTeamType).to.equal("DOUBLES_SUN_TEAM");
         });
 
         it("should keep Unicode comments and LF line endings", async () =>
@@ -480,6 +506,8 @@ describe("Spread Saving", function ()
             await expectRejected(save([{ type: "update", entryId: venusaur.id, fields: { item: "MOVE_TACKLE" } }]), 422, "INVALID_OPERATION");
             await expectRejected(save([{ type: "update", entryId: venusaur.id, fields: { futureField: 1 } }]), 422, "INVALID_OPERATION");
             await expectRejected(save([{ type: "update", entryId: venusaur.id, fields: { hpIv: 32 } }]), 422, "INVALID_OPERATION");
+            await expectRejected(save([{ type: "update", entryId: venusaur.id, fields: { specificTeamType: "DOUBLES_VANILLA_TEAM" } }]), 422, "INVALID_OPERATION");
+            await expectRejected(save([{ type: "add", tempId: "x", setId: frontier.id, fields: { ...NEW_SPREAD, specificTeamType: "DOUBLES_MADE_UP_TEAM" } }]), 422, "INVALID_OPERATION");
             await expectRejected(save([{ type: "update", entryId: venusaur.id, fields: { spAtkEv: 8 } }]), 422, "INVALID_OPERATION");
             await expectRejected(save([{ type: "update", entryId: venusaur.id, fields: { moves: ["MOVE_A", "MOVE_B", "MOVE_C", "MOVE_D", "MOVE_E"] } }]), 422, "INVALID_OPERATION");
             await expectRejected(save([{ type: "update", entryId: golem.id, fields: { hpIv: 30 } }]), 422, "INVALID_OPERATION");

@@ -39,9 +39,11 @@ const CFRU_SPREAD_FILES =
 ];
 const CFRU_CONFIG_FILE = "src/config.h";
 const CFRU_TRAINERS_FILE = "src/Tables/battle_frontier_trainers.c";
+const CFRU_FRONTIER_HEADER = "include/new/frontier.h";
 module.exports.CFRU_SPREAD_FILES = CFRU_SPREAD_FILES;
 module.exports.CFRU_CONFIG_FILE = CFRU_CONFIG_FILE;
 module.exports.CFRU_TRAINERS_FILE = CFRU_TRAINERS_FILE;
+module.exports.CFRU_FRONTIER_HEADER = CFRU_FRONTIER_HEADER;
 
 const CLOUD_GAME_CONFIG_FILE = "src/PokemonUtil.jsx";
 const CLOUD_DATA_DIRECTORY = "src/data/";
@@ -54,7 +56,7 @@ const REPOSITORY_SENTINELS =
     [REPOSITORY_CFRU]:
     [
         { path: CFRU_CONFIG_FILE, type: ENTRY_FILE },
-        { path: "include/new/frontier.h", type: ENTRY_FILE },
+        { path: CFRU_FRONTIER_HEADER, type: ENTRY_FILE },
         { path: CFRU_TRAINERS_FILE, type: ENTRY_FILE },
         { path: "src/Tables/battle_moves.c", type: ENTRY_FILE },
         ...CFRU_SPREAD_FILES.map((file) => ({ path: file, type: ENTRY_FILE })),

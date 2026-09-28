@@ -1,6 +1,6 @@
 /**
  * Reads game data tables from CFRU and DPE C sources: move details, level-up learnsets, egg moves,
- * TM and tutor tables, TM and tutor compatibility lists and the evolution table.
+ * TM and tutor tables, TM and tutor compatibility lists, the evolution table and the doubles team types.
  * Only the text the compiler would see is read, and nothing is evaluated.
  */
 
@@ -23,6 +23,8 @@ const KIND_ARGUMENT_LIST = "argument_list";
 const KIND_BINARY = "binary_expression";
 const KIND_UNARY = "unary_expression";
 const KIND_COMMENT = "comment";
+const KIND_ENUMERATOR_LIST = "enumerator_list";
+const KIND_ENUMERATOR = "enumerator";
 const PUNCTUATION = new Set(["{", "}", ",", "(", ")"]);
 const DECLARATOR_WRAPPERS = new Set([KIND_ARRAY_DECLARATOR, KIND_POINTER_DECLARATOR, KIND_PARENTHESIZED_DECLARATOR]);
 
@@ -42,6 +44,9 @@ const SPECIES_PREFIX = "SPECIES_";
 const MOVE_PREFIX = "MOVE_";
 const FLAG_SEPARATOR = "|";
 const EVOLUTION_FIELD_COUNT = 4;
+
+// The enum listing the values of BattleTowerSpread.specificTeamType starts with this member
+const TEAM_TYPE_ANY = "DOUBLES_ANY_TEAM";
 
 // Move fields read as numbers, symbols or a list of flags; others such as Z-Move data are not needed
 const MOVE_NUMBER_FIELDS = ["power", "accuracy", "pp", "priority", "secondaryEffectChance"];
@@ -596,3 +601,39 @@ function parseEvolutionTable(text, macros)
     return { evolutions, diagnostics };
 }
 module.exports.parseEvolutionTable = parseEvolutionTable;
+
+/**
+ * Parses the doubles team types a spread's specificTeamType can name, from CFRU's frontier.h.
+ *
+ * @param {string} text The frontier.h text.
+ * @param {Map<string, object>} macros The configuration macros.
+ * @returns {{teamTypes: Array<{name: string, value: number|null}>|null, diagnostics: Array<object>}} The team
+ *          types in order with their values, or null when the enum cannot be found, and diagnostics.
+ */
+function parseTeamTypes(text, macros)
+{
+    // Headers use macros such as unusedArg that do not parse, which does not affect the enum
+    const { root, preprocessed } = parseActiveSource(text, macros);
+    const diagnostics = [...preprocessed.diagnostics];
+    const list = root.findAll({ rule: { kind: KIND_ENUMERATOR_LIST } })
+        .find((node) => node.children().some((child) => child.kind() === KIND_ENUMERATOR && child.field("name")?.text() === TEAM_TYPE_ANY));
+    if (list == null)
+    {
+        diagnostics.push({ severity: SEVERITY_WARNING, code: "TEAM_TYPES_NOT_FOUND", message: `Could not find the enum starting with ${TEAM_TYPE_ANY}, so doubles team types cannot be changed.` });
+        return { teamTypes: null, diagnostics };
+    }
+
+    // Members count up from the previous value, and a value the editor cannot read makes the rest unknown
+    const teamTypes = [];
+    let next = 0;
+    for (const enumerator of list.children().filter((node) => node.kind() === KIND_ENUMERATOR))
+    {
+        const valueNode = enumerator.field("value");
+        const value = valueNode != null ? readSignedInteger(valueNode) : next;
+        teamTypes.push({ name: enumerator.field("name").text(), value });
+        next = value == null ? null : value + 1;
+    }
+
+    return { teamTypes, diagnostics };
+}
+module.exports.parseTeamTypes = parseTeamTypes;
