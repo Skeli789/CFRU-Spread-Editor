@@ -4,10 +4,48 @@
     flex-direction: column;
     flex-grow: 1; /* Basically height: 100% but doesn't mess up the header and footer */
     padding: 20px; /* Add padding around the content */
-    background-color: #f8f9fa; /* Light grey background */
+    background-color: var(--app-background);
 }
 
 .default-container
 {
     align-items: center; /* Centre items horizontally */
+}
+
+.editor-toolbar
+{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.editor-status
+{
+    align-items: center;
+}
+
+.editor-alert
+{
+    margin-bottom: 16px;
+}
+
+.editor-summary
+{
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 4px 16px;
+    margin: 0;
+}
+
+.editor-summary dt
+{
+    font-weight: 600;
+}
+
+.editor-summary dd
+{
+    margin: 0;
+    overflow-wrap: anywhere;
 }

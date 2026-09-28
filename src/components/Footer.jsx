@@ -27,7 +27,7 @@ const Footer = () =>
         <div className="footer">
             <div className="footer-content">
                 <div className="logo">
-                    &copy; {CREATED_YEAR}{(currentYear > CREATED_YEAR ? ` - ${currentYear}` : "")} Shloop v{packageJson.version}
+                    &copy; {CREATED_YEAR}{(currentYear > CREATED_YEAR ? ` - ${currentYear}` : "")} CFRU Spread Editor v{packageJson.version}
                 </div>
                 <div className="footer-links">
                     <Link to="/privacy" className="footer-link">Privacy Policy</Link>

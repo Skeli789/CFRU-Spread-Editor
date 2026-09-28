@@ -3,7 +3,7 @@
 # Ensure we're in the correct directory
 cd "$(dirname "$0")"
 
-echo "Starting Shloop application..."
+echo "Starting CFRU Spread Editor application..."
 echo "Working directory: $(pwd)"
 
 TERMINAL_PIDS=()
@@ -126,21 +126,21 @@ case $service_status in
         ;;
     1)
         echo "Client is running, starting server..."
-        open_terminal "cd server && yarn start" "Shloop Server"
+        open_terminal "cd server && yarn start" "CFRU Spread Editor Server"
         sleep 1
         ;;
     2)
         echo "Server is running, starting client..."
-        open_terminal "yarn serve" "Shloop Client"
+        open_terminal "yarn serve" "CFRU Spread Editor Client"
         sleep 1
         ;;
     3)
         echo "Starting both services..."
         echo "Starting client..."
-        open_terminal "yarn serve" "Shloop Client"
+        open_terminal "yarn serve" "CFRU Spread Editor Client"
         sleep 1  # Give first terminal time to start
         echo "Starting server..."
-        open_terminal "cd server && yarn start" "Shloop Server"
+        open_terminal "cd server && yarn start" "CFRU Spread Editor Server"
         sleep 1
         ;;
 esac
@@ -166,9 +166,9 @@ echo "You can close this notification."
 # Create a notification or show status
 if command -v notify-send &> /dev/null; then
     if [[ $service_status -eq 0 ]]; then
-        notify-send "Shloop" "Application is already running! Opening browser..." --icon="/home/jonah/Documents/GitHub/Shloop/public/ShloopIcon.png"
+        notify-send "CFRU Spread Editor" "Application is already running! Opening browser..." --icon="/home/jonah/Documents/GitHub/CFRU Spread Editor/public/CFRU Spread EditorIcon.png"
     else
-        notify-send "Shloop" "Application started successfully! Opening browser..." --icon="/home/jonah/Documents/GitHub/Shloop/public/ShloopIcon.png"
+        notify-send "CFRU Spread Editor" "Application started successfully! Opening browser..." --icon="/home/jonah/Documents/GitHub/CFRU Spread Editor/public/CFRU Spread EditorIcon.png"
     fi
 fi
 

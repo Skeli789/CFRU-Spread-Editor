@@ -1,8 +1,8 @@
-# Shloop
+# CFRU Spread Editor
 
 ## What is this?
 
-Shloop is a template for creating React full stack apps with Material UI.
+CFRU Spread Editor is a tool for editing CFRU Battle Frontier spreads.
 
 ## Features
 

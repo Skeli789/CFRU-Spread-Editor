@@ -120,7 +120,7 @@ const TermsOfService = () =>
                 </List>
             </Paper>
 
-            <Paper elevation={3} sx={{ p: 4, mb: 3, borderLeft: '4px solid #ff6b6b', bgcolor: '#fff5f5' }}>
+            <Paper elevation={3} sx={{ p: 4, mb: 3, borderLeft: '4px solid #ff6b6b', bgcolor: (theme) => theme.palette.mode === 'dark' ? 'background.paper' : '#fff5f5' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <Block sx={{ fontSize: 32, mr: 2, color: '#ff6b6b' }} />
                     <Typography variant="h5" component="h2" sx={{ fontWeight: 600, color: '#ff6b6b' }}>

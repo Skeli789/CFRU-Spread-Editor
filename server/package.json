@@ -1,5 +1,5 @@
 {
-  "name": "shloop-server",
+  "name": "spread-editor-server",
   "author": "Skeli",
   "main": "server.js",
   "license": "MIT",
@@ -11,6 +11,8 @@
     "latest-pkg": "yarn upgrade --latest --network-timeout 600000"
   },
   "dependencies": {
+    "@ast-grep/lang-c": "^0.0.6",
+    "@ast-grep/napi": "^0.45.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

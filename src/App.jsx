@@ -4,17 +4,13 @@
  */
 
 import React, { useEffect, useState } from "react";
-import
-{
-    enable as enableDarkMode, disable as disableDarkMode, isEnabled as isDarkReaderEnabled,
-    auto as followSystemColorScheme, setFetchMethod as darkModeSetFetchMethod
-} from "darkreader";
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import { ToastContainer } from "react-toastify";
 import { ThemeProvider } from '@mui/material/styles';
 
 import DefaultPage from "./DefaultPage";
-import { APP_THEME } from "./Theme";
+import { SpreadEditorProvider } from "./SpreadEditorState";
+import { APP_THEME, DARK_APP_THEME } from "./Theme";
 import Footer from "./components/Footer";
 import Header from "./components/Header";
 import PrivacyPolicy from "./components/PrivacyPolicy";
@@ -24,69 +20,108 @@ import TermsOfService from "./components/TermsOfService";
 import './styles/App.css';
 
 
+/**
+ * Reads the saved color scheme, falling back to the system preference.
+ *
+ * @returns {boolean} Whether dark mode is preferred.
+ */
+function getInitialDarkMode()
+{
+    try
+    {
+        const saved = localStorage.getItem("darkMode");
+        if (saved !== null)
+            return saved === "true";
+    }
+    catch
+    {
+        // Blocked storage falls back to the system color scheme.
+    }
+
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
+}
+
+/**
+ * Renders the application with its selected color scheme.
+ *
+ * @returns {JSX.Element} The application.
+ */
 function App()
 {
-    const [loaded, setLoaded] = useState(false); // State to track if the app is loaded
-    const [darkMode, setDarkMode] = useState(false); // State to track if dark mode is enabled
-    const [manualDarkModeTrigger, setManualDarkModeTrigger] = useState(false); // State to track if dark mode was manually triggered
+    const [darkMode, setDarkMode] = useState(getInitialDarkMode);
 
-    // Run when the component mounts
     useEffect(() =>
     {
-        const setThemeSettings = () =>
+        let saved = null;
+        try
         {
-            // Enable or disable dark mode if it was set explicitly
-            darkModeSetFetchMethod(window.fetch);
-            if (localStorage.getItem("darkMode") === "true")
-                enableDarkMode();
-            else if (localStorage.getItem("darkMode") === "false")
-                disableDarkMode();
-            else // Otherwise, follow the system color scheme
-                followSystemColorScheme();
-            setDarkMode(isDarkReaderEnabled());
-            setLoaded(true);
-            setManualDarkModeTrigger(false); // Reset manual trigger after setting theme
+            saved = localStorage.getItem("darkMode");
+        }
+        catch
+        {
+            // Blocked storage falls back to the system color scheme.
         }
 
-        setThemeSettings();
-    }, [manualDarkModeTrigger]);
+        if (saved !== null || !window.matchMedia)
+            return;
 
-    // Prevent loading the app until the setup is complete
-    if (!loaded)
-        return <div className="app" />;
+        const preference = window.matchMedia("(prefers-color-scheme: dark)");
+        const updateSystemTheme = (event) => setDarkMode(event.matches);
+        preference.addEventListener("change", updateSystemTheme);
+        return () => preference.removeEventListener("change", updateSystemTheme);
+    }, []);
+
+    /** Switches theme and saves the explicit choice when storage is available. */
+    function toggleDarkMode()
+    {
+        const nextDarkMode = !darkMode;
+        try
+        {
+            localStorage.setItem("darkMode", String(nextDarkMode));
+        }
+        catch
+        {
+            // The toggle still works when storage is blocked.
+        }
+        setDarkMode(nextDarkMode);
+    }
+
+    const theme = darkMode ? DARK_APP_THEME : APP_THEME;
 
     return (
-        <ThemeProvider theme={APP_THEME}>
-            <Router>
-                <div className="app">
-                    <Header
-                        darkMode={darkMode}
-                        toggleParentDarkMode={() => setManualDarkModeTrigger(true)}
-                    />
-                    <div className="main-container" id="main-container">
-                        <Routes>
-                            {/* Fill in more routes here */}
-                            <Route path="/privacy" element={<PrivacyPolicy />} />
-                            <Route path="/terms" element={<TermsOfService />} />
-                            <Route path="/" element={<DefaultPage />} />
-                            <Route path="*" element={<Navigate to={"/"} replace />} />
-                        </Routes>
-                        <Footer />
+        <ThemeProvider theme={theme}>
+            <SpreadEditorProvider>
+                <Router>
+                    <div className="app" style={{ "--theme": theme.palette.primary.main, "--app-background": theme.palette.background.default, color: theme.palette.text.primary }}>
+                        <Header
+                            darkMode={darkMode}
+                            toggleParentDarkMode={toggleDarkMode}
+                        />
+                        <div className="main-container" id="main-container">
+                            <Routes>
+                                {/* Fill in more routes here */}
+                                <Route path="/privacy" element={<PrivacyPolicy />} />
+                                <Route path="/terms" element={<TermsOfService />} />
+                                <Route path="/" element={<DefaultPage />} />
+                                <Route path="*" element={<Navigate to={"/"} replace />} />
+                            </Routes>
+                            <Footer />
+                        </div>
+                        <ToastContainer 
+                            position="bottom-right"
+                            autoClose={3000}
+                            hideProgressBar={false}
+                            newestOnTop={false}
+                            closeOnClick
+                            rtl={false}
+                            pauseOnFocusLoss
+                            draggable
+                            pauseOnHover
+                            theme={darkMode ? "dark" : "light"}
+                        />
                     </div>
-                    <ToastContainer 
-                        position="bottom-right"
-                        autoClose={3000}
-                        hideProgressBar={false}
-                        newestOnTop={false}
-                        closeOnClick
-                        rtl={false}
-                        pauseOnFocusLoss
-                        draggable
-                        pauseOnHover
-                        theme={darkMode ? "dark" : "light"}
-                    />
-                </div>
-            </Router>
+                </Router>
+            </SpreadEditorProvider>
         </ThemeProvider>
     );
 }

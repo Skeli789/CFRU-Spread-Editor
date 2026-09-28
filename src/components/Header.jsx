@@ -31,7 +31,7 @@ const Header = ({ darkMode, toggleParentDarkMode }) =>
     return (
         <div className="header">
             <div className="logo-container" onClick={handleLogoClick} style={{ cursor: 'pointer' }}>
-                <h2 className="logo-text">Shloop</h2>
+                <h2 className="logo-text">CFRU Spread Editor</h2>
             </div>
             <div className="buttons">
                 <DarkModeButton darkMode={darkMode}

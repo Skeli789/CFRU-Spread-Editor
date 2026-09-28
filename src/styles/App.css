@@ -9,6 +9,7 @@
     display: flex;
     flex-direction: column;
     justify-content: space-between;
+    background-color: var(--app-background);
 }
 
 .main-container
@@ -17,13 +18,7 @@
     flex-direction: column;
     flex-grow: 1; /* Allows the main content to take up all available space */
     overflow-y: auto; /* Scrollbar appears as needed */
-    background-color: #f8f9fa; /* Light grey background for better contrast */
-}
-
-:root
-{
-    --theme: #50046c !important;
-    --darkreader-bg--theme: var(--theme) !important;
+    background-color: var(--app-background);
 }
 
 /* Custom scrollbar styling */
@@ -51,28 +46,7 @@
 }
 
 /* Firefox scrollbar styling */
-* {
+.app, .app * {
     scrollbar-width: thin;
     scrollbar-color: var(--theme) transparent;
-}
-
-/* Fix the icon of the toasts */
-[data-darkreader-scheme="dark"] .Toastify__toast-theme--dark.Toastify__toast--error svg
-{
-    --darkreader-inline-fill: var(--toastify-icon-color-error) !important;
-}
-
-[data-darkreader-scheme="dark"] .Toastify__toast-theme--dark.Toastify__toast--success svg
-{
-    --darkreader-inline-fill: var(--toastify-icon-color-success) !important;
-}
-
-[data-darkreader-scheme="dark"] .Toastify__toast-theme--dark.Toastify__toast--info svg
-{
-    --darkreader-inline-fill: var(--toastify-icon-color-info) !important;
-}
-
-[data-darkreader-scheme="dark"] .Toastify__toast-theme--dark.Toastify__toast--warning svg
-{
-    --darkreader-inline-fill: var(--toastify-icon-color-warning) !important;
 }

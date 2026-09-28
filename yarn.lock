@@ -460,16 +460,6 @@
   resolved "https://registry.yarnpkg.com/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz#e3fcee093fbb5ce765e1ad088ff4de2889f6f9be"
   integrity sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==
 
-"@rollup/rollup-linux-x64-gnu@4.60.4":
-  version "4.60.4"
-  resolved "https://registry.yarnpkg.com/@rollup/rollup-linux-x64-gnu/-/rollup-linux-x64-gnu-4.60.4.tgz#23c9bf79771d804fb87415eb0767569f273261e5"
-  integrity sha512-Boiz5+MsaROEWDf+GGEwF8VMHGhlUoQMtIPjOgA5fv4osupqTVnJteQNKJwUcnUog2G55jYXH7KZFFiJe0TEzQ==
-
-"@rollup/rollup-win32-x64-msvc@4.60.4":
-  version "4.60.4"
-  resolved "https://registry.yarnpkg.com/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.60.4.tgz#da4f1676d87e2bdf744291b504b0ab79550c3e61"
-  integrity sha512-QVTUovf40zgTqlFVrKA1uXMVvU2QWEFWfAH8Wdc48IxLvrJMQVMBRjuQyUpzZCDkakImib9eVazbWlC6ksWtJw==
-
 "@standard-schema/spec@^1.1.0":
   version "1.1.0"
   resolved "https://registry.yarnpkg.com/@standard-schema/spec/-/spec-1.1.0.tgz#a79b55dbaf8604812f52d140b2c9ab41bc150bb8"
@@ -763,16 +753,6 @@ csstype@^3.0.2, csstype@^3.2.2, csstype@^3.2.3:
   version "3.2.3"
   resolved "https://registry.yarnpkg.com/csstype/-/csstype-3.2.3.tgz#ec48c0f3e993e50648c86da559e2610995cf989a"
   integrity sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==
-
-darkreader@^4.9.128:
-  version "4.9.128"
-  resolved "https://registry.yarnpkg.com/darkreader/-/darkreader-4.9.128.tgz#9e1ef67c70c5024cd1060c0fc6a1a06f32131d96"
-  integrity sha512-WdqgR0k/NEs1swZ4acMnpY1pWQFgg2ABmG10mcpMe8/Pegm1ZVPCpJGi/7heQDQd3H8XP8Hk96K/M3uxdf1qmw==
-  dependencies:
-    malevic "0.20.2"
-  optionalDependencies:
-    "@rollup/rollup-linux-x64-gnu" "4.60.4"
-    "@rollup/rollup-win32-x64-msvc" "4.60.4"
 
 data-urls@^7.0.0:
   version "7.0.0"
@@ -1178,11 +1158,6 @@ magic-string@^0.30.21:
   dependencies:
     "@jridgewell/sourcemap-codec" "^1.5.5"
 
-malevic@0.20.2:
-  version "0.20.2"
-  resolved "https://registry.yarnpkg.com/malevic/-/malevic-0.20.2.tgz#2d8ab54a5d9f4bebc21fc1cc0c6eec1e77d13530"
-  integrity sha512-s44yEUyfDaONt7nPT7NDQ+Z2oAswErG70ok2Q95bJFh1Bdcn4dZQVMrLE02ZIjTtYfQ/LFOVxF+yB3bdGw/GtQ==
-
 math-intrinsics@^1.1.0:
   version "1.1.0"
   resolved "https://registry.yarnpkg.com/math-intrinsics/-/math-intrinsics-1.1.0.tgz#a0dd74be81e2aa5c2f27e65ce283605ee4e2b7f9"
@@ -1467,6 +1442,11 @@ stackback@0.0.2:
   version "0.0.2"
   resolved "https://registry.yarnpkg.com/stackback/-/stackback-0.0.2.tgz#1ac8a0d9483848d1695e418b6d031a3c3ce68e3b"
   integrity sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==
+
+status-code-enum@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/status-code-enum/-/status-code-enum-1.0.0.tgz#097b6d87e8402fa20f5fbf3c50a24eda20d4efed"
+  integrity sha512-aDTkL2wug8wYX8i0a2K1foqIDaJyGF/a3I0KTZ9gD4MJaxzd7/LKD1VQ2rXL5u7fWESVY+qY2LQLqj6LK/YXiA==
 
 std-env@^4.0.0-rc.1:
   version "4.2.0"
