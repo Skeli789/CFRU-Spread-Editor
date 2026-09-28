@@ -23,7 +23,7 @@ const CACHE_FORMAT = 1;
 const NAMESPACE_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 // The parser code and native grammars that shape every cached result
-const PARSER_MODULES = ["./preprocessor", "./spread-parser", "./source-parser"];
+const PARSER_MODULES = ["./preprocessor", "./spread-parser", "./source-parser", "./data-parser", "./learnsets"];
 const PARSER_PACKAGES = ["@ast-grep/napi/package.json", "@ast-grep/lang-c/package.json"];
 
 let parserVersion = null;

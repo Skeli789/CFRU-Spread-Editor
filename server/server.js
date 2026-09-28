@@ -3,6 +3,7 @@ const path = require('path');
 // Must load before the middleware, which reads CLIENT_ORIGINS on import
 require('dotenv').config({ path: __dirname + '/.env' });
 
+const imagesRouter = require('./endpoints/images');
 const repositoriesRouter = require('./endpoints/repositories');
 const sessionRouter = require('./endpoints/session');
 const workspacesRouter = require('./endpoints/workspaces');
@@ -30,8 +31,9 @@ app.use(parseJsonBody);
 app.use(requireObjectBody);
 // app.use(express.static(buildPath)); // Uncomment for production server
 
-// The session route issues the token that every later API route requires
+// The session route issues the token that every later API route requires; images cannot send it
 app.use('/api/session', sessionRouter);
+app.use('/api/images', imagesRouter);
 app.use('/api', requireSession);
 app.use('/api/repositories', repositoriesRouter);
 app.use('/api/workspaces', workspacesRouter);

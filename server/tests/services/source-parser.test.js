@@ -86,4 +86,23 @@ const GAME_IDS_TO_DATA =
         const source = "function f() { const GAME_DISPLAY_NAMES = { \"a\": \"A\" }; }\nconst GAME_IDS_TO_DATA = {};";
         expect(parseCloudGameConfig(source).diagnostics[0].code).to.equal("DECLARATION_NOT_FOUND");
     });
+
+    it("should read Cloud's species icon names, keeping only plain strings", () =>
+    {
+        const source =
+`const SPECIES_FORMS_ICON_NAMES =
+{
+    "SPECIES_PYROAR_FEMALE": "female/pyroar",
+    "SPECIES_LYCANROC_N": "lycanroc-midnight",
+    "SPECIES_COMPUTED": "x" + "y",
+};
+export const GAME_DISPLAY_NAMES = {};
+const GAME_IDS_TO_DATA = {};
+`;
+
+        const { speciesIconNames, diagnostics } = parseCloudGameConfig(source);
+        expect(speciesIconNames).to.deep.equal({ SPECIES_PYROAR_FEMALE: "female/pyroar", SPECIES_LYCANROC_N: "lycanroc-midnight" });
+        expect(diagnostics).to.deep.equal([]);
+        expect(parseCloudGameConfig("export const GAME_DISPLAY_NAMES = {};\nconst GAME_IDS_TO_DATA = {};").speciesIconNames).to.deep.equal({});
+    });
 });

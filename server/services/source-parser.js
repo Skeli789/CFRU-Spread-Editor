@@ -7,6 +7,7 @@ const { parse, Lang } = require("@ast-grep/napi");
 
 const GAME_DISPLAY_NAMES_SYMBOL = "GAME_DISPLAY_NAMES";
 const GAME_IDS_TO_DATA_SYMBOL = "GAME_IDS_TO_DATA";
+const SPECIES_ICON_NAMES_SYMBOL = "SPECIES_FORMS_ICON_NAMES";
 
 const KIND_PROGRAM = "program";
 const KIND_EXPORT = "export_statement";
@@ -212,11 +213,38 @@ function readDefaultImports(root)
 }
 
 /**
+ * Reads an optional top-level object whose values are all plain strings.
+ *
+ * @param {object} root The program syntax node.
+ * @param {string} symbol The declared name.
+ * @param {Array<object>} diagnostics Diagnostics to append to.
+ * @returns {Object<string, string>} The readable entries, or none when the object is missing.
+ */
+function readStringObject(root, symbol, diagnostics)
+{
+    // Aliases are optional; without them names are derived from the constants
+    if (findTopLevelDeclarators(root, symbol).length === 0)
+        return {};
+
+    const objectNode = findObjectDeclaration(root, symbol, diagnostics);
+    const values = {};
+    for (const { key, valueNode } of objectNode != null ? readObjectPairs(objectNode, symbol, diagnostics) : [])
+    {
+        const value = getPlainStringValue(valueNode);
+        if (value != null)
+            values[key] = value;
+    }
+
+    return values;
+}
+
+/**
  * Reads the game list and per-game JSON imports from Unbound Cloud's PokemonUtil.jsx.
  *
  * @param {string} sourceText The file contents.
- * @returns {{games: Array<{id: string, name: string, dataImports: Object<string, string>|null}>, diagnostics: Array<object>}}
- *          Games in declaration order with their module specifiers, plus parse diagnostics.
+ * @returns {{games: Array<{id: string, name: string, dataImports: Object<string, string>|null}>,
+ *            speciesIconNames: Object<string, string>, diagnostics: Array<object>}}
+ *          Games in declaration order with their module specifiers, Cloud's icon names for species forms and diagnostics.
  */
 function parseCloudGameConfig(sourceText)
 {
@@ -225,12 +253,13 @@ function parseCloudGameConfig(sourceText)
     const root = parse(Lang.JavaScript, sourceText).root();
     const imports = readDefaultImports(root);
     const games = [];
+    const speciesIconNames = readStringObject(root, SPECIES_ICON_NAMES_SYMBOL, diagnostics);
 
     // Find the two objects that describe the games
     const namesNode = findObjectDeclaration(root, GAME_DISPLAY_NAMES_SYMBOL, diagnostics);
     const dataNode = findObjectDeclaration(root, GAME_IDS_TO_DATA_SYMBOL, diagnostics);
     if (namesNode == null || dataNode == null)
-        return { games, diagnostics };
+        return { games, speciesIconNames, diagnostics };
 
     // Map each game in GAME_IDS_TO_DATA to the files its data comes from
     const dataByGame = new Map();
@@ -288,6 +317,6 @@ function parseCloudGameConfig(sourceText)
         games.push({ id: gameId, name, dataImports: dataByGame.get(gameId) ?? null });
     }
 
-    return { games, diagnostics };
+    return { games, speciesIconNames, diagnostics };
 }
 module.exports.parseCloudGameConfig = parseCloudGameConfig;

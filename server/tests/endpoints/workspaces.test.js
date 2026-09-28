@@ -10,6 +10,7 @@ const path = require("path");
 const request = require("supertest");
 const { StatusCode } = require("status-code-enum");
 
+const { createPokeApiFetch } = require("../helpers/catalog-fixtures");
 const { createFixtureRepositories } = require("../helpers/fixture-repositories");
 
 const ALLOWED_ORIGIN = "http://localhost:3000";
@@ -398,23 +399,167 @@ describe("Workspace API Endpoints", () =>
 
     describe("POST /api/workspaces/:id/catalog", () =>
     {
+        const originalFetch = globalThis.fetch;
         let workspaceId;
 
         beforeEach(async () =>
         {
+            globalThis.fetch = createPokeApiFetch();
             workspaceId = (await post(app, token, "/api/workspaces/load", { paths: fixture.paths })).body.workspaceId;
+        });
+
+        afterEach(() =>
+        {
+            globalThis.fetch = originalFetch;
         });
 
         it("should load the selected game's catalog", async () =>
         {
             const res = await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
             expect(res.status).to.equal(StatusCode.SuccessOK);
-            expect(res.body).to.deep.equal(
+            expect(res.body).to.include({ gameId: "cfru", name: "Official Games" });
+            expect(res.body.entryCounts).to.deep.equal({ baseStats: 18, moves: 30, items: 5, ballTypes: 2, learnsets: 12 });
+            expect(res.body.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).to.deep.equal([]);
+        });
+
+        it("should describe species with Cloud's stats and names, DPE's battle forms and PokeAPI sprites", async () =>
+        {
+            const { species, diagnostics } = (await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" })).body;
+            expect(species).to.not.have.property("SPECIES_NONE");
+            expect(species.SPECIES_CHARIZARD).to.deep.include(
             {
-                gameId: "cfru",
-                name: "Official Games",
-                entryCounts: { baseStats: 2, moves: 1, items: 1, ballTypes: 1 },
+                name: "Charizard",
+                dex: "NATIONAL_DEX_CHARIZARD",
+                dexNumber: 6,
+                baseStats: { hp: 78, atk: 84, def: 78, spAtk: 109, spDef: 85, spd: 100 },
+                types: ["TYPE_FIRE", "TYPE_FLYING"],
+                abilities: ["ABILITY_SOLARPOWER", "ABILITY_BLAZE", null],
+                gigantamax: { species: "SPECIES_CHARIZARD_GIGA", available: true },
             });
+            expect(species.SPECIES_CHARIZARD.megas.map((mega) => [mega.item, mega.available])).to.deep.equal([["ITEM_CHARIZARDITE_X", true], ["ITEM_CHARIZARDITE_Y", false]]);
+            expect(species.SPECIES_CHARIZARD.sprite.normal).to.equal("https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/6.png");
+            expect(species.SPECIES_CHARIZARD_GIGA.sprite.normal).to.match(/\/10196\.png$/);
+            expect(species.SPECIES_LYCANROC_N.sprite.normal).to.match(/\/10126\.png$/);
+            expect(species.SPECIES_PIKACHU_SURFING).to.include({ name: "Pikachu", showdownName: "Pikachu-Surfing" });
+            expect(species.SPECIES_PIKACHU_SURFING.sprite.source).to.equal("cloud");
+            expect(species.SPECIES_IVYSAUR.name).to.equal("Ivysaur");
+
+            // Missing values stay unknown instead of becoming zero
+            expect(species.SPECIES_GARCHOMP.baseStats).to.deep.equal({ hp: 108, atk: null, def: null, spAtk: null, spDef: null, spd: null });
+            expect(diagnostics.map((diagnostic) => diagnostic.code)).to.include.members(["CATALOG_SPECIES_INCOMPLETE", "BATTLE_FORM_UNAVAILABLE"]);
+        });
+
+        it("should take move details from CFRU's compiled branch and report differences from Cloud", async () =>
+        {
+            const { moves, diagnostics } = (await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" })).body;
+            expect(moves.MOVE_FLY).to.include({ name: "Fly", power: 100, pp: 15, accuracy: 95, local: true });
+            expect(moves.MOVE_SWIFT).to.include({ accuracy: 0, name: "Swift" });
+            expect(moves.MOVE_TACKLE).to.include({ type: "TYPE_NORMAL", pp: 35, power: null, accuracy: null, local: false });
+            expect(moves).to.not.have.any.keys("MOVE_NONE", "MOVE_REMOVED");
+
+            const codes = diagnostics.map((diagnostic) => diagnostic.code);
+            expect(codes).to.include.members(["MOVE_DETAILS_MISSING", "MOVE_DATA_MISMATCH"]);
+            expect(diagnostics.find((diagnostic) => diagnostic.code === "MOVE_DATA_MISMATCH").message).to.include("MOVE_FLY (pp 15 in CFRU, 10 in Cloud)");
+        });
+
+        it("should list items, balls and types with their icons", async () =>
+        {
+            const { items, balls, types, assets } = (await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" })).body;
+            expect(items.ITEM_LEFTOVERS).to.deep.equal({ name: "Leftovers", icon: "https://raw.githubusercontent.com/msikma/pokesprite/master/items/hold-item/leftovers.png" });
+            expect(items.ITEM_CUSTOM_CHARM.icon).to.equal(`/api/images/${workspaceId}/items/ITEM_CUSTOM_CHARM.png`);
+            expect(items.ITEM_UNNAMED_THING).to.deep.equal({ name: "Unnamed Thing", icon: null });
+            expect(items.ITEM_NONE.icon).to.equal(null);
+            expect(balls.BALL_TYPE_POKE_BALL).to.deep.equal({ name: "Poké Ball", icon: "https://raw.githubusercontent.com/msikma/pokesprite/master/items/ball/poke.png" });
+            expect(balls.BALL_TYPE_RANDOM).to.deep.equal({ name: "Random", icon: null });
+            expect(types.TYPE_FIRE.icon).to.match(/sword-shield\/10\.png$/);
+            expect(assets.gigantamax).to.equal(`/api/images/${workspaceId}/root/gigantamax.png`);
+        });
+
+        it("should serve Cloud's images from the local repository without a session token", async () =>
+        {
+            const { species, items } = (await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" })).body;
+
+            for (const url of [items.ITEM_CUSTOM_CHARM.icon, species.SPECIES_PIKACHU_SURFING.sprite.shiny])
+            {
+                const res = await request(app).get(url);
+                expect(res.status).to.equal(StatusCode.SuccessOK);
+                expect(res.headers["content-type"]).to.equal("image/png");
+                expect(res.headers["cross-origin-resource-policy"]).to.equal("same-site");
+                expect(res.body.toString()).to.equal("png");
+            }
+        });
+
+        it("should serve only PNG files directly inside Cloud's image folders", async () =>
+        {
+            const base = `/api/images/${workspaceId}`;
+            for (const url of [`${base}/root/missing.png`, `${base}/secret/gigantamax.png`, `${base}/root/..%2F..%2F.env`, `${base}/root/.env`, `${base}/items/ITEM_CUSTOM_CHARM.txt`])
+            {
+                const res = await request(app).get(url);
+                expect(res.status).to.equal(StatusCode.ClientErrorNotFound);
+                expect(res.body.error.code).to.equal("IMAGE_NOT_FOUND");
+            }
+
+            const unknownWorkspace = await request(app).get(`/api/images/${MISSING_WORKSPACE_ID}/root/gigantamax.png`);
+            expect(unknownWorkspace.body.error.code).to.equal("WORKSPACE_NOT_FOUND");
+
+            const otherHost = await request(app).get(`${base}/root/gigantamax.png`).set("Host", "evil.example:3001");
+            expect(otherHost.status).to.equal(StatusCode.ClientErrorForbidden);
+        });
+
+        it("should not serve images through links that leave the Cloud repository", async () =>
+        {
+            const outside = path.join(fixture.base, "outside images");
+            fs.mkdirSync(outside);
+            fs.writeFileSync(path.join(outside, "secret.png"), "secret");
+            fs.symlinkSync(outside, path.join(fixture.paths.cloud, "public", "images", "gen_9"), "junction");
+
+            const res = await request(app).get(`/api/images/${workspaceId}/gen9/secret.png`);
+            expect(res.status).to.equal(StatusCode.ClientErrorForbidden);
+            expect(res.body.error.code).to.equal("PATH_OUTSIDE_REPOSITORY");
+        });
+
+        it("should include learnsets that decide move legality", async () =>
+        {
+            const catalog = (await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" })).body;
+            const { getMoveLegality } = await import("../../../shared/catalog.mjs");
+            expect(getMoveLegality(catalog, "SPECIES_VENUSAUR", "MOVE_LEECHSEED")).to.deep.equal({ status: "allowed", sources: ["prevolution"], reason: null });
+            expect(getMoveLegality(catalog, "SPECIES_VENUSAUR", "MOVE_FLY").status).to.equal("illegal");
+            expect(getMoveLegality(catalog, "SPECIES_DRAGONITE", "MOVE_DRACOMETEOR").status).to.equal("unknown");
+            expect(getMoveLegality(catalog, "SPECIES_GARCHOMP", "MOVE_EARTHQUAKE").status).to.equal("unknown");
+        });
+
+        it("should report spread values the game does not have instead of matching them to something else", async () =>
+        {
+            const { unresolved, diagnostics } = (await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" })).body;
+            expect(unresolved.species).to.include({ SPECIES_TYRANITAR: 1, SPECIES_RAICHU: 1 });
+            expect(unresolved.species).to.not.have.any.keys("SPECIES_VENUSAUR", "SPECIES_GARCHOMP");
+            expect(unresolved.items.ITEM_LIFE_ORB).to.be.above(1);
+            expect(unresolved.balls).to.deep.equal({});
+            expect(unresolved.natures).to.deep.equal({});
+            expect(diagnostics.filter((diagnostic) => diagnostic.code === "UNRESOLVED_SYMBOL").map((diagnostic) => diagnostic.message).join(" ")).to.include("SPECIES_TYRANITAR");
+        });
+
+        it("should still load when PokeAPI cannot be reached", async () =>
+        {
+            globalThis.fetch = createPokeApiFetch({ fail: true });
+
+            const res = await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
+            expect(res.status).to.equal(StatusCode.SuccessOK);
+            expect(res.body.diagnostics.map((diagnostic) => diagnostic.code)).to.include("SPRITES_OFFLINE");
+            expect(res.body.species.SPECIES_CHARIZARD.sprite.normal).to.match(/\/6\.png$/);
+            expect(res.body.species.SPECIES_CHARIZARD_GIGA.sprite).to.include({ source: "pokesprite" });
+            expect(res.body.types.TYPE_FIRE.icon).to.match(/pokesprite.*fire\.png$/);
+        });
+
+        it("should reuse cached parses on the next load", async () =>
+        {
+            const first = await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
+            const cache = path.join(process.env[DATA_DIRECTORY_ENV], "cache");
+            expect(fs.readdirSync(cache)).to.include.members(["battle-moves", "dpe-data", "pokeapi-index.json"]);
+
+            const second = await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
+            expect(second.body).to.deep.equal(first.body);
+            expect(globalThis.fetch.calls).to.have.length(2);
         });
 
         it("should reject games that are not available", async () =>

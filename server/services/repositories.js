@@ -78,6 +78,7 @@ const REPOSITORY_SENTINELS =
 
 const MAX_PATH_LENGTH = 4096;
 const MAX_OWNED_FILE_BYTES = 32 * 1024 * 1024;
+const MAX_LISTED_FILES = 4096;
 const MAX_WORKSPACES = 8;
 const PICKER_TIMEOUT_MS = 5 * 60 * 1000;
 const PICKER_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -433,7 +434,8 @@ function resolveCloudDataSpecifier(specifier)
  * Reads the games Unbound Cloud declares and keeps those whose required data files exist.
  *
  * @param {string} cloudRoot The canonical Cloud repository root.
- * @returns {Promise<{games: Array<object>, diagnostics: Array<object>}>} Available games and diagnostics.
+ * @returns {Promise<{games: Array<object>, speciesIconNames: Object<string, string>, diagnostics: Array<object>}>}
+ *          Available games, Cloud's icon names for species forms and diagnostics.
  */
 async function readCloudGames(cloudRoot)
 {
@@ -498,7 +500,7 @@ async function readCloudGames(cloudRoot)
 
     // Match the order of Unbound Cloud's own game menu
     games.sort(compareGames);
-    return { games, diagnostics };
+    return { games, speciesIconNames: parsed.speciesIconNames, diagnostics };
 }
 
 /**
@@ -673,7 +675,7 @@ async function loadWorkspace(paths)
         throw new ApiError(StatusCode.ClientErrorUnprocessableEntity, "REPOSITORY_VALIDATION_FAILED", "Some repository folders need to be corrected.", { fields: fieldErrors });
 
     // Gather the games and any warnings about the repositories
-    const { games, diagnostics: gameDiagnostics } = await readCloudGames(roots[REPOSITORY_CLOUD]);
+    const { games, speciesIconNames, diagnostics: gameDiagnostics } = await readCloudGames(roots[REPOSITORY_CLOUD]);
     const diagnostics = [...gameDiagnostics, ...(await checkSpreadFileAccess(roots[REPOSITORY_CFRU]))];
     if (games.length === 0)
         throw new ApiError(StatusCode.ClientErrorUnprocessableEntity, "NO_GAMES_AVAILABLE", "Unbound Cloud does not list any games with complete data.", { diagnostics });
@@ -684,6 +686,7 @@ async function loadWorkspace(paths)
         id: crypto.randomUUID(),
         roots,
         games: new Map(games.map((game) => [game.id, game])),
+        speciesIconNames,
     };
 
     workspaces.set(workspace.id, workspace);
@@ -785,6 +788,39 @@ async function readOwnedFile(workspace, kind, relativePath)
     return (await readOwnedBuffer(workspace, kind, relativePath)).toString("utf8");
 }
 module.exports.readOwnedFile = readOwnedFile;
+
+/**
+ * Lists the regular files in a folder the workspace owns, such as DPE's TM compatibility lists.
+ *
+ * @param {object} workspace The workspace.
+ * @param {string} kind The repository kind.
+ * @param {string} relativePath The repository-relative folder, which must come from server-owned data.
+ * @returns {Promise<Array<string>>} The file names in sorted order, or none when the folder does not exist.
+ */
+async function listOwnedFiles(workspace, kind, relativePath)
+{
+    let entries;
+    try
+    {
+        const folder = await resolveInsideRoot(workspace.roots[kind], relativePath);
+        entries = await fs.promises.readdir(folder, { withFileTypes: true });
+    }
+    catch (error)
+    {
+        if (MISSING_ERROR_CODES.has(error.code))
+            return [];
+        if (error instanceof ApiError)
+            throw error;
+
+        throw new ApiError(StatusCode.ClientErrorConflict, "REPOSITORY_FILE_UNAVAILABLE",
+            `${relativePath} in the ${REPOSITORY_LABELS[kind]} repository can no longer be read. Load the repositories again.`,
+            { repository: kind, file: relativePath });
+    }
+
+    // Links are left out, since they could point outside the repository
+    return entries.filter((entry) => entry.isFile()).map((entry) => entry.name).sort().slice(0, MAX_LISTED_FILES);
+}
+module.exports.listOwnedFiles = listOwnedFiles;
 
 /**
  * Returns a comparable key for a repository root.

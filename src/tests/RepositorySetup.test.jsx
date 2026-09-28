@@ -19,7 +19,26 @@ const SETUP_TITLE = "Connect Repositories";
 const GAME_TITLE = "Choose Game";
 const SPREAD_SET_COUNT = 7;
 const SPREAD_COUNT = 56;
+const LEARNSET_COUNT = 9;
+const CATALOG_WARNING = "69 moves in this game are not in CFRU's src/Tables/battle_moves.c.";
 
+
+/**
+ * Returns a catalog like the server's, without the per-species data the summary does not use.
+ *
+ * @param {string} gameId The game ID.
+ * @param {Array<object>} [diagnostics] The catalog diagnostics.
+ * @returns {object} The catalog.
+ */
+function createCatalog(gameId, diagnostics = [])
+{
+    return {
+        gameId,
+        name: GAMES.find((game) => game.id === gameId).name,
+        entryCounts: { baseStats: 12, moves: 34, items: 5, ballTypes: 2, learnsets: LEARNSET_COUNT },
+        diagnostics,
+    };
+}
 
 /**
  * Returns a workspace snapshot like the server's.
@@ -71,7 +90,7 @@ function mockServer(overrides = {})
     {
         "/session": () => ({ token: "token-1" }),
         "/workspaces/load": () => createWorkspace(),
-        [CATALOG_ROUTE]: (body) => ({ gameId: body.gameId, name: GAMES.find((game) => game.id === body.gameId).name, entryCounts: { baseStats: 12, moves: 34 } }),
+        [CATALOG_ROUTE]: (body) => createCatalog(body.gameId),
         "/repositories/pick": () => ({ status: "cancelled" }),
         ...overrides,
     };
@@ -167,6 +186,7 @@ describe("Repository setup", () =>
         expect(await screen.findByRole("heading", { name: "Unbound" })).toBeInTheDocument();
         expect(screen.getByText(PATHS.cfru)).toBeInTheDocument();
         expect(screen.getByText("12")).toBeInTheDocument();
+        expect(screen.getByText("Learnsets").nextElementSibling).toHaveTextContent(String(LEARNSET_COUNT));
         expect(screen.getByText("Spread Sets").nextElementSibling).toHaveTextContent(String(SPREAD_SET_COUNT));
         expect(screen.getByText("Spreads").nextElementSibling).toHaveTextContent(String(SPREAD_COUNT));
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -182,6 +202,15 @@ describe("Repository setup", () =>
         expect(await screen.findByRole("heading", { name: "Unbound" })).toBeInTheDocument();
         expect(calls.map((call) => call.route)).toEqual(["/session", "/workspaces/load", "/workspaces/workspace-1/catalog"]);
         expect(calls[2].body).toEqual({ gameId: "unbound" });
+    });
+
+    test("shows warnings about the game's catalog", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        mockServer({ [CATALOG_ROUTE]: (body) => createCatalog(body.gameId, [{ severity: "warning", code: "MOVE_DETAILS_MISSING", message: CATALOG_WARNING }]) });
+        render(<App />);
+
+        expect(await screen.findByText(CATALOG_WARNING)).toBeInTheDocument();
     });
 
     test("does not render spread counts when a workspace response lacks spreads", async () =>
@@ -330,7 +359,7 @@ describe("Repository setup", () =>
                     restarted = true;
                     throw apiError(StatusCode.ClientErrorNotFound, "WORKSPACE_NOT_FOUND", "The repositories need to be loaded again.");
                 }
-                return { gameId: body.gameId, name: "Official Games", entryCounts: { baseStats: 1, moves: 1 } };
+                return createCatalog(body.gameId);
             },
         });
         render(<App />);

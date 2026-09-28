@@ -53,6 +53,8 @@ const DefaultPage = () =>
                         <dd>{catalog.entryCounts.baseStats}</dd>
                         <dt>Moves</dt>
                         <dd>{catalog.entryCounts.moves}</dd>
+                        <dt>Learnsets</dt>
+                        <dd>{catalog.entryCounts.learnsets}</dd>
                         {workspace.spreads && <>
                             <dt>Spread Sets</dt>
                             <dd>{workspace.spreads.sets.length}</dd>
@@ -60,7 +62,7 @@ const DefaultPage = () =>
                             <dd>{workspace.spreads.entries.length}</dd>
                         </>}
                     </Box>
-                    <DiagnosticList diagnostics={workspace.diagnostics} />
+                    <DiagnosticList diagnostics={[...workspace.diagnostics, ...catalog.diagnostics]} />
                 </Stack>}
         </div>
     );

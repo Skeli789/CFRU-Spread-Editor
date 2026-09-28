@@ -1,12 +1,15 @@
 /**
  * Test file for repositories.js
- * Tests the native folder picker without opening a real dialog.
+ * Tests the native folder picker without opening a real dialog, and listing repository folders.
  */
 
 const { expect } = require("chai");
+const fs = require("fs");
+const path = require("path");
 const { StatusCode } = require("status-code-enum");
 
-const { createFolderPicker } = require("../../services/repositories");
+const { createFixtureRepositories } = require("../helpers/fixture-repositories");
+const { createFolderPicker, getWorkspace, listOwnedFiles, loadWorkspace } = require("../../services/repositories");
 
 const PICKED_PATH = "C:\\Users\\Test\\Código\\CFRU Repo";
 
@@ -159,5 +162,56 @@ describe("Folder picker", () =>
 
         expect(thrown.code).to.equal("PICKER_UNSUPPORTED");
         expect(calls).to.have.length(0);
+    });
+});
+
+describe("Owned folder listing", () =>
+{
+    let fixture;
+    let workspace;
+
+    beforeEach(async () =>
+    {
+        fixture = createFixtureRepositories();
+        workspace = getWorkspace((await loadWorkspace(fixture.paths)).workspaceId);
+    });
+
+    afterEach(() =>
+    {
+        fixture.cleanup();
+    });
+
+    it("should list only the files in a folder, in sorted order", async () =>
+    {
+        fs.mkdirSync(path.join(fixture.paths.dpe, "src", "tm_compatibility", "nested"));
+
+        const names = await listOwnedFiles(workspace, "dpe", "src/tm_compatibility");
+        expect(names).to.deep.equal(["1 - Focus Punch.txt", "2 - Hidden Power.txt", "3 - Cut.txt", "notes.md"]);
+    });
+
+    it("should return nothing for a missing folder", async () =>
+    {
+        expect(await listOwnedFiles(workspace, "cloud", "public/images/gen_9")).to.deep.equal([]);
+    });
+
+    it("should reject a folder that links outside the repository", async () =>
+    {
+        const outside = path.join(fixture.base, "outside images");
+        fs.mkdirSync(outside);
+        fs.writeFileSync(path.join(outside, "secret.png"), "png");
+        fs.symlinkSync(outside, path.join(fixture.paths.cloud, "public", "images", "gen_9"), "junction");
+
+        let thrown;
+        try
+        {
+            await listOwnedFiles(workspace, "cloud", "public/images/gen_9");
+        }
+        catch (error)
+        {
+            thrown = error;
+        }
+
+        expect(thrown.code).to.equal("PATH_OUTSIDE_REPOSITORY");
+        expect(thrown.status).to.equal(StatusCode.ClientErrorForbidden);
     });
 });

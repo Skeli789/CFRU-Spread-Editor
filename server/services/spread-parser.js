@@ -133,6 +133,7 @@ function getLine(node)
 {
     return node.range().start.line + 1;
 }
+module.exports.getLine = getLine;
 
 /**
  * Returns a node's start and end offsets, excluding the carriage return tree-sitter keeps in line comments.
@@ -168,6 +169,7 @@ function parseInteger(text)
 
     return Number(digits);
 }
+module.exports.parseInteger = parseInteger;
 
 /**
  * Returns the comment that follows a node on the same line, if any.
@@ -501,6 +503,7 @@ function parseActiveSource(text, macros)
 
     return { root, preprocessed, diagnostics, syntaxErrors: errors.length > 0 };
 }
+module.exports.parseActiveSource = parseActiveSource;
 
 /**
  * Parses the spread arrays in a CFRU spread file.

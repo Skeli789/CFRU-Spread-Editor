@@ -6,6 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
+const { BATTLE_MOVES, CLOUD_FILES, DPE_FILES } = require("./catalog-fixtures");
 const { CFRU_SOURCE_FILES } = require("./spread-fixtures");
 
 const CLOUD_GAME_CONFIG =
@@ -23,6 +24,11 @@ import AlphaMoves from "./data/alpha/Moves.json";
 import AlphaItems from "./data/alpha/Items.json";
 import AlphaBallTypes from "./data/alpha/BallTypes.json";
 import MissingBaseStats from "./data/missing/BaseStats.json";
+
+const SPECIES_FORMS_ICON_NAMES =
+{
+    "SPECIES_LYCANROC_N": "lycanroc-midnight",
+};
 
 export const GAME_DISPLAY_NAMES =
 {
@@ -50,27 +56,15 @@ const REPOSITORY_FILES =
     {
         ...CFRU_SOURCE_FILES,
         "include/new/frontier.h": "struct BattleTowerSpread {};\n",
-        "src/Tables/battle_moves.c": "\n",
+        "src/Tables/battle_moves.c": BATTLE_MOVES,
     },
-    dpe:
-    {
-        "src/Learnsets.c": "\n",
-        "src/Egg_Moves.c": "\n",
-        "src/Evolution Table.c": "\n",
-        "src/TM_Tutor_Tables.c": "\n",
-        "src/tm_compatibility/1 - Focus Punch.txt": "TM01: Focus Punch\n",
-        "src/tutor_compatibility/1 - Mega Punch.txt": "Tutor01: Mega Punch\n",
-    },
+    dpe: DPE_FILES,
     cloud:
     {
+        ...CLOUD_FILES,
         ".env": "SECRET=do-not-read\n",
         "src/PokemonUtil.jsx": CLOUD_GAME_CONFIG,
         "src/Util.jsx": "export const BASE_GFX_LINK = \"\";\n",
-        "src/data/SpeciesNames.json": "{\"SPECIES_BULBASAUR\": \"Bulbasaur\"}",
-        "src/data/cfru/BaseStats.json": "{\"SPECIES_BULBASAUR\": {}, \"SPECIES_IVYSAUR\": {}}",
-        "src/data/cfru/Moves.json": "{\"MOVE_POUND\": {}}",
-        "src/data/cfru/Items.json": "\uFEFF{\"ITEM_NONE\": {}}",
-        "src/data/cfru/BallTypes.json": "{\"BALL_TYPE_POKE_BALL\": 0}",
         "src/data/zeta/BaseStats.json": JSON.stringify(
         {
             SPECIES_BULBASAUR: {},
