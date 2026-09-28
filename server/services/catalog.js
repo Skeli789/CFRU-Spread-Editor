@@ -36,6 +36,38 @@ function parseDataObject(contents, relativePath)
 }
 
 /**
+ * Returns one of the workspace's games.
+ *
+ * @param {object} workspace The workspace.
+ * @param {*} gameId The requested game ID.
+ * @returns {object} The game.
+ */
+function getGame(workspace, gameId)
+{
+    // Only games found when the workspace loaded can be opened
+    const game = typeof gameId === "string" ? workspace.games.get(gameId) : undefined;
+    if (game == null)
+        throw new ApiError(StatusCode.ClientErrorNotFound, "GAME_NOT_FOUND", "This game is not available in the loaded Unbound Cloud repository.");
+
+    return game;
+}
+
+/**
+ * Reads one of a game's data files.
+ *
+ * @param {object} workspace The workspace.
+ * @param {*} gameId The game ID.
+ * @param {string} key The data key, such as baseStats.
+ * @returns {Promise<object>} The parsed data.
+ */
+async function readGameData(workspace, gameId, key)
+{
+    const relativePath = getGame(workspace, gameId).dataFiles[key];
+    return parseDataObject(await readOwnedFile(workspace, REPOSITORY_CLOUD, relativePath), relativePath);
+}
+module.exports.readGameData = readGameData;
+
+/**
  * Loads the catalog for one of the workspace's games.
  *
  * @param {object} workspace The workspace.
@@ -44,10 +76,7 @@ function parseDataObject(contents, relativePath)
  */
 async function loadGameCatalog(workspace, gameId)
 {
-    // Only games found when the workspace loaded can be opened
-    const game = typeof gameId === "string" ? workspace.games.get(gameId) : undefined;
-    if (game == null)
-        throw new ApiError(StatusCode.ClientErrorNotFound, "GAME_NOT_FOUND", "This game is not available in the loaded Unbound Cloud repository.");
+    const game = getGame(workspace, gameId);
 
     // Read and check each of the game's data files
     const entryCounts = {};

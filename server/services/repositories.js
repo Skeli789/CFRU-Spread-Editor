@@ -15,6 +15,8 @@ const { parseCloudGameConfig } = require("./source-parser");
 const REPOSITORY_CFRU = "cfru";
 const REPOSITORY_DPE = "dpe";
 const REPOSITORY_CLOUD = "cloud";
+module.exports.REPOSITORY_CFRU = REPOSITORY_CFRU;
+module.exports.REPOSITORY_DPE = REPOSITORY_DPE;
 module.exports.REPOSITORY_CLOUD = REPOSITORY_CLOUD;
 const REPOSITORY_KINDS = [REPOSITORY_CFRU, REPOSITORY_DPE, REPOSITORY_CLOUD];
 
@@ -35,6 +37,11 @@ const CFRU_SPREAD_FILES =
     "src/Tables/frontier_multi_spreads.h",
     "src/Tables/raid_partners.h",
 ];
+const CFRU_CONFIG_FILE = "src/config.h";
+const CFRU_TRAINERS_FILE = "src/Tables/battle_frontier_trainers.c";
+module.exports.CFRU_SPREAD_FILES = CFRU_SPREAD_FILES;
+module.exports.CFRU_CONFIG_FILE = CFRU_CONFIG_FILE;
+module.exports.CFRU_TRAINERS_FILE = CFRU_TRAINERS_FILE;
 
 const CLOUD_GAME_CONFIG_FILE = "src/PokemonUtil.jsx";
 const CLOUD_DATA_DIRECTORY = "src/data/";
@@ -46,9 +53,9 @@ const REPOSITORY_SENTINELS =
 {
     [REPOSITORY_CFRU]:
     [
-        { path: "src/config.h", type: ENTRY_FILE },
+        { path: CFRU_CONFIG_FILE, type: ENTRY_FILE },
         { path: "include/new/frontier.h", type: ENTRY_FILE },
-        { path: "src/Tables/battle_frontier_trainers.c", type: ENTRY_FILE },
+        { path: CFRU_TRAINERS_FILE, type: ENTRY_FILE },
         { path: "src/Tables/battle_moves.c", type: ENTRY_FILE },
         ...CFRU_SPREAD_FILES.map((file) => ({ path: file, type: ENTRY_FILE })),
     ],
@@ -710,14 +717,14 @@ function getWorkspace(workspaceId)
 module.exports.getWorkspace = getWorkspace;
 
 /**
- * Reads a file the workspace owns, rechecking that it is still inside its repository.
+ * Resolves a file the workspace owns, rechecking that it is still a regular file inside its repository.
  *
  * @param {object} workspace The workspace.
  * @param {string} kind The repository kind.
  * @param {string} relativePath The repository-relative path, which must come from server-owned data.
- * @returns {Promise<string>} The UTF-8 contents.
+ * @returns {Promise<string>} The canonical absolute path.
  */
-async function readOwnedFile(workspace, kind, relativePath)
+async function resolveOwnedFile(workspace, kind, relativePath)
 {
     try
     {
@@ -727,7 +734,7 @@ async function readOwnedFile(workspace, kind, relativePath)
         if (!stats.isFile() || stats.size > MAX_OWNED_FILE_BYTES)
             throw new ApiError(StatusCode.ClientErrorUnprocessableEntity, "FILE_UNSUPPORTED", `${relativePath} is not a supported file.`);
 
-        return await fs.promises.readFile(filePath, "utf8");
+        return filePath;
     }
     catch (error)
     {
@@ -739,4 +746,55 @@ async function readOwnedFile(workspace, kind, relativePath)
             { repository: kind, file: relativePath });
     }
 }
+module.exports.resolveOwnedFile = resolveOwnedFile;
+
+/**
+ * Reads the bytes of a file the workspace owns.
+ *
+ * @param {object} workspace The workspace.
+ * @param {string} kind The repository kind.
+ * @param {string} relativePath The repository-relative path, which must come from server-owned data.
+ * @returns {Promise<Buffer>} The contents.
+ */
+async function readOwnedBuffer(workspace, kind, relativePath)
+{
+    const filePath = await resolveOwnedFile(workspace, kind, relativePath);
+    try
+    {
+        return await fs.promises.readFile(filePath);
+    }
+    catch
+    {
+        throw new ApiError(StatusCode.ClientErrorConflict, "REPOSITORY_FILE_UNAVAILABLE",
+            `${relativePath} in the ${REPOSITORY_LABELS[kind]} repository can no longer be read. Load the repositories again.`,
+            { repository: kind, file: relativePath });
+    }
+}
+module.exports.readOwnedBuffer = readOwnedBuffer;
+
+/**
+ * Reads a file the workspace owns as text.
+ *
+ * @param {object} workspace The workspace.
+ * @param {string} kind The repository kind.
+ * @param {string} relativePath The repository-relative path, which must come from server-owned data.
+ * @returns {Promise<string>} The UTF-8 contents.
+ */
+async function readOwnedFile(workspace, kind, relativePath)
+{
+    return (await readOwnedBuffer(workspace, kind, relativePath)).toString("utf8");
+}
 module.exports.readOwnedFile = readOwnedFile;
+
+/**
+ * Returns a comparable key for a repository root.
+ *
+ * @param {object} workspace The workspace.
+ * @param {string} kind The repository kind.
+ * @returns {string} The key.
+ */
+function getRootKey(workspace, kind)
+{
+    return getPathKey(workspace.roots[kind]);
+}
+module.exports.getRootKey = getRootKey;

@@ -6,6 +6,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
+const { CFRU_SOURCE_FILES } = require("./spread-fixtures");
+
 const CLOUD_GAME_CONFIG =
 `import SpeciesNames from "./data/SpeciesNames.json";
 import CFRUBaseStats from "./data/cfru/BaseStats.json";
@@ -46,14 +48,9 @@ const REPOSITORY_FILES =
 {
     cfru:
     {
-        "src/config.h": "#define UNBOUND\n",
+        ...CFRU_SOURCE_FILES,
         "include/new/frontier.h": "struct BattleTowerSpread {};\n",
-        "src/Tables/battle_frontier_trainers.c": "\n",
         "src/Tables/battle_moves.c": "\n",
-        "src/Tables/battle_tower_spreads.h": "\n",
-        "src/Tables/frontier_special_trainer_spreads.h": "\n",
-        "src/Tables/frontier_multi_spreads.h": "\n",
-        "src/Tables/raid_partners.h": "\n",
     },
     dpe:
     {
@@ -74,7 +71,11 @@ const REPOSITORY_FILES =
         "src/data/cfru/Moves.json": "{\"MOVE_POUND\": {}}",
         "src/data/cfru/Items.json": "\uFEFF{\"ITEM_NONE\": {}}",
         "src/data/cfru/BallTypes.json": "{\"BALL_TYPE_POKE_BALL\": 0}",
-        "src/data/zeta/BaseStats.json": "{\"SPECIES_BULBASAUR\": {}}",
+        "src/data/zeta/BaseStats.json": JSON.stringify(
+        {
+            SPECIES_BULBASAUR: {},
+            SPECIES_VENUSAUR: { ability1: "ABILITY_OVERGROW", ability2: "ABILITY_THICKFAT", hiddenAbility: "ABILITY_CHLOROPHYLL" },
+        }),
         "src/data/zeta/Moves.json": "{}",
         "src/data/zeta/Items.json": "{}",
         "src/data/zeta/BallTypes.json": "{}",

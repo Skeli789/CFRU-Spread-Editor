@@ -53,6 +53,12 @@ const DefaultPage = () =>
                         <dd>{catalog.entryCounts.baseStats}</dd>
                         <dt>Moves</dt>
                         <dd>{catalog.entryCounts.moves}</dd>
+                        {workspace.spreads && <>
+                            <dt>Spread Sets</dt>
+                            <dd>{workspace.spreads.sets.length}</dd>
+                            <dt>Spreads</dt>
+                            <dd>{workspace.spreads.entries.length}</dd>
+                        </>}
                     </Box>
                     <DiagnosticList diagnostics={workspace.diagnostics} />
                 </Stack>}

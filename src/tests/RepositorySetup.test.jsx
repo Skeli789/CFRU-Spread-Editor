@@ -17,6 +17,8 @@ const GAMES = [{ id: "cfru", name: "Official Games" }, { id: "unbound", name: "U
 const CATALOG_ROUTE = "/workspaces/:id/catalog";
 const SETUP_TITLE = "Connect Repositories";
 const GAME_TITLE = "Choose Game";
+const SPREAD_SET_COUNT = 7;
+const SPREAD_COUNT = 56;
 
 
 /**
@@ -32,6 +34,13 @@ function createWorkspace(workspaceId = "workspace-1")
         repositories: Object.fromEntries(Object.entries(PATHS).map(([kind, path]) => [kind, { path, label: `${kind} label` }])),
         games: GAMES,
         diagnostics: [],
+        spreads:
+        {
+            revision: "revision-1",
+            sets: Array.from({ length: SPREAD_SET_COUNT }, (_, index) => ({ id: `set-${index}` })),
+            entries: Array.from({ length: SPREAD_COUNT }, (_, index) => ({ id: `entry-${index}` })),
+            trainers: [],
+        },
     };
 }
 
@@ -158,6 +167,8 @@ describe("Repository setup", () =>
         expect(await screen.findByRole("heading", { name: "Unbound" })).toBeInTheDocument();
         expect(screen.getByText(PATHS.cfru)).toBeInTheDocument();
         expect(screen.getByText("12")).toBeInTheDocument();
+        expect(screen.getByText("Spread Sets").nextElementSibling).toHaveTextContent(String(SPREAD_SET_COUNT));
+        expect(screen.getByText("Spreads").nextElementSibling).toHaveTextContent(String(SPREAD_COUNT));
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
         expect(getSavedSettings()).toEqual({ version: SETTINGS_VERSION, paths: PATHS, gameId: "unbound" });
     });
@@ -171,6 +182,21 @@ describe("Repository setup", () =>
         expect(await screen.findByRole("heading", { name: "Unbound" })).toBeInTheDocument();
         expect(calls.map((call) => call.route)).toEqual(["/session", "/workspaces/load", "/workspaces/workspace-1/catalog"]);
         expect(calls[2].body).toEqual({ gameId: "unbound" });
+    });
+
+    test("does not render spread counts when a workspace response lacks spreads", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        mockServer({ "/workspaces/load": () =>
+        {
+            const { spreads, ...workspace } = createWorkspace();
+            return workspace;
+        } });
+        render(<App />);
+
+        expect(await screen.findByRole("heading", { name: "Unbound" })).toBeInTheDocument();
+        expect(screen.queryByText("Spread Sets")).not.toBeInTheDocument();
+        expect(screen.queryByText("Spreads")).not.toBeInTheDocument();
     });
 
     test("returning launch asks for a new game when the saved one is gone", async () =>

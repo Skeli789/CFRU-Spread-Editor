@@ -11,7 +11,8 @@ const { SESSION_HEADER, isValidSessionToken } = require("../services/session");
 
 const DEFAULT_CLIENT_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"];
 const ALLOWED_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const JSON_BODY_LIMIT = "1mb";
+// Saving changes to every spread at once can exceed 1 MB
+const JSON_BODY_LIMIT = "4mb";
 const JSON_CONTENT_TYPE = "application/json";
 
 // Read when the module loads, so dotenv must be configured before this file is required

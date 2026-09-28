@@ -20,6 +20,8 @@ const SERVER_ENTRY = path.join(SERVER_ROOT, "server.js");
 const ORIGINAL_EXEC_FILE = childProcess.execFile;
 const FIRST_LOAD_TIMEOUT_MS = 30000;
 const ABANDON_REQUEST_MS = 200;
+const DATA_DIRECTORY_ENV = "SPREAD_EDITOR_DATA_DIR";
+const BATTLE_TOWER_FILE = "src/Tables/battle_tower_spreads.h";
 const describeOnWindows = process.platform === "win32" ? describe : describe.skip;
 
 
@@ -92,6 +94,7 @@ describe("Workspace API Endpoints", () =>
     let fixture;
     let app;
     let token;
+    const originalDataDirectory = process.env[DATA_DIRECTORY_ENV];
 
     before(function ()
     {
@@ -102,7 +105,9 @@ describe("Workspace API Endpoints", () =>
 
     beforeEach(async () =>
     {
+        // Backups and journals from saves stay inside the disposable fixture
         fixture = createFixtureRepositories();
+        process.env[DATA_DIRECTORY_ENV] = path.join(fixture.base, "editor data");
         app = startServer();
         token = await getToken(app);
     });
@@ -111,6 +116,14 @@ describe("Workspace API Endpoints", () =>
     {
         childProcess.execFile = ORIGINAL_EXEC_FILE;
         fixture.cleanup();
+    });
+
+    after(() =>
+    {
+        if (originalDataDirectory === undefined)
+            delete process.env[DATA_DIRECTORY_ENV];
+        else
+            process.env[DATA_DIRECTORY_ENV] = originalDataDirectory;
     });
 
     describe("Local access security", () =>
@@ -182,7 +195,7 @@ describe("Workspace API Endpoints", () =>
 
         it("should reject oversized bodies", async () =>
         {
-            const res = await post(app, token, "/api/workspaces/load", { paths: fixture.paths, padding: "x".repeat(2 * 1024 * 1024) });
+            const res = await post(app, token, "/api/workspaces/load", { paths: fixture.paths, padding: "x".repeat(5 * 1024 * 1024) });
             expect(res.status).to.equal(StatusCode.ClientErrorPayloadTooLarge);
             expect(res.body.error.code).to.equal("REQUEST_TOO_LARGE");
         });
@@ -285,6 +298,17 @@ describe("Workspace API Endpoints", () =>
 
             const unavailable = res.body.diagnostics.filter((diagnostic) => diagnostic.code === "GAME_UNAVAILABLE");
             expect(unavailable.map((diagnostic) => diagnostic.message).join(" ")).to.include("Missing Files").and.include("Unlisted Data");
+        });
+
+        it("should include the active spreads and their trainers", async () =>
+        {
+            const res = await post(app, token, "/api/workspaces/load", { paths: fixture.paths });
+            const { spreads } = res.body;
+            expect(spreads.revision).to.match(/^[0-9a-f]{64}$/);
+            expect(spreads.entries).to.have.length(15);
+            expect(spreads.sets.map((set) => set.name)).to.include.members(["gFrontierSpreads", "gMultiTowerSpread_Milo", "sRaidPartnerSpread_Catherine_Rank12"]);
+            expect(spreads.trainers.map((trainer) => trainer.name)).to.include.members(["Palmer", "Milo", "Catherine"]);
+            expect(res.body.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).to.deep.equal([]);
         });
 
         it("should canonicalize paths containing parent segments", async () =>
@@ -441,6 +465,55 @@ describe("Workspace API Endpoints", () =>
             const staleWorkspace = await post(restarted, newToken, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
             expect(staleWorkspace.status).to.equal(StatusCode.ClientErrorNotFound);
             expect(staleWorkspace.body.error.code).to.equal("WORKSPACE_NOT_FOUND");
+        });
+    });
+
+    describe("POST /api/workspaces/:id/save", () =>
+    {
+        let workspace;
+
+        beforeEach(async () =>
+        {
+            workspace = (await post(app, token, "/api/workspaces/load", { paths: fixture.paths })).body;
+        });
+
+        it("should save a changed spread and return the new snapshot", async () =>
+        {
+            const entry = workspace.spreads.entries.find((candidate) => candidate.fields.species === "SPECIES_VENUSAUR");
+            const res = await post(app, token, `/api/workspaces/${workspace.workspaceId}/save`,
+                { revision: workspace.spreads.revision, gameId: "cfru", operations: [{ type: "update", entryId: entry.id, fields: { hpEv: 248 } }] });
+
+            expect(res.status).to.equal(StatusCode.SuccessOK);
+            expect(res.body.files).to.deep.equal([{ path: BATTLE_TOWER_FILE, status: "saved" }]);
+            expect(res.body.spreads.entries.find((candidate) => candidate.id === entry.id).fields.hpEv).to.equal(248);
+            expect(fs.readFileSync(path.join(fixture.paths.cfru, ...BATTLE_TOWER_FILE.split("/")), "utf8")).to.include(".hpEv = 248,");
+            expect(fs.readdirSync(path.join(fixture.base, "editor data", "backups"))).to.deep.equal([res.body.backupId]);
+        });
+
+        it("should reject changes made to an older snapshot", async () =>
+        {
+            const res = await post(app, token, `/api/workspaces/${workspace.workspaceId}/save`, { revision: "0".repeat(64), operations: [] });
+            expect(res.status).to.equal(StatusCode.ClientErrorConflict);
+            expect(res.body.error.code).to.equal("SAVE_CONFLICT");
+        });
+
+        it("should reject invalid changes without writing", async () =>
+        {
+            const before = fs.readFileSync(path.join(fixture.paths.cfru, ...BATTLE_TOWER_FILE.split("/")));
+            const entry = workspace.spreads.entries[0];
+            const res = await post(app, token, `/api/workspaces/${workspace.workspaceId}/save`,
+                { revision: workspace.spreads.revision, operations: [{ type: "update", entryId: entry.id, fields: { species: "SPECIES_A }; int x = {" } }] });
+
+            expect(res.status).to.equal(StatusCode.ClientErrorUnprocessableEntity);
+            expect(res.body.error.code).to.equal("INVALID_OPERATION");
+            expect(fs.readFileSync(path.join(fixture.paths.cfru, ...BATTLE_TOWER_FILE.split("/"))).equals(before)).to.equal(true);
+        });
+
+        it("should reject unknown workspaces", async () =>
+        {
+            const res = await post(app, token, `/api/workspaces/${MISSING_WORKSPACE_ID}/save`, { revision: workspace.spreads.revision, operations: [] });
+            expect(res.status).to.equal(StatusCode.ClientErrorNotFound);
+            expect(res.body.error.code).to.equal("WORKSPACE_NOT_FOUND");
         });
     });
 });
