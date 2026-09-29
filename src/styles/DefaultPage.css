@@ -3,7 +3,7 @@
     display: flex;
     flex-direction: column;
     flex-grow: 1; /* Basically height: 100% but doesn't mess up the header and footer */
-    padding: 20px; /* Add padding around the content */
+    padding: 0 16px 16px; /* The toolbar sticks to the top, so it adds its own top padding */
     background-color: var(--app-background);
 }
 
@@ -12,40 +12,925 @@
     align-items: center; /* Centre items horizontally */
 }
 
-.editor-toolbar
+.editor-status
+{
+    align-items: center;
+    padding-top: 16px;
+}
+
+.editor-alert
+{
+    margin: 16px 0;
+}
+
+/* Toolbar and filters stay at the top of the scrolling area */
+.spread-toolbar
+{
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0 8px;
+    background-color: var(--app-background);
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.toolbar-row
+{
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.toolbar-row-spaced
+{
+    margin-top: 8px;
+}
+
+.toolbar-actions-spacer
+{
+    flex: 1 1 auto;
+}
+
+.toolbar-fields .filter-control
+{
+    flex: 1 1 180px;
+    min-width: min(100%, 180px);
+}
+
+.toolbar-fields .filter-control-wide
+{
+    flex-basis: 220px;
+}
+
+.filter-option
 {
     display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.editor-diagnostics
+{
+    align-items: flex-start;
+    margin-top: 8px;
+}
+
+/* Spread grid, with a section for each spread set */
+.spread-grid
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 8px;
+    scroll-margin-top: 200px;
+}
+
+.spread-grid-bar
+{
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
 }
 
-.editor-status
+.spread-grid-bottom
 {
-    align-items: center;
+    justify-content: center;
+    padding-bottom: 72px; /* Keeps the last cards clear of the save button */
 }
 
-.editor-alert
+.spread-grid-empty
 {
-    margin-bottom: 16px;
+    align-items: flex-start;
+    padding: 16px 0;
 }
 
-.editor-summary
+.spread-section
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.spread-section-heading
+{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    padding-bottom: 2px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.spread-section-title
+{
+    font-weight: 600 !important;
+}
+
+.spread-row
 {
     display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    gap: 4px 16px;
-    margin: 0;
+    gap: 8px;
+    align-items: start;
 }
 
-.editor-summary dt
+/* Spread card, laid out like the mockup with the sprite, item and ability on the left */
+.spread-card
+{
+    position: relative;
+    padding: 8px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.spread-card-content
+{
+    display: grid;
+    grid-template-columns: 124px minmax(0, 1fr);
+    /* The side column runs beside the moves, so its extra lines never make the card taller */
+    grid-template-areas:
+        "side header"
+        "side stats"
+        "side details"
+        "side moves"
+        "battle battle";
+    gap: 5px 8px;
+    align-content: start;
+    min-width: 0;
+}
+
+.spread-card:not(.spread-card-deleted):not(.spread-card-editing):not(.spread-card-locked):hover
+{
+    background-image: linear-gradient(rgba(128, 128, 128, 0.08), rgba(128, 128, 128, 0.08));
+}
+
+.spread-card-editing
+{
+    cursor: default;
+    border-color: var(--theme);
+}
+
+.spread-card-editing .spread-card-content
+{
+    grid-template-columns: 200px minmax(0, 1fr);
+    grid-template-areas:
+        "side header"
+        "side stats"
+        "details details"
+        "moves moves"
+        "battle battle";
+    gap: 12px 16px;
+}
+
+/* Inside the edit dialog the card is the dialog's content, not a tile */
+.edit-spread-content .spread-card
+{
+    padding: 0;
+    border: none;
+    box-shadow: none;
+    font-size: 0.95rem;
+    background: none;
+    cursor: default;
+}
+
+.spread-card-editing .spread-card-side
+{
+    gap: 10px;
+}
+
+.spread-side-checks
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 4px;
+}
+
+.spread-side-checks .MuiFormControlLabel-root
+{
+    margin-right: 8px;
+}
+
+.spread-card-editing .spread-card-stats
+{
+    justify-self: end;
+}
+
+.spread-card-editing .spread-stats
+{
+    width: auto;
+}
+
+.spread-card-editing .spread-stats th,
+.spread-card-editing .spread-stats td
+{
+    padding: 3px 8px;
+}
+
+.spread-card-editing .stat-stepper
+{
+    gap: 3px;
+}
+
+.spread-card-editing .spread-card-subtitle .MuiFormControlLabel-root
+{
+    margin: 0 0 0 auto;
+}
+
+.spread-card-editing .spread-card-subtitle .MuiFormControlLabel-label
+{
+    font-size: 0.85rem;
+}
+
+.spread-card-editing .spread-details-edit
+{
+    gap: 12px;
+}
+
+.spread-card-deleted .spread-card-content
+{
+    opacity: 0.32;
+    pointer-events: none;
+}
+
+.spread-card-deleted,
+.spread-card-locked
+{
+    cursor: default;
+}
+
+.spread-deleted-overlay
+{
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    z-index: 1;
+}
+
+.spread-card-changed
+{
+    box-shadow: inset 3px 0 0 #ed6c02;
+}
+
+.spread-card-side
+{
+    grid-area: side;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    /* Without this the column's automatic minimum stretches the card's rows beyond its content */
+    min-height: 0;
+}
+
+.spread-card-side .spread-sprite
+{
+    align-self: center;
+}
+
+.spread-side-value
+{
+    display: flex;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.side-value-text
+{
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Ability slot labels share the icon column of the ball and item above them */
+.ability-slot
+{
+    display: inline-block;
+    flex-shrink: 0;
+    width: 24px;
+    text-align: center;
+    font-size: 0.75em;
+}
+
+.spread-card-header
+{
+    grid-area: header;
+    min-width: 0;
+    padding-bottom: 5px;
+}
+
+.spread-card-stats
+{
+    grid-area: stats;
+    min-width: 0;
+    overflow-x: auto;
+}
+
+.spread-card-details
+{
+    grid-area: details;
+    min-width: 0;
+}
+
+.spread-details-view
+{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 16px;
+}
+
+.spread-details-edit
+{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: 6px 8px;
+}
+
+.spread-nature-field
+{
+    grid-column: 1 / -1;
+}
+
+.spread-symbols
+{
+    gap: 6px;
+}
+
+.spread-card-subtitle .MuiFormControlLabel-root
+{
+    margin: 0 0 0 auto;
+    white-space: nowrap;
+}
+
+.spread-card-subtitle .MuiFormControlLabel-label,
+.battle-chips .MuiChip-label
+{
+    font-size: 0.7rem;
+}
+
+.spread-card-moves
+{
+    grid-area: moves;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 180px));
+    gap: 4px 8px;
+}
+
+.spread-card-editing .spread-card-moves
+{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-left: 0;
+    gap: 12px;
+}
+
+.spread-card:not(.spread-card-editing) .move-slot
+{
+    justify-content: flex-start;
+}
+
+/* The move slots sit directly in the card's move grid */
+.move-editor
+{
+    display: contents;
+}
+
+.spread-card-battle
+{
+    grid-area: battle;
+}
+
+.battle-chips
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+}
+
+.spread-card-subtitle
+{
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.spread-card-title
+{
+    align-items: center;
+    flex-wrap: nowrap;
+    min-width: 0;
+    margin-bottom: 8px;
+}
+
+.spread-name
+{
+    font-weight: 600;
+    line-height: 1.2;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Outranks the Stack's own spacing margin so the actions sit at the right edge */
+.spread-card-title > .spread-card-actions
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.spread-badges
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+}
+
+.spread-badges .MuiChip-root
+{
+    max-width: 100%;
+    height: 20px;
+    font-size: 0.7rem;
+}
+
+/* Images keep their size while loading and are never recolored by dark mode */
+.game-image
+{
+    display: inline-block;
+    flex-shrink: 0;
+    object-fit: contain;
+    image-rendering: auto;
+    filter: none;
+}
+
+.game-image-missing
+{
+    border: 1px dashed rgba(128, 128, 128, 0.5);
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 0.65rem;
+    line-height: 12px;
+    text-align: center;
+    overflow: hidden;
+}
+
+.spread-sprite
+{
+    background-color: rgba(128, 128, 128, 0.08);
+    border-radius: 8px;
+    image-rendering: pixelated;
+}
+
+.type-symbol
+{
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.option-with-icon
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.shiny-icon
+{
+    color: #f5b400;
+}
+
+/* Wider popups for fields in narrow columns */
+.wide-popper
+{
+    min-width: 260px;
+}
+
+/* Stat table */
+.spread-stats
+{
+    border-collapse: collapse;
+    width: 100%;
+    font-variant-numeric: tabular-nums;
+}
+
+.spread-stats-editing
+{
+    width: 100%;
+}
+
+.spread-stats th,
+.spread-stats td
+{
+    padding: 1px 3px;
+    text-align: right;
+    white-space: nowrap;
+    font-weight: normal;
+}
+
+.spread-stats thead th
 {
     font-weight: 600;
 }
 
-.editor-summary dd
+.spread-stats-editing .stat-stepper-heading,
+.spread-stats-editing .stat-ev-total
 {
-    margin: 0;
-    overflow-wrap: anywhere;
+    text-align: center;
+}
+
+.spread-stats-editing td:has(.stat-stepper)
+{
+    text-align: center;
+}
+
+/* The reset button sits beside the heading so the heading stays centred over its inputs */
+.stat-heading
+{
+    position: relative;
+}
+
+.stat-heading-reset
+{
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.stat-heading-reset .MuiIconButton-root
+{
+    padding: 2px;
+    font-size: 16px;
+}
+
+.spread-stats tbody th,
+.spread-stats tfoot th,
+.spread-stats thead th:first-child
+{
+    text-align: left;
+}
+
+.spread-stats tfoot td,
+.spread-stats tfoot th
+{
+    border-top: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.stat-label
+{
+    margin-right: 2px;
+}
+
+.stat-label-raised,
+.nature-up
+{
+    color: #d32f2f;
+}
+
+.stat-label-lowered,
+.nature-down
+{
+    color: #1e88e5;
+}
+
+.stat-label-raised,
+.stat-label-lowered
+{
+    font-weight: 600;
+}
+
+.nature-up,
+.nature-down
+{
+    vertical-align: middle;
+}
+
+.stat-final
+{
+    font-weight: 600;
+}
+
+.ev-total-error,
+.stat-input-error input
+{
+    color: #d32f2f;
+    font-weight: 600;
+}
+
+.stat-stepper
+{
+    display: inline-flex;
+    align-items: center;
+}
+
+.stat-stepper .MuiIconButton-root
+{
+    padding: 1px;
+    font-size: 18px;
+    width: 22px;
+    height: 22px;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+}
+
+.stat-input
+{
+    width: 36px;
+    font-size: 0.85rem !important;
+}
+
+.stat-input input
+{
+    padding: 1px 4px;
+    text-align: right;
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 4px;
+}
+
+.stat-input.Mui-focused input
+{
+    border-color: var(--focus);
+    outline: 1px solid var(--focus);
+}
+
+/* Moves */
+.move-slot
+{
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 1px 4px;
+    border-radius: 4px;
+}
+
+.move-slot span
+{
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.move-status-illegal,
+.move-status-illegal .MuiInputBase-root,
+.move-illegal
+{
+    background-color: rgba(211, 47, 47, 0.18) !important;
+}
+
+.move-status-undefined,
+.move-status-undefined .MuiInputBase-root
+{
+    background-color: rgba(211, 47, 47, 0.35) !important;
+}
+
+.move-status-unknown
+{
+    font-style: italic;
+}
+
+.move-option
+{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.picker-footer
+{
+    display: flex;
+    justify-content: flex-end;
+    padding: 4px 8px;
+    border-top: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+/* Choose Moves and Choose Item dialogs, where only the list scrolls */
+.chooser-dialog
+{
+    height: calc(100% - 64px);
+}
+
+.chooser-dialog .MuiDialogContent-root
+{
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.chooser-body
+{
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.move-slot-fields
+{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(160px, 1fr));
+    gap: 8px;
+    padding-top: 6px;
+}
+
+.move-slot-field
+{
+    min-width: 0;
+}
+
+@media (max-width: 820px)
+{
+    .move-slot-fields
+    {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.move-slot-type
+{
+    display: inline-flex;
+    margin-right: 6px;
+}
+
+.chooser-filters
+{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.chooser-filter
+{
+    width: 140px;
+}
+
+.chooser-clear-filters
+{
+    margin-left: auto !important;
+}
+
+.move-table
+{
+    flex: 1 1 auto;
+    min-height: 120px;
+    overflow: auto;
+}
+
+.move-table-row
+{
+    cursor: pointer;
+}
+
+.move-table-divider td
+{
+    font-weight: 600;
+    opacity: 0.8;
+}
+
+.move-table-select
+{
+    text-transform: none !important;
+    justify-content: flex-start !important;
+    padding: 0 !important;
+    min-width: 0 !important;
+}
+
+.item-list
+{
+    flex: 1 1 auto;
+    min-height: 120px;
+    overflow-y: auto;
+}
+
+.item-list-heading
+{
+    line-height: 32px !important;
+}
+
+.load-more
+{
+    display: flex;
+    justify-content: center;
+    padding: 8px;
+}
+
+.battle-controls
+{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: 8px 12px;
+}
+
+.modify-moves
+{
+    white-space: nowrap;
+}
+
+.card-alert
+{
+    margin-top: 6px;
+    padding: 0 8px !important;
+    font-size: 0.8rem;
+}
+
+/* Save button and its messages stay above the footer and notifications */
+.save-area
+{
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    max-width: min(480px, calc(100vw - 48px));
+}
+
+/* The Save button would cover the Choose Moves, Choose Item and Revert All dialogs */
+body:has(.chooser-dialog) .save-area,
+body:has(.revert-all-dialog) .save-area
+{
+    display: none;
+}
+
+.save-problems
+{
+    margin: 4px 0;
+    padding-left: 16px;
+}
+
+.save-buttons
+{
+    display: flex;
+    gap: 12px;
+}
+
+.preview-list
+{
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+/* Narrow cards stack their sections under the sprite */
+@media (max-width: 480px)
+{
+    .spread-card-content
+    {
+        grid-template-columns: 110px minmax(0, 1fr);
+        grid-template-areas:
+            "side header"
+            "stats stats"
+            "details details"
+            "moves moves"
+            "battle battle";
+    }
+
+    .spread-card-editing .spread-card-content
+    {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+            "header"
+            "side"
+            "stats"
+            "details"
+            "moves"
+            "battle";
+    }
+
+    .spread-sprite
+    {
+        width: 80px;
+        height: 80px;
+    }
+
+    .spread-card-moves
+    {
+        padding-left: 0;
+    }
+
+    .spread-card-moves,
+    .spread-details-edit,
+    .battle-controls
+    {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .move-slot-fields
+    {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }

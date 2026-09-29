@@ -65,6 +65,7 @@ const FILE_EXTERNALLY_MODIFIED = "externallyModified";
 const FILE_FAILED = "failed";
 
 const OPERATION_UPDATE = "update";
+const OPERATION_DELETE = "delete";
 const OPERATION_ADD = "add";
 const OPERATION_REORDER = "reorder";
 const MAX_OPERATIONS = 20000;
@@ -395,6 +396,7 @@ function toPayload(state)
                 abilityComment: entry.abilityComment,
                 hiddenPowerComments: entry.hiddenPowerComments,
                 editable: set.canEdit && entry.editable,
+                placeholder: entry.placeholder,
                 diagnostics: withFile(entry.diagnostics, set.file),
             }));
         }
@@ -494,10 +496,26 @@ function buildPlans(state, operations, baseStats)
                     invalid(`The spread on line ${entry.model.line} of ${set.file} cannot be changed safely.`);
 
                 const plan = getPlan(set);
+                if (plan.updates.get(entry.model)?.deleted)
+                    invalid("A spread cannot be updated and deleted in the same save.");
                 const fields = mergeSpreadFields(operation.fields, plan.updates.get(entry.model)?.fields ?? entry.model.fields);
                 if (fields[TEAM_TYPE_FIELD] !== entry.model.fields[TEAM_TYPE_FIELD])
                     checkTeamType(state, fields[TEAM_TYPE_FIELD]);
                 plan.updates.set(entry.model, { fields, abilityName: getAbilityName(baseStats, fields) });
+                break;
+            }
+            case OPERATION_DELETE:
+            {
+                const entry = typeof operation.entryId === "string" ? state.entries.get(operation.entryId) : undefined;
+                if (entry == null)
+                    invalid("A change refers to a spread that does not exist.");
+                const set = state.sets.get(entry.setId);
+                if (!set.canEdit || !entry.model.editable)
+                    invalid(`The spread on line ${entry.model.line} of ${set.file} cannot be deleted safely.`);
+                const plan = getPlan(set);
+                if (plan.updates.has(entry.model))
+                    invalid("A spread cannot be updated and deleted in the same save.");
+                plan.updates.set(entry.model, { deleted: true });
                 break;
             }
             case OPERATION_ADD:
@@ -538,13 +556,20 @@ function buildPlans(state, operations, baseStats)
                 break;
             }
             default:
-                invalid("Each change must be an update, add or reorder.");
+                invalid("Each change must be an update, delete, add or reorder.");
         }
     }
 
     // Orders can name entries added in the same save, so they are resolved last
     for (const [set, plan] of plans)
     {
+        // Frontier pools pick from their spreads at random, so a set can never be emptied
+        const deletedCount = [...plan.updates.values()].filter((update) => update.deleted).length;
+        if (deletedCount > 0 && set.model.entries.length - deletedCount + plan.additions.length === 0)
+            invalid(`${set.model.name} must keep at least one spread.`);
+        if (plan.additions.some((addition) => plan.updates.get(addition.after)?.deleted))
+            invalid("A new spread cannot be placed after a deleted spread.");
+
         if (plan.requestedOrder == null)
             continue;
 

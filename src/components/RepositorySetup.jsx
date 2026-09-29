@@ -53,7 +53,9 @@ export const DiagnosticList = ({ diagnostics }) =>
     return (
         <Alert severity="warning">
             <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2 }}>
-                {diagnostics.map((diagnostic, index) => <li key={index}>{diagnostic.message}</li>)}
+                {diagnostics.flatMap((diagnostic) =>
+                    Array.isArray(diagnostic.details) && diagnostic.details.length > 0 ? diagnostic.details : [diagnostic.message])
+                    .map((detail, index) => <li key={index}>{detail}</li>)}
             </Stack>
         </Alert>
     );

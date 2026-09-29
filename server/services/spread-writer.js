@@ -24,6 +24,8 @@ const IV_FIELDS = SPREAD_FIELDS.filter((field) => field.name.endsWith("Iv")).map
 const EV_FIELDS = SPREAD_FIELDS.filter((field) => field.name.endsWith("Ev")).map((field) => field.name);
 const TRUE_SYMBOL = "TRUE";
 const FALSE_SYMBOL = "FALSE";
+const LINE_REST_PATTERN = /^[ \t]*(\/\/[^\r\n]*)?/;
+const BLANK_PATTERN = /^[ \t]*$/;
 
 // Fields every new entry writes even when they are zero, matching how the existing spreads are written
 const ALWAYS_WRITTEN_FIELDS = new Set(["species", "nature", ...IV_FIELDS, "ability", "item", "ball", "forSingles", "forDoubles", "modifyMovesDoubles"]);
@@ -215,6 +217,26 @@ function getTail(item)
 {
     return item.comment?.end ?? item.commaEnd ?? item.end;
 }
+
+/**
+ * Returns the text range that removes an entry: its lines, its comma and any comment after it on its last line.
+ *
+ * @param {string} text The file text.
+ * @param {{start: number, end: number, commaEnd: number|null}} entry The entry.
+ * @returns {{start: number, end: number}} The range.
+ */
+function getRemovalRange(text, entry)
+{
+    const tail = entry.commaEnd ?? entry.end;
+    const end = tail + LINE_REST_PATTERN.exec(text.slice(tail))[0].length;
+    const lineStart = text.lastIndexOf("\n", entry.start - 1) + 1;
+    if (lineStart === 0 || !BLANK_PATTERN.test(text.slice(lineStart, entry.start)))
+        return { start: entry.start, end };
+
+    // An entry on its own lines also takes the line break before it
+    return { start: lineStart - (text[lineStart - 2] === "\r" ? 2 : 1), end };
+}
+module.exports.getRemovalRange = getRemovalRange;
 
 /**
  * Applies non-overlapping edits to text.
@@ -463,10 +485,11 @@ function buildSetEdits(text, set, { updates, additions, order }, lineEnding)
 {
     const format = getSetFormatting(text, set, lineEnding);
     const additionsByKey = new Map(additions.map((addition) => [addition.key, addition]));
+    const isDeleted = (item) => typeof item !== "string" && updates.get(item)?.deleted === true;
 
     // Lay out the slots: existing entries, with each new entry after its anchor
     const slots = set.entries.map((entry) => ({ item: entry, entry, segment: entry.segment }));
-    const lastEntry = set.entries[set.entries.length - 1] ?? null;
+    const lastEntry = set.entries.findLast((entry) => !isDeleted(entry)) ?? null;
     let placeholderSlot = null;
     for (const addition of additions)
     {
@@ -510,11 +533,25 @@ function buildSetEdits(text, set, { updates, additions, order }, lineEnding)
         return update == null ? entryText : applyEdits(entryText, buildEntryEdits(text, item, update.fields, update.abilityName, format), item.start);
     };
 
+    // Slots that end up holding a deleted spread are removed from the text
+    const removals = new Map();
+    slots.forEach((slot, index) =>
+    {
+        if (slot.entry != null && isDeleted(finalOrder[index]))
+            removals.set(slot.entry, getRemovalRange(text, slot.entry));
+    });
+
     const edits = [];
     const insertions = new Map();
     slots.forEach((slot, index) =>
     {
         const item = finalOrder[index];
+        if (isDeleted(item))
+        {
+            if (slot.entry != null)
+                edits.push({ ...removals.get(slot.entry), text: "" });
+            return;
+        }
 
         // Entries that stay in place get only their value edits
         if (slot.entry != null)
@@ -536,10 +573,11 @@ function buildSetEdits(text, set, { updates, additions, order }, lineEnding)
             return;
         }
 
-        // New slots are written after their anchor's comma, or at the start of an empty list
-        const anchor = slot.anchor?.entry ?? slot.anchor?.placeholder ?? slot.anchor;
-        const position = anchor != null ? anchor.commaEnd ?? anchor.end : set.listStart + 1;
-        const needsComma = anchor != null && anchor.commaEnd == null;
+        // New slots are written after their anchor's comma, or where a removed anchor was, or at the start of an empty list
+        const anchor = slot.anchor?.entry ?? (typeof slot.anchor?.placeholder === "object" ? slot.anchor.placeholder : slot.anchor);
+        const removed = anchor != null ? removals.get(anchor) : null;
+        const position = removed?.start ?? (anchor != null ? anchor.commaEnd ?? anchor.end : set.listStart + 1);
+        const needsComma = removed == null && anchor != null && anchor.commaEnd == null;
         const group = insertions.get(position) ?? { needsComma, texts: [] };
         group.texts.push(format.lineEnding + format.entry + renderItem(item));
         insertions.set(position, group);
@@ -549,7 +587,7 @@ function buildSetEdits(text, set, { updates, additions, order }, lineEnding)
     for (const [position, { needsComma, texts }] of insertions)
         edits.push({ start: position, end: position, text: (needsComma ? "," : "") + texts.join(",") + (needsComma ? "" : ",") });
 
-    return { edits, order: finalOrder };
+    return { edits, order: finalOrder.filter((item) => !isDeleted(item)) };
 }
 module.exports.buildSetEdits = buildSetEdits;
 

@@ -10,7 +10,7 @@ const path = require("path");
 const request = require("supertest");
 const { StatusCode } = require("status-code-enum");
 
-const { createPokeApiFetch } = require("../helpers/catalog-fixtures");
+const { NORMAL_PALETTE, SHINY_PALETTE, createPokeApiFetch } = require("../helpers/catalog-fixtures");
 const { createFixtureRepositories } = require("../helpers/fixture-repositories");
 
 const ALLOWED_ORIGIN = "http://localhost:3000";
@@ -444,6 +444,18 @@ describe("Workspace API Endpoints", () =>
             expect(species.SPECIES_PIKACHU_SURFING.sprite.source).to.equal("cloud");
             expect(species.SPECIES_IVYSAUR.name).to.equal("Ivysaur");
 
+            // DPE's own sprites come first, with the others kept in case they fail to load
+            expect(species.SPECIES_BULBASAUR.sprite).to.deep.equal(
+            {
+                normal: `/api/images/${workspaceId}/sprites/normal/SPECIES_BULBASAUR.png`,
+                shiny: `/api/images/${workspaceId}/sprites/shiny/SPECIES_BULBASAUR.png`,
+                fallback: { normal: "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/1.png", shiny: "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/1.png" },
+                source: "dpe",
+                exact: true,
+            });
+            expect(species.SPECIES_VENUSAUR.sprite.shiny).to.match(/pokemon\/shiny\/3\.png$/);
+            expect(species.SPECIES_IVYSAUR.sprite.source).to.equal("pokeapi");
+
             // Missing values stay unknown instead of becoming zero
             expect(species.SPECIES_GARCHOMP.baseStats).to.deep.equal({ hp: 108, atk: null, def: null, spAtk: null, spDef: null, spd: null });
             expect(diagnostics.map((diagnostic) => diagnostic.code)).to.include.members(["CATALOG_SPECIES_INCOMPLETE", "BATTLE_FORM_UNAVAILABLE"]);
@@ -451,27 +463,36 @@ describe("Workspace API Endpoints", () =>
 
         it("should take move details from CFRU's compiled branch and report differences from Cloud", async () =>
         {
+            const moveDataFile = path.join(fixture.paths.cloud, "src/data/MoveData.json");
+            const cloudMoves = JSON.parse(fs.readFileSync(moveDataFile, "utf8"));
+            cloudMoves.MOVE_FLY.type = "TYPE_NORMAL";
+            fs.writeFileSync(moveDataFile, JSON.stringify(cloudMoves));
             const { moves, diagnostics } = (await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" })).body;
             expect(moves.MOVE_FLY).to.include({ name: "Fly", power: 100, pp: 15, accuracy: 95, local: true });
+            expect(moves.MOVE_POUND).to.include({ zMovePower: 100, maxMovePower: 90 });
             expect(moves.MOVE_SWIFT).to.include({ accuracy: 0, name: "Swift" });
             expect(moves.MOVE_TACKLE).to.include({ type: "TYPE_NORMAL", pp: 35, power: null, accuracy: null, local: false });
             expect(moves).to.not.have.any.keys("MOVE_NONE", "MOVE_REMOVED");
 
             const codes = diagnostics.map((diagnostic) => diagnostic.code);
             expect(codes).to.include.members(["MOVE_DETAILS_MISSING", "MOVE_DATA_MISMATCH"]);
-            expect(diagnostics.find((diagnostic) => diagnostic.code === "MOVE_DATA_MISMATCH").message).to.include("MOVE_FLY (pp 15 in CFRU, 10 in Cloud)");
+            const mismatch = diagnostics.find((diagnostic) => diagnostic.code === "MOVE_DATA_MISMATCH");
+            expect(mismatch.details).to.include.members(["MOVE_FLY (pp 15 in CFRU, 10 in Cloud)", "MOVE_FLY (type TYPE_FLYING in CFRU, TYPE_NORMAL in Cloud)"]);
+            expect(diagnostics.find((diagnostic) => diagnostic.code === "MOVE_DETAILS_MISSING").details).to.include("MOVE_TACKLE");
         });
 
         it("should list items, balls and types with their icons", async () =>
         {
             const { items, balls, types, assets } = (await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" })).body;
-            expect(items.ITEM_LEFTOVERS).to.deep.equal({ name: "Leftovers", icon: "https://raw.githubusercontent.com/msikma/pokesprite/master/items/hold-item/leftovers.png" });
+            expect(items.ITEM_LEFTOVERS).to.deep.equal({ name: "Leftovers", icon: "https://raw.githubusercontent.com/msikma/pokesprite/master/items/hold-item/leftovers.png", itemType: "ITEM_TYPE_HELD_ITEM" });
+            expect(items.ITEM_VENUSAURITE.itemType).to.equal("ITEM_TYPE_MEGA_STONE");
             expect(items.ITEM_CUSTOM_CHARM.icon).to.equal(`/api/images/${workspaceId}/items/ITEM_CUSTOM_CHARM.png`);
-            expect(items.ITEM_UNNAMED_THING).to.deep.equal({ name: "Unnamed Thing", icon: null });
+            expect(items.ITEM_UNNAMED_THING).to.deep.equal({ name: "Unnamed Thing", icon: null, itemType: null });
             expect(items.ITEM_NONE.icon).to.equal(null);
             expect(balls.BALL_TYPE_POKE_BALL).to.deep.equal({ name: "Poké Ball", icon: "https://raw.githubusercontent.com/msikma/pokesprite/master/items/ball/poke.png" });
             expect(balls.BALL_TYPE_RANDOM).to.deep.equal({ name: "Random", icon: null });
             expect(types.TYPE_FIRE.icon).to.match(/sword-shield\/10\.png$/);
+            expect(types.TYPE_FIRE.symbol).to.match(/pokesprite.*types\/gen8\/fire\.png$/);
             expect(assets.gigantamax).to.equal(`/api/images/${workspaceId}/root/gigantamax.png`);
         });
 
@@ -486,6 +507,34 @@ describe("Workspace API Endpoints", () =>
                 expect(res.headers["content-type"]).to.equal("image/png");
                 expect(res.headers["cross-origin-resource-policy"]).to.equal("same-site");
                 expect(res.body.toString()).to.equal("png");
+            }
+        });
+
+        it("should serve DPE's sprites with the normal or shiny palette", async () =>
+        {
+            const { species } = (await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" })).body;
+
+            for (const [url, palette] of [[species.SPECIES_BULBASAUR.sprite.normal, NORMAL_PALETTE], [species.SPECIES_BULBASAUR.sprite.shiny, SHINY_PALETTE]])
+            {
+                const res = await request(app).get(url).buffer(true).parse((response, callback) =>
+                {
+                    const data = [];
+                    response.on("data", (chunk) => data.push(chunk));
+                    response.on("end", () => callback(null, Buffer.concat(data)));
+                });
+                expect(res.status).to.equal(StatusCode.SuccessOK);
+                expect(res.headers["content-type"]).to.match(/^image\/png/);
+                expect(res.headers["cross-origin-resource-policy"]).to.equal("same-site");
+                const paletteStart = res.body.indexOf("PLTE") + 4;
+                expect([...res.body.subarray(paletteStart, paletteStart + 6)]).to.deep.equal(palette.flat());
+            }
+
+            const base = `/api/images/${workspaceId}/sprites`;
+            for (const url of [`${base}/shiny/SPECIES_VENUSAUR.png`, `${base}/normal/SPECIES_IVYSAUR.png`, `${base}/other/SPECIES_BULBASAUR.png`, `${base}/normal/..%2Fsecret.png`])
+            {
+                const res = await request(app).get(url);
+                expect(res.status).to.equal(StatusCode.ClientErrorNotFound);
+                expect(res.body.error.code).to.equal("IMAGE_NOT_FOUND");
             }
         });
 
@@ -549,6 +598,24 @@ describe("Workspace API Endpoints", () =>
             expect(res.body.species.SPECIES_CHARIZARD.sprite.normal).to.match(/\/6\.png$/);
             expect(res.body.species.SPECIES_CHARIZARD_GIGA.sprite).to.include({ source: "pokesprite" });
             expect(res.body.types.TYPE_FIRE.icon).to.match(/pokesprite.*fire\.png$/);
+        });
+
+        it("should still load without CFRU's item tables, leaving item kinds unknown", async () =>
+        {
+            const itemTables = path.join(fixture.paths.cfru, "src", "Tables", "item_tables.c");
+            const contents = fs.readFileSync(itemTables);
+            fs.rmSync(itemTables);
+            try
+            {
+                const res = await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
+                expect(res.status).to.equal(StatusCode.SuccessOK);
+                expect(res.body.items.ITEM_VENUSAURITE.itemType).to.equal(null);
+                expect(res.body.diagnostics.map((diagnostic) => diagnostic.code)).to.include("ITEM_TYPES_UNAVAILABLE");
+            }
+            finally
+            {
+                fs.writeFileSync(itemTables, contents);
+            }
         });
 
         it("should reuse cached parses on the next load", async () =>

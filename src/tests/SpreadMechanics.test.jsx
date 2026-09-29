@@ -4,13 +4,13 @@ import
 {
     DEFAULT_PREVIEW_LEVEL, HIDDEN_POWER_TYPES, LITTLE_CUP_LEVEL, MOVE_HIDDEN_POWER, STAT_USE, calculateSpreadStats,
     calculateStats, getAbilityLabel, getAbilityOptions, getEffectiveAbility, getHiddenPowerType, getIvAutoFix,
-    getMaxEv, getMegaAbility, getMoveStatUse, getNatureEffect, getSpreadLevel, optimizeHiddenPowerIvs, planIvAutoFix,
+    getMaxEv, getMegaAbility, getMoveStatUse, getNatureEffect, getResetIvs, getSpreadLevel, optimizeHiddenPowerIvs, planIvAutoFix,
     stepEv,
 } from "../../shared/pokemon-mechanics.mjs";
 import
 {
-    BATTLE_TYPES, applyBattleType, getBattleType, getChangedFields, getTeamType, getTeamTypeLabel, isSpreadChanged, setEv,
-    setIv, setMove, setTeamType, validateSpreadFields,
+    BATTLE_TYPES, applyBattleType, changeBattleType, getBattleType, getChangedFields, getFieldSymbol, getTeamType, getTeamTypeLabel,
+    isSpreadChanged, setEv, setFieldSymbol, setIv, setMove, setTeamType, validateSpreadFields,
 } from "../../shared/spread-model.mjs";
 
 const UP = 1;
@@ -79,6 +79,7 @@ const CATALOG =
         MOVE_GYROBALL: { split: "SPLIT_PHYSICAL", power: 1, effect: "EFFECT_HIT" },
         MOVE_PHOTONGEYSER: { split: "SPLIT_SPECIAL", power: 100, effect: "EFFECT_HIT" },
         MOVE_PROTECT: { split: "SPLIT_STATUS", power: 0, effect: "EFFECT_PROTECT" },
+        MOVE_TRICKROOM: { split: "SPLIT_STATUS", power: 0, effect: "EFFECT_TRICK_ROOM" },
         MOVE_HIDDENPOWER: { split: "SPLIT_SPECIAL", power: 60, effect: "EFFECT_HIT" },
         MOVE_MYSTERY: { split: "SPLIT_PHYSICAL", power: null, effect: null },
     },
@@ -367,6 +368,43 @@ describe("Doubles team types", () =>
         expect(getTeamTypeLabel("DOUBLES_ANY_TEAM")).toBe("Any");
         expect(getTeamTypeLabel("CUSTOM_TYPE")).toBe("Custom Type");
     });
+
+    it("reset to Any when the battle type leaves Doubles Only, keeping an omitted value omitted", () =>
+    {
+        const saved = createFields({ forSingles: false, forDoubles: true, modifyMovesDoubles: false, specificTeamType: 0 });
+        const sun = setTeamType(saved, "DOUBLES_SUN_TEAM", TEAM_TYPES, saved);
+        const both = changeBattleType(sun, BATTLE_TYPES.BOTH, { saved, teamTypes: TEAM_TYPES, bothModifyMovesDoubles: true });
+
+        expect(both).toMatchObject({ forSingles: true, forDoubles: true, modifyMovesDoubles: true, specificTeamType: 0 });
+        expect(changeBattleType(sun, BATTLE_TYPES.DOUBLES, { saved, teamTypes: TEAM_TYPES }).specificTeamType).toBe("DOUBLES_SUN_TEAM");
+
+        const savedSun = createFields({ forSingles: false, forDoubles: true, specificTeamType: 1 });
+        expect(changeBattleType(savedSun, BATTLE_TYPES.SINGLES, { saved: savedSun, teamTypes: TEAM_TYPES }).specificTeamType).toBe("DOUBLES_ANY_TEAM");
+        expect(changeBattleType(savedSun, BATTLE_TYPES.SINGLES, { saved: savedSun, teamTypes: [] }).specificTeamType).toBe(1);
+    });
+});
+
+describe("Omitted fields", () =>
+{
+    it("read an omitted 0 as the constant the editor shows for it, with a random ball", () =>
+    {
+        const fields = createFields({ nature: 0, item: 0, ball: 0 });
+
+        expect(getFieldSymbol(fields, "nature")).toBe("NATURE_HARDY");
+        expect(getFieldSymbol(fields, "item")).toBe("ITEM_NONE");
+        expect(getFieldSymbol(fields, "ball")).toBe("BALL_TYPE_RANDOM");
+        expect(getFieldSymbol(fields, "ability")).toBe(1);
+    });
+
+    it("stay omitted when the constant they stand for is chosen again", () =>
+    {
+        const saved = createFields({ item: 0 });
+        const leftovers = setFieldSymbol(saved, "item", "ITEM_LEFTOVERS", saved);
+
+        expect(leftovers.item).toBe("ITEM_LEFTOVERS");
+        expect(setFieldSymbol(leftovers, "item", "ITEM_NONE", saved).item).toBe(0);
+        expect(setFieldSymbol(createFields(), "item", "ITEM_LEFTOVERS").item).toBe("ITEM_LEFTOVERS");
+    });
 });
 
 describe("Hidden Power", () =>
@@ -487,12 +525,36 @@ describe("IV auto-fix", () =>
         const fix = getIvAutoFix(CATALOG, createFields({ moves: ["MOVE_GYROBALL", "MOVE_PROTECT", 0, 0] }));
 
         expect(fix.uses).toEqual({ atk: STAT_USE.USED, spAtk: STAT_USE.UNUSED });
-        expect(fix.changes).toEqual({ spAtkIv: 0 });
+        expect(fix.changes).toEqual({ spAtkIv: 0, spdIv: 0 });
+    });
+
+    it("lowers Speed for Trick Room and Gyro Ball, keeping a Hidden Power's type", () =>
+    {
+        expect(getIvAutoFix(CATALOG, createFields({ moves: ["MOVE_EARTHQUAKE", "MOVE_TRICKROOM", 0, 0] })).changes).toEqual({ spAtkIv: 0, spdIv: 0 });
+        expect(getIvAutoFix(CATALOG, createFields()).changes).toEqual({ spAtkIv: 0 });
+
+        const fields = createFields({ ...showdownIvs([31, 30, 31, 30, 31, 30]), moves: [MOVE_HIDDEN_POWER, "MOVE_TRICKROOM", "MOVE_FLAMETHROWER", 0] });
+        const fix = getIvAutoFix(CATALOG, fields);
+        expect(fix.changes.spdIv).toBeLessThanOrEqual(1);
+        expect(getHiddenPowerType({ ...fields, ...fix.changes })).toBe("TYPE_FIRE");
+        expect(getResetIvs(CATALOG, createFields({ spdIv: 12, moves: ["MOVE_GYROBALL", 0, 0, 0] })).spdIv).toBe(0);
     });
 
     it("keeps both IVs for moves that pick their category from the higher stat", () =>
     {
         expect(getIvAutoFix(CATALOG, createFields({ moves: ["MOVE_PHOTONGEYSER", 0, 0, 0] })).changes).toEqual({});
+    });
+
+    it("raises the attacking IVs a move needs to 31, keeping a Hidden Power's type", () =>
+    {
+        expect(getIvAutoFix(CATALOG, createFields({ atkIv: 12, spAtkIv: 0 })).changes).toEqual({ atkIv: 31 });
+        expect(getIvAutoFix(CATALOG, createFields({ atkIv: 12, spAtkIv: 5, moves: ["MOVE_PHOTONGEYSER", 0, 0, 0] })).changes).toEqual({ atkIv: 31, spAtkIv: 31 });
+
+        const fields = createFields({ ...showdownIvs([31, 30, 31, 30, 31, 30]), spAtkIv: 20, moves: [MOVE_HIDDEN_POWER, "MOVE_FLAMETHROWER", 0, 0] });
+        const fix = getIvAutoFix(CATALOG, fields);
+        expect(fix.changes).toEqual({ atkIv: 0, spAtkIv: 30 });
+        expect(fix.hiddenPowerIvs).toEqual(["spAtkIv"]);
+        expect(getHiddenPowerType({ ...fields, ...fix.changes })).toBe("TYPE_FIRE");
     });
 
     it("keeps Attack at 1 when Hidden Power needs it odd", () =>
@@ -532,6 +594,19 @@ describe("IV auto-fix", () =>
 
         expect(plan.changes).toEqual([{ id: "a", fields: { spAtkIv: 0 }, hiddenPowerIvs: [] }, { id: "c", fields: { spAtkIv: 0 }, hiddenPowerIvs: [] }]);
         expect(plan.skipped).toEqual([{ id: "c", stats: ["atk"] }]);
+    });
+
+    it("resets IVs to 31 except unused attacking IVs, keeping a Hidden Power's type", () =>
+    {
+        const physical = createFields({ hpIv: 3, defIv: 0, spAtkIv: 20, spdIv: 0 });
+        expect(getResetIvs(CATALOG, physical)).toEqual({ hpIv: 31, atkIv: 31, defIv: 31, spAtkIv: 0, spDefIv: 31, spdIv: 31 });
+
+        const fire = createFields({ ...showdownIvs([20, 3, 5, 12, 9, 8]), moves: [MOVE_HIDDEN_POWER, "MOVE_FLAMETHROWER", 0, 0] });
+        const type = getHiddenPowerType(fire);
+        const reset = getResetIvs(CATALOG, fire);
+        expect(getHiddenPowerType(reset)).toBe(type);
+        expect(reset.atkIv).toBeLessThanOrEqual(1);
+        expect(Math.min(reset.hpIv, reset.defIv, reset.spAtkIv, reset.spDefIv, reset.spdIv)).toBeGreaterThanOrEqual(30);
     });
 });
 

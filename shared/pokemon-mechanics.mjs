@@ -48,6 +48,8 @@ const ABILITY_SLOT_ORDER = [ABILITY_SLOTS.FIRST, ABILITY_SLOTS.SECOND, ABILITY_S
 const ABILITY_SLOT_LABELS = { [ABILITY_SLOTS.HIDDEN]: "[H]", [ABILITY_SLOTS.FIRST]: "[1]", [ABILITY_SLOTS.SECOND]: "[2]" };
 
 export const MOVE_HIDDEN_POWER = "MOVE_HIDDENPOWER";
+// Moves that work better the slower the user is
+const SLOW_SPEED_MOVES = new Set(["MOVE_GYROBALL", "MOVE_TRICKROOM"]);
 const MOVE_NONE = "MOVE_NONE";
 
 // Hidden Power types in the order the IV formula selects them, which is not CFRU's type order
@@ -535,18 +537,25 @@ export function getSpreadStatUse(catalog, moves)
 
 /**
  * Works out the auto-fix for one spread: an attacking IV no move needs becomes 0, or 1 when Hidden Power
- * needs it odd. Both stats are chosen together so Hidden Power keeps its type, and no other IV changes.
+ * needs it odd, and Speed does the same when Gyro Ball or Trick Room wants the user slow. An attacking IV a move
+ * needs becomes 31, or 30 when Hidden Power needs it even. The IVs are chosen together so Hidden Power keeps its
+ * type, and no other IV changes.
  *
  * @param {object} catalog The game catalog.
  * @param {object} fields The spread's values.
  * @returns {{changes: Object<string, number>, uses: {atk: string, spAtk: string}, unknown: Array<string>,
  *          hiddenPowerIvs: Array<string>}} The changed IV fields, how each stat is used, the stats left alone
- *          because a move's details are unknown, and the IV fields kept at 1 for Hidden Power.
+ *          because a move's details are unknown, and the IV fields kept off their best value for Hidden Power.
  */
 export function getIvAutoFix(catalog, fields)
 {
     const uses = getSpreadStatUse(catalog, fields.moves);
-    const targets = AUTO_FIX_STATS.filter((stat) => uses[stat] === STAT_USE.UNUSED).map((stat) => IV_FIELDS[stat]);
+    const lowered = AUTO_FIX_STATS.filter((stat) => uses[stat] === STAT_USE.UNUSED).map((stat) => IV_FIELDS[stat]);
+    if (fields.moves.some((move) => SLOW_SPEED_MOVES.has(move)))
+        lowered.push(IV_FIELDS.spd);
+    const raised = AUTO_FIX_STATS.filter((stat) => uses[stat] === STAT_USE.USED).map((stat) => IV_FIELDS[stat]).filter((key) => fields[key] < MAX_IV);
+    const targets = [...lowered, ...raised];
+    const getLoss = (ivs, key) => (lowered.includes(key) ? ivs[key] : MAX_IV - ivs[key]);
     const hiddenPowerType = fields.moves.includes(MOVE_HIDDEN_POWER) ? getHiddenPowerType(fields) : null;
 
     // Keeping each IV's parity always keeps the type, so a choice always exists
@@ -554,13 +563,13 @@ export function getIvAutoFix(catalog, fields)
     for (let mask = 0; mask < 1 << targets.length; ++mask)
     {
         const ivs = { ...fields };
-        targets.forEach((key, bit) => (ivs[key] = (mask >> bit) & 1));
+        targets.forEach((key, bit) => (ivs[key] = lowered.includes(key) ? (mask >> bit) & 1 : MAX_IV - ((mask >> bit) & 1)));
         if (hiddenPowerType != null && getHiddenPowerType(ivs) !== hiddenPowerType)
             continue;
 
-        const total = targets.reduce((sum, key) => sum + ivs[key], 0);
-        const bestTotal = best == null ? Infinity : targets.reduce((sum, key) => sum + best[key], 0);
-        if (total < bestTotal || (total === bestTotal && ivs.atkIv < best.atkIv))
+        const total = targets.reduce((sum, key) => sum + getLoss(ivs, key), 0);
+        const bestTotal = best == null ? Infinity : targets.reduce((sum, key) => sum + getLoss(best, key), 0);
+        if (total < bestTotal || (total === bestTotal && lowered.includes(IV_FIELDS.atk) && ivs.atkIv < best.atkIv))
             best = ivs;
     }
 
@@ -569,8 +578,25 @@ export function getIvAutoFix(catalog, fields)
         changes,
         uses,
         unknown: AUTO_FIX_STATS.filter((stat) => uses[stat] === STAT_USE.UNKNOWN),
-        hiddenPowerIvs: targets.filter((key) => best[key] > 0),
+        hiddenPowerIvs: Object.keys(changes).filter((key) => getLoss(best, key) > 0),
     };
+}
+
+/**
+ * Returns a spread's IVs reset to 31, except attacking IVs no move needs and Speed for Gyro Ball or Trick Room,
+ * which become 0 as the auto-fix would. A Hidden Power keeps its type, using the IVs closest to 31 that give it.
+ *
+ * @param {object} catalog The game catalog.
+ * @param {object} fields The spread's values.
+ * @returns {Object<string, number>} All six IV fields.
+ */
+export function getResetIvs(catalog, fields)
+{
+    let ivs = Object.fromEntries(Object.values(IV_FIELDS).map((key) => [key, MAX_IV]));
+    if (fields.moves.includes(MOVE_HIDDEN_POWER))
+        ivs = optimizeHiddenPowerIvs(ivs, getHiddenPowerType(fields)) ?? ivs;
+
+    return { ...ivs, ...getIvAutoFix(catalog, { ...fields, ...ivs }).changes };
 }
 
 /**

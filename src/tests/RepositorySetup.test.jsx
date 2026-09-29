@@ -6,106 +6,19 @@ import { StatusCode } from "status-code-enum";
 import { vi } from "vitest";
 
 import App from "../App";
+import { DiagnosticList } from "../components/RepositorySetup";
 import { SETTINGS_STORAGE_KEY, SETTINGS_VERSION } from "../SpreadEditorState";
 import { APP_THEME } from "../Theme";
+import { CATALOG_ROUTE, PATHS, apiError, createCatalog, createWorkspace, mockServer } from "./EditorFixtures";
 
 vi.mock("axios", () => ({ default: { post: vi.fn() } }));
 
-const PATHS = { cfru: "C:\\Code\\CFRU", dpe: "C:\\Code\\DPE", cloud: "C:\\Code\\Cloud" };
 const LABELS = { cfru: /^Complete Fire Red Upgrade/, dpe: /^Dynamic Pokemon Expansion/, cloud: /^Unbound Cloud/ };
-const GAMES = [{ id: "cfru", name: "Official Games" }, { id: "unbound", name: "Unbound" }];
-const CATALOG_ROUTE = "/workspaces/:id/catalog";
 const SETUP_TITLE = "Connect Repositories";
 const GAME_TITLE = "Choose Game";
-const SPREAD_SET_COUNT = 7;
-const SPREAD_COUNT = 56;
-const LEARNSET_COUNT = 9;
+const SPREAD_COUNT = 6;
+const FIRST_SET_COUNT = 3;
 const CATALOG_WARNING = "69 moves in this game are not in CFRU's src/Tables/battle_moves.c.";
-
-
-/**
- * Returns a catalog like the server's, without the per-species data the summary does not use.
- *
- * @param {string} gameId The game ID.
- * @param {Array<object>} [diagnostics] The catalog diagnostics.
- * @returns {object} The catalog.
- */
-function createCatalog(gameId, diagnostics = [])
-{
-    return {
-        gameId,
-        name: GAMES.find((game) => game.id === gameId).name,
-        entryCounts: { baseStats: 12, moves: 34, items: 5, ballTypes: 2, learnsets: LEARNSET_COUNT },
-        diagnostics,
-    };
-}
-
-/**
- * Returns a workspace snapshot like the server's.
- *
- * @param {string} workspaceId The workspace ID.
- * @returns {object} The workspace.
- */
-function createWorkspace(workspaceId = "workspace-1")
-{
-    return {
-        workspaceId,
-        repositories: Object.fromEntries(Object.entries(PATHS).map(([kind, path]) => [kind, { path, label: `${kind} label` }])),
-        games: GAMES,
-        diagnostics: [],
-        spreads:
-        {
-            revision: "revision-1",
-            sets: Array.from({ length: SPREAD_SET_COUNT }, (_, index) => ({ id: `set-${index}` })),
-            entries: Array.from({ length: SPREAD_COUNT }, (_, index) => ({ id: `entry-${index}` })),
-            trainers: [],
-        },
-    };
-}
-
-/**
- * Creates an axios-style error response.
- *
- * @param {number} status The HTTP status.
- * @param {string} code The error code.
- * @param {string} message The error message.
- * @param {object} [details] The error details.
- * @returns {object} The error.
- */
-function apiError(status, code, message, details)
-{
-    return { response: { status, data: { error: { code, message, details } } } };
-}
-
-/**
- * Routes mocked axios requests to handlers, recording each call.
- *
- * @param {Object<string, Function>} [overrides] Handlers replacing the defaults.
- * @returns {Array<{route: string, body: object, token: string}>} The recorded calls.
- */
-function mockServer(overrides = {})
-{
-    const calls = [];
-    const handlers =
-    {
-        "/session": () => ({ token: "token-1" }),
-        "/workspaces/load": () => createWorkspace(),
-        [CATALOG_ROUTE]: (body) => createCatalog(body.gameId),
-        "/repositories/pick": () => ({ status: "cancelled" }),
-        ...overrides,
-    };
-
-    axios.post.mockImplementation(async (url, body, options) =>
-    {
-        const route = url.replace(/^.*\/api/, "");
-        const handlerRoute = /^\/workspaces\/[^/]+\/catalog$/.test(route) ? CATALOG_ROUTE : route;
-        const token = options?.headers?.["X-Session-Token"];
-        calls.push({ route, body, token });
-        return { data: await handlers[handlerRoute](body, token) };
-    });
-
-    return calls;
-}
 
 /**
  * Saves settings as a previous session would have.
@@ -145,6 +58,18 @@ async function enterPaths(user, dialog)
 
 describe("Repository setup", () =>
 {
+    test("lists each diagnostic detail separately and falls back to the message", () =>
+    {
+        render(<DiagnosticList diagnostics={[
+            { message: "Two differences", details: ["MOVE_FLY (pp differs)", "MOVE_FLY (type differs)"] },
+            { message: "File missing" },
+        ]} />);
+
+        expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+            "MOVE_FLY (pp differs)", "MOVE_FLY (type differs)", "File missing",
+        ]);
+    });
+
     beforeEach(() =>
     {
         localStorage.clear();
@@ -183,12 +108,9 @@ describe("Repository setup", () =>
 
         await user.click(within(gameDialog).getByRole("button", { name: "Unbound" }));
 
-        expect(await screen.findByRole("heading", { name: "Unbound" })).toBeInTheDocument();
-        expect(screen.getByText(PATHS.cfru)).toBeInTheDocument();
-        expect(screen.getByText("12")).toBeInTheDocument();
-        expect(screen.getByText("Learnsets").nextElementSibling).toHaveTextContent(String(LEARNSET_COUNT));
-        expect(screen.getByText("Spread Sets").nextElementSibling).toHaveTextContent(String(SPREAD_SET_COUNT));
-        expect(screen.getByText("Spreads").nextElementSibling).toHaveTextContent(String(SPREAD_COUNT));
+        expect(await screen.findByRole("button", { name: "Unbound menu" })).toBeInTheDocument();
+        expect(screen.queryByText(`${FIRST_SET_COUNT} of ${SPREAD_COUNT} spreads match`)).not.toBeInTheDocument();
+        expect(screen.getAllByRole("article")).toHaveLength(FIRST_SET_COUNT);
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
         expect(getSavedSettings()).toEqual({ version: SETTINGS_VERSION, paths: PATHS, gameId: "unbound" });
     });
@@ -199,7 +121,7 @@ describe("Repository setup", () =>
         const calls = mockServer();
         render(<App />);
 
-        expect(await screen.findByRole("heading", { name: "Unbound" })).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: "Unbound menu" })).toBeInTheDocument();
         expect(calls.map((call) => call.route)).toEqual(["/session", "/workspaces/load", "/workspaces/workspace-1/catalog"]);
         expect(calls[2].body).toEqual({ gameId: "unbound" });
     });
@@ -210,10 +132,44 @@ describe("Repository setup", () =>
         mockServer({ [CATALOG_ROUTE]: (body) => createCatalog(body.gameId, [{ severity: "warning", code: "MOVE_DETAILS_MISSING", message: CATALOG_WARNING }]) });
         render(<App />);
 
-        expect(await screen.findByText(CATALOG_WARNING)).toBeInTheDocument();
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "View Load Warnings" }));
+        const dialog = await screen.findByRole("dialog", { name: "Load Warnings" });
+        expect(within(dialog).queryByText(CATALOG_WARNING)).not.toBeVisible();
+        await user.click(within(dialog).getByRole("button", { name: /MOVE DETAILS MISSING \(1\)/ }));
+        expect(within(dialog).getByText(CATALOG_WARNING)).toBeVisible();
     });
 
-    test("does not render spread counts when a workspace response lacks spreads", async () =>
+    test("groups mismatches by source and category with each change on a separate line", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        mockServer({ [CATALOG_ROUTE]: (body) => createCatalog(body.gameId,
+        [
+            { severity: "warning", repository: "cfru", file: "src/Tables/battle_moves.c", code: "MOVE_DATA_MISMATCH", message: "2 differences", details: ["MOVE_FLY (pp 15 in CFRU, 10 in Cloud)", "MOVE_FLY (type TYPE_FLYING in CFRU, TYPE_NORMAL in Cloud)"] },
+            { severity: "warning", repository: "cfru", file: "src/Tables/battle_moves.c", code: "MOVE_DATA_MISMATCH", message: "Another difference", details: ["MOVE_POUND (pp 35 in CFRU, 30 in Cloud)"] },
+            { severity: "warning", repository: "cloud", code: "CATALOG_FILE_MISSING", message: "File missing" },
+        ]) });
+        render(<App />);
+
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "View Load Warnings" }));
+        const dialog = await screen.findByRole("dialog", { name: "Load Warnings" });
+        expect(within(dialog).queryByText("MOVE_FLY (pp 15 in CFRU, 10 in Cloud)")).not.toBeVisible();
+        await user.click(within(dialog).getByRole("button", { name: /MOVE DATA MISMATCH \(3\)/ }));
+        expect(within(dialog).getAllByRole("listitem")).toHaveLength(3);
+        expect(within(dialog).getByText("MOVE_FLY (pp 15 in CFRU, 10 in Cloud)")).toBeVisible();
+        expect(within(dialog).getByText("MOVE_FLY (type TYPE_FLYING in CFRU, TYPE_NORMAL in Cloud)")).toBeVisible();
+        expect(within(dialog).getByText("MOVE_POUND (pp 35 in CFRU, 30 in Cloud)")).toBeVisible();
+        expect(within(dialog).queryByText("2 differences")).not.toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: /MOVE DATA MISMATCH \(3\)/ }));
+        expect(within(dialog).queryByText("MOVE_FLY (pp 15 in CFRU, 10 in Cloud)")).not.toBeVisible();
+        await user.click(within(dialog).getByRole("button", { name: /CATALOG FILE MISSING \(1\)/ }));
+        expect(within(dialog).getByText("File missing").closest("li")).toBeVisible();
+    });
+
+    test("explains when a workspace response lacks spreads", async () =>
     {
         saveSettings({ paths: PATHS, gameId: "unbound" });
         mockServer({ "/workspaces/load": () =>
@@ -223,9 +179,9 @@ describe("Repository setup", () =>
         } });
         render(<App />);
 
-        expect(await screen.findByRole("heading", { name: "Unbound" })).toBeInTheDocument();
-        expect(screen.queryByText("Spread Sets")).not.toBeInTheDocument();
-        expect(screen.queryByText("Spreads")).not.toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: "Unbound menu" })).toBeInTheDocument();
+        expect(screen.getByText("The repositories did not provide any spreads.")).toBeInTheDocument();
+        expect(screen.queryByRole("article")).not.toBeInTheDocument();
     });
 
     test("returning launch asks for a new game when the saved one is gone", async () =>
@@ -269,7 +225,7 @@ describe("Repository setup", () =>
 
         rejectLoad = false;
         await user.click(within(dialog).getByRole("button", { name: "Load" }));
-        expect(await screen.findByRole("heading", { name: "Official Games" })).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: "Official Games menu" })).toBeInTheDocument();
         expect(getSavedSettings().paths.cfru).toBe(`${PATHS.cfru}2`);
     });
 
@@ -302,7 +258,7 @@ describe("Repository setup", () =>
         await user.click(within(dialog).getByRole("button", { name: "Load" }));
         await user.click(await screen.findByRole("button", { name: "Official Games" }));
 
-        expect(await screen.findByRole("heading", { name: "Official Games" })).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: "Official Games menu" })).toBeInTheDocument();
         expect(screen.getByText(/blocked saving settings/)).toBeInTheDocument();
     });
 
@@ -364,7 +320,7 @@ describe("Repository setup", () =>
         });
         render(<App />);
 
-        expect(await screen.findByRole("heading", { name: "Official Games" })).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: "Official Games menu" })).toBeInTheDocument();
         expect(calls.map((call) => call.route)).toEqual(
         [
             "/session",
@@ -398,25 +354,28 @@ describe("Repository setup", () =>
         saveSettings({ paths: PATHS, gameId: "unbound" });
         const calls = mockServer();
         render(<App />);
-        await screen.findByRole("heading", { name: "Unbound" });
+        await screen.findByRole("button", { name: "Unbound menu" });
 
-        await user.click(screen.getByRole("button", { name: "Change Game" }));
+        await user.click(screen.getByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Change Game" }));
         const gameDialog = await screen.findByRole("dialog", { name: GAME_TITLE });
         expect(within(gameDialog).getByRole("button", { name: "Unbound" })).toHaveClass("Mui-selected");
         await user.click(within(gameDialog).getByRole("button", { name: "Cancel" }));
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
-        await user.click(screen.getByRole("button", { name: "Change Repositories" }));
+        await user.click(screen.getByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Change Repositories" }));
         const setupDialog = await screen.findByRole("dialog", { name: SETUP_TITLE });
         await user.type(within(setupDialog).getByLabelText(LABELS.dpe), "-edited");
         await user.click(within(setupDialog).getByRole("button", { name: "Cancel" }));
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-        expect(screen.getByRole("heading", { name: "Unbound" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Unbound menu" })).toBeInTheDocument();
         expect(calls.filter((call) => call.route === "/workspaces/load")).toHaveLength(1);
 
-        await user.click(screen.getByRole("button", { name: "Change Game" }));
+        await user.click(screen.getByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Change Game" }));
         await user.click(within(await screen.findByRole("dialog", { name: GAME_TITLE })).getByRole("button", { name: "Official Games" }));
-        expect(await screen.findByRole("heading", { name: "Official Games" })).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: "Official Games menu" })).toBeInTheDocument();
         expect(getSavedSettings().gameId).toBe("cfru");
     });
 });

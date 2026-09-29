@@ -4,8 +4,10 @@ const { StatusCode } = require('status-code-enum');
 
 const { resolveCloudImage } = require('../services/assets');
 const { getWorkspace } = require('../services/repositories');
+const { renderSprite } = require('../services/sprites');
 
 const IMAGE_CACHE_CONTROL = 'private, max-age=3600';
+const PNG_CONTENT_TYPE = 'image/png';
 
 // Image elements cannot send the session token, so other websites are kept out by these instead
 const IMAGE_HEADERS =
@@ -15,6 +17,21 @@ const IMAGE_HEADERS =
     'X-Content-Type-Options': 'nosniff',
 };
 
+
+/**
+ * Serves a species' sprite drawn from the local DPE repository's graphics.
+ * @route GET /api/images/:workspaceId/sprites/:variant/:file
+ * @param {string} req.params.workspaceId The workspace ID.
+ * @param {string} req.params.variant normal or shiny.
+ * @param {string} req.params.file The species' constant with .png, such as SPECIES_CHARIZARD.png.
+ * @returns {File} 200 - The image
+ */
+router.get('/:workspaceId/sprites/:variant/:file', async (req, res) =>
+{
+    const { workspaceId, variant, file } = req.params;
+    const image = await renderSprite(getWorkspace(workspaceId), variant, file);
+    res.status(StatusCode.SuccessOK).set(IMAGE_HEADERS).type(PNG_CONTENT_TYPE).send(image);
+});
 
 /**
  * Serves one of the local Unbound Cloud repository's public images.

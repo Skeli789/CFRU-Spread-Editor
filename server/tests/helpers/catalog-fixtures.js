@@ -1,8 +1,11 @@
 /**
  * Synthetic CFRU move data, DPE learnset sources and Unbound Cloud catalog data for catalog tests.
  * They follow the real files' layouts, including their quirks: headings with typos, a byte order mark,
- * GCC's obsolete "[INDEX] value" designator and numeric padding entries.
+ * GCC's obsolete "[INDEX] value" designator and numeric padding entries. DPE's sprite tables point at tiny
+ * indexed PNGs.
  */
+
+const zlib = require("zlib");
 
 const CRLF = "\r\n";
 const LF = "\n";
@@ -68,6 +71,26 @@ const BATTLE_MOVES =
     "",
 ].join(CRLF);
 module.exports.BATTLE_MOVES = BATTLE_MOVES;
+
+const ITEM_TABLES =
+[
+    "#include \"../defines.h\"",
+    "",
+    "const struct FlingStruct gFlingTable[ITEMS_COUNT] =",
+    "{",
+    "\t[ITEM_LEFTOVERS] = {10, 0},",
+    "};",
+    "",
+    "const u16 gItemsByType[ITEMS_COUNT] =",
+    "{",
+    "\t[ITEM_LEFTOVERS] = ITEM_TYPE_HELD_ITEM,",
+    "\t[ITEM_VENUSAURITE] = ITEM_TYPE_MEGA_STONE,",
+    "\t[ITEM_NORMALIUM_Z] = ITEM_TYPE_Z_CRYSTAL,",
+    "\t[ITEM_CUSTOM_CHARM] = 5,",
+    "};",
+    "",
+].join(CRLF);
+module.exports.ITEM_TABLES = ITEM_TABLES;
 
 const DPE_DEFINES =
 [
@@ -241,6 +264,92 @@ const DPE_FILES =
     "src/tutor_compatibility/9 - Beyond The Table.txt": "Tutor 9: Beyond The Table\nKYUREM\n",
 };
 module.exports.DPE_FILES = DPE_FILES;
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_BIT_DEPTH = 4;
+const PNG_COLOR_TYPE_INDEXED = 3;
+
+/**
+ * Encodes one PNG chunk.
+ *
+ * @param {string} type The chunk type.
+ * @param {Buffer} data The chunk data.
+ * @returns {Buffer} The chunk.
+ */
+function pngChunk(type, data)
+{
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const length = Buffer.alloc(4);
+    const crc = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    crc.writeUInt32BE(zlib.crc32(body));
+    return Buffer.concat([length, body, crc]);
+}
+
+/**
+ * Creates a 2x1 16 color indexed PNG like DPE's sprites, drawing palette colors 0 and 1.
+ *
+ * @param {Array<[number, number, number]>} colors The palette.
+ * @returns {Buffer} The PNG.
+ */
+function createIndexedPng(colors)
+{
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(2, 0);
+    header.writeUInt32BE(1, 4);
+    header[8] = PNG_BIT_DEPTH;
+    header[9] = PNG_COLOR_TYPE_INDEXED;
+
+    // One row with no filter, then pixels 0 and 1 packed into a byte
+    const pixels = zlib.deflateSync(Buffer.from([0, 0x01]));
+    return Buffer.concat([PNG_SIGNATURE, pngChunk("IHDR", header), pngChunk("gAMA", Buffer.alloc(4)), pngChunk("PLTE", Buffer.from(colors.flat())),
+        pngChunk("IDAT", pixels), pngChunk("IEND", Buffer.alloc(0))]);
+}
+module.exports.createIndexedPng = createIndexedPng;
+
+const NORMAL_PALETTE = [[0, 255, 0], [255, 0, 0]];
+module.exports.NORMAL_PALETTE = NORMAL_PALETTE;
+const SHINY_PALETTE = [[0, 255, 0], [0, 0, 255]];
+module.exports.SHINY_PALETTE = SHINY_PALETTE;
+
+/**
+ * Returns one of DPE's species graphics tables.
+ *
+ * @param {string} struct The table's struct.
+ * @param {string} name The table's name.
+ * @param {Array<string>} entries The entries.
+ * @returns {string} The source.
+ */
+function spriteTable(struct, name, entries)
+{
+    return ["#include \"defines.h\"", "", `const struct ${struct} ${name}[NUM_SPECIES] =`, "{", ...entries.map((entry) => `\t${entry},`), "};", ""].join(LF);
+}
+
+// Bulbasaur has every graphic, Ivysaur's image is missing and Venusaur has no shiny palette
+const DPE_SPRITE_FILES =
+{
+    "src/Front_Pic_Table.c": spriteTable("CompressedSpriteSheet", "gMonFrontPicTable",
+    [
+        "[SPECIES_BULBASAUR] = {gFrontSprite001BulbasaurTiles, (64 * 64) / 2, SPECIES_BULBASAUR}",
+        "[SPECIES_IVYSAUR] = {gFrontSprite002IvysaurTiles, (64 * 64) / 2, SPECIES_IVYSAUR}",
+        "[SPECIES_VENUSAUR] = {gFrontSprite003VenusaurTiles, (64 * 64) / 2, SPECIES_VENUSAUR}",
+    ]),
+    "src/Palette_Table.c": spriteTable("CompressedSpritePalette", "gMonPaletteTable",
+    [
+        "[SPECIES_BULBASAUR] = {gFrontSprite001BulbasaurPal, SPECIES_BULBASAUR, 0x0}",
+        "[SPECIES_IVYSAUR] = {gFrontSprite002IvysaurPal, SPECIES_IVYSAUR, 0x0}",
+        "[SPECIES_VENUSAUR] = {gFrontSprite003VenusaurPal, SPECIES_VENUSAUR, 0x0}",
+    ]),
+    "src/Shiny_Palette_Table.c": spriteTable("CompressedSpritePalette", "gMonShinyPaletteTable",
+    [
+        "[SPECIES_BULBASAUR] = {gBackShinySprite001BulbasaurPal, SPECIES_BULBASAUR + NUM_SPECIES, 0x0}",
+        "[SPECIES_VENUSAUR] = {gBackShinySprite003VenusaurPal, SPECIES_VENUSAUR + NUM_SPECIES, 0x0}",
+    ]),
+    "graphics/frontspr/gFrontSprite001Bulbasaur.png": createIndexedPng(NORMAL_PALETTE),
+    "graphics/frontspr/gFrontSprite003Venusaur.png": createIndexedPng(NORMAL_PALETTE),
+    "graphics/backspr/gBackShinySprite001Bulbasaur.png": createIndexedPng(SHINY_PALETTE),
+};
+module.exports.DPE_SPRITE_FILES = DPE_SPRITE_FILES;
 
 /**
  * Returns a complete Cloud base stats entry.

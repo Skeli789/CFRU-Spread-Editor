@@ -32,6 +32,10 @@ const BATTLE_TYPE_FLAGS =
 
 const TEAM_TYPE_FIELD = "specificTeamType";
 const TEAM_TYPE_PATTERN = /^DOUBLES_(.+)_TEAM$/;
+export const ANY_TEAM_TYPE = "DOUBLES_ANY_TEAM";
+
+// The constant an omitted field's 0 is shown as; an omitted ball counts as random (user decision)
+const ZERO_SYMBOLS = { nature: "NATURE_HARDY", item: "ITEM_NONE", ball: "BALL_TYPE_RANDOM" };
 
 
 /**
@@ -68,6 +72,56 @@ export function applyBattleType(fields, type, bothModifyMovesDoubles = fields.mo
         return fields;
 
     return { ...fields, modifyMovesDoubles: bothModifyMovesDoubles, ...flags };
+}
+
+/**
+ * Changes a spread's battle type in the editor. Only Doubles Only spreads choose a doubles team type, so
+ * any other battle type resets it to Any.
+ *
+ * @param {object} fields The spread's values.
+ * @param {string} type The BATTLE_TYPES value, other than NEITHER.
+ * @param {object} [options] The context.
+ * @param {object} [options.saved] The saved values, so an omitted team type stays omitted.
+ * @param {Array<{name: string, value: number|null}>} [options.teamTypes] The team types from the spreads snapshot.
+ * @param {boolean} [options.bothModifyMovesDoubles] The Modify Moves Doubles value to use for Both.
+ * @returns {object} The new values.
+ */
+export function changeBattleType(fields, type, { saved = fields, teamTypes = [], bothModifyMovesDoubles } = {})
+{
+    const changed = applyBattleType(fields, type, bothModifyMovesDoubles);
+    if (type === BATTLE_TYPES.DOUBLES || changed === fields || teamTypes.length === 0)
+        return changed;
+
+    return setTeamType(changed, ANY_TEAM_TYPE, teamTypes, saved);
+}
+
+/**
+ * Returns the constant a field names, treating an omitted field's 0 as the constant CFRU gives it.
+ *
+ * @param {object} fields The spread's values.
+ * @param {string} name The field, such as item.
+ * @returns {*} The constant, or the raw value when it is not an omitted 0.
+ */
+export function getFieldSymbol(fields, name)
+{
+    const value = fields[name];
+    return value === 0 && Object.hasOwn(ZERO_SYMBOLS, name) ? ZERO_SYMBOLS[name] : value;
+}
+
+/**
+ * Sets a field to a constant. Choosing what the field was saved as restores the saved value exactly, so an
+ * omitted field stays omitted.
+ *
+ * @param {object} fields The spread's values.
+ * @param {string} name The field.
+ * @param {string} symbol The constant.
+ * @param {object} [saved] The saved values.
+ * @returns {object} The new values.
+ */
+export function setFieldSymbol(fields, name, symbol, saved = fields)
+{
+    const value = getFieldSymbol(saved, name) === symbol ? saved[name] : symbol;
+    return { ...fields, [name]: value };
 }
 
 /**

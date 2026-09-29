@@ -315,7 +315,7 @@ function buildLearnsets({ dpe, species, moveNames, gameMoves, cfruMacros })
     addCompatibility(dpe.tmCompatibility, dpe.tmMoves, "TM", LEARN_SOURCES.TM);
     addCompatibility(dpe.tutorCompatibility, dpe.tutorMoves, "Tutor", LEARN_SOURCES.TUTOR);
     if (unknownSpecies.size > 0)
-        diagnostics.push({ severity: SEVERITY_WARNING, code: "COMPATIBILITY_SPECIES_UNKNOWN", message: `DPE's TM and tutor lists name ${unknownSpecies.size} species that have no learnset, such as ${formatExamples(unknownSpecies)}.`, repository: REPOSITORY_DPE });
+        diagnostics.push({ severity: SEVERITY_WARNING, code: "COMPATIBILITY_SPECIES_UNKNOWN", message: `DPE's TM and tutor lists name ${unknownSpecies.size} species that have no learnset, such as ${formatExamples(unknownSpecies)}.`, repository: REPOSITORY_DPE, details: [...unknownSpecies] });
 
     // Evolutions keep their pre-evolutions' moves, and some forms keep each other's
     const edges = [];
@@ -396,7 +396,7 @@ function buildLearnsets({ dpe, species, moveNames, gameMoves, cfruMacros })
     }
 
     if (dpe.levelUp != null && missing.length > 0)
-        diagnostics.push({ severity: SEVERITY_WARNING, code: "LEARNSET_MISSING", message: `${missing.length} species have no level-up learnset in DPE, so their move legality is unknown. For example: ${formatExamples(missing)}.`, repository: REPOSITORY_DPE });
+        diagnostics.push({ severity: SEVERITY_WARNING, code: "LEARNSET_MISSING", message: `${missing.length} species have no level-up learnset in DPE, so their move legality is unknown. For example: ${formatExamples(missing)}.`, repository: REPOSITORY_DPE, details: missing });
 
     return { learnsets, diagnostics };
 }
@@ -445,7 +445,7 @@ function buildBattleForms(evolutions, gameSpecies)
     }
 
     const diagnostics = missing.size === 0 ? [] :
-        [{ severity: SEVERITY_WARNING, code: "BATTLE_FORM_UNAVAILABLE", message: `${missing.size} Mega Evolution or Gigantamax forms in DPE are not species in this game, so they cannot be previewed. For example: ${formatExamples(missing)}.`, repository: REPOSITORY_DPE, file: DPE_EVOLUTION_FILE }];
+        [{ severity: SEVERITY_WARNING, code: "BATTLE_FORM_UNAVAILABLE", message: `${missing.size} Mega Evolution or Gigantamax forms in DPE are not species in this game, so they cannot be previewed. For example: ${formatExamples(missing)}.`, repository: REPOSITORY_DPE, file: DPE_EVOLUTION_FILE, details: [...missing] }];
 
     return { forms, diagnostics };
 }

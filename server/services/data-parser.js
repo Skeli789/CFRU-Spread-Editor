@@ -1,6 +1,7 @@
 /**
  * Reads game data tables from CFRU and DPE C sources: move details, level-up learnsets, egg moves,
- * TM and tutor tables, TM and tutor compatibility lists, the evolution table and the doubles team types.
+ * TM and tutor tables, TM and tutor compatibility lists, the evolution table, the doubles team types, item kinds
+ * and DPE's species graphics tables.
  * Only the text the compiler would see is read, and nothing is evaluated.
  */
 
@@ -31,11 +32,13 @@ const DECLARATOR_WRAPPERS = new Set([KIND_ARRAY_DECLARATOR, KIND_POINTER_DECLARA
 const SEVERITY_WARNING = "warning";
 
 const BATTLE_MOVES_ARRAY = "gBattleMoves";
+const MAX_MOVE_POWERS_ARRAY = "gDynamaxMovePowers";
 const LEVEL_UP_TABLE = "gLevelUpLearnsets";
 const EGG_MOVES_ARRAY = "gEggMoves";
 const TM_TABLE = "gTMHMMoves";
 const TUTOR_TABLE = "gMoveTutorMoves";
 const EVOLUTION_TABLE = "gEvolutionTable";
+const ITEM_TYPES_TABLE = "gItemsByType";
 const LEVEL_UP_MACRO = "LEVEL_UP_MOVE";
 const LEVEL_UP_END = "LEVEL_UP_END";
 const EGG_MOVES_MACRO = "egg_moves";
@@ -48,10 +51,12 @@ const EVOLUTION_FIELD_COUNT = 4;
 // The enum listing the values of BattleTowerSpread.specificTeamType starts with this member
 const TEAM_TYPE_ANY = "DOUBLES_ANY_TEAM";
 
-// Move fields read as numbers, symbols or a list of flags; others such as Z-Move data are not needed
-const MOVE_NUMBER_FIELDS = ["power", "accuracy", "pp", "priority", "secondaryEffectChance"];
+// Move fields read as numbers, symbols or a list of flags; others such as the Z-Move effect are not needed
+const MOVE_NUMBER_FIELDS = ["power", "accuracy", "pp", "priority", "secondaryEffectChance", "zMovePower"];
 const MOVE_SYMBOL_FIELDS = ["effect", "type", "target", "split"];
 const MOVE_FLAGS_FIELD = "flags";
+const MOVE_FIELD_NAMES = { z_move_power: "zMovePower" };
+const MAX_MOVE_POWER_FIELD = "maxMovePower";
 
 const COMPATIBILITY_FILE_PATTERN = /^(\d+)\s*-\s*(.+)\.txt$/i;
 const COMPATIBILITY_HEADING_PATTERN = /^[^:]*?\d+\s*:\s*(.+?)\s*$/;
@@ -276,7 +281,8 @@ function readBattleMove(listNode)
     for (const pair of getElements(listNode).filter((node) => node.kind() === KIND_INITIALIZER_PAIR))
     {
         const designator = pair.children().find((node) => node.kind() === KIND_FIELD_DESIGNATOR);
-        const field = designator?.children().find((node) => node.kind() === KIND_FIELD_IDENTIFIER)?.text();
+        const sourceField = designator?.children().find((node) => node.kind() === KIND_FIELD_IDENTIFIER)?.text();
+        const field = MOVE_FIELD_NAMES[sourceField] ?? sourceField;
         const valueNode = pair.field("value");
         if (field == null || valueNode == null || !Object.hasOwn(move, field))
             continue;
@@ -300,7 +306,27 @@ function readBattleMove(listNode)
 }
 
 /**
- * Parses CFRU's gBattleMoves table.
+ * Reads gDynamaxMovePowers, which only exists when CFRU compiles Dynamax.
+ *
+ * @param {Map<string, object>} arrays The file's arrays.
+ * @param {Array<object>} diagnostics Diagnostics to append to.
+ * @returns {Map<string, number|null>|null} Max Move powers by move, or null when the table is not compiled.
+ */
+function readMaxMovePowers(arrays, diagnostics)
+{
+    const array = arrays.get(MAX_MOVE_POWERS_ARRAY);
+    if (array == null)
+        return null;
+
+    const powers = new Map();
+    for (const [key, valueNode] of readDesignatedEntries(array, MAX_MOVE_POWERS_ARRAY, diagnostics))
+        powers.set(key, readSignedInteger(valueNode));
+
+    return powers;
+}
+
+/**
+ * Parses CFRU's gBattleMoves table, with each move's Max Move power from gDynamaxMovePowers.
  *
  * @param {string} text The battle_moves.c text.
  * @param {Map<string, object>} macros The configuration macros.
@@ -314,6 +340,9 @@ function parseBattleMoves(text, macros)
     if (array == null)
         return { moves: null, diagnostics };
 
+    // Moves missing from the Max Move table get C's 0
+    const maxMovePowers = readMaxMovePowers(arrays, diagnostics);
+
     // Values the editor cannot read are left unknown rather than guessed
     const moves = {};
     let unreadable = 0;
@@ -326,7 +355,7 @@ function parseBattleMoves(text, macros)
         }
 
         const result = readBattleMove(valueNode);
-        moves[key] = result.move;
+        moves[key] = { ...result.move, [MAX_MOVE_POWER_FIELD]: maxMovePowers == null ? null : maxMovePowers.get(key) ?? 0 };
         unreadable += result.unreadable;
     }
 
@@ -637,3 +666,70 @@ function parseTeamTypes(text, macros)
     return { teamTypes, diagnostics };
 }
 module.exports.parseTeamTypes = parseTeamTypes;
+
+/**
+ * Parses CFRU's gItemsByType table, which tells item kinds such as Z-Crystals and Mega Stones apart.
+ *
+ * @param {string} text The item_tables.c text.
+ * @param {Map<string, object>} macros The configuration macros.
+ * @returns {{itemTypes: Object<string, string>|null, diagnostics: Array<object>}} Each listed item's ITEM_TYPE_*
+ *          constant, or null when the table cannot be found, and diagnostics.
+ */
+function parseItemTypes(text, macros)
+{
+    const { arrays, diagnostics } = readSourceArrays(text, macros);
+    const table = requireArray(arrays, ITEM_TYPES_TABLE, diagnostics);
+    if (table == null)
+        return { itemTypes: null, diagnostics };
+
+    const itemTypes = {};
+    let unreadable = 0;
+    for (const [item, valueNode] of readDesignatedEntries(table, ITEM_TYPES_TABLE, diagnostics))
+    {
+        if (valueNode?.kind() === KIND_IDENTIFIER)
+            itemTypes[item] = valueNode.text();
+        else
+            unreadable++;
+    }
+
+    if (unreadable > 0)
+        diagnostics.push({ severity: SEVERITY_WARNING, code: "ITEM_TYPE_UNREADABLE", message: `${unreadable} items in ${ITEM_TYPES_TABLE} are not given an ITEM_TYPE_* constant, so their kind is unknown.` });
+
+    return { itemTypes, diagnostics };
+}
+module.exports.parseItemTypes = parseItemTypes;
+
+/**
+ * Parses one of DPE's species graphics tables, such as gMonFrontPicTable, whose entries start with the
+ * graphic's symbol.
+ *
+ * @param {string} text The table's source text.
+ * @param {Map<string, object>} macros DPE's configuration macros.
+ * @param {string} name The array name.
+ * @returns {{symbols: Object<string, string>|null, diagnostics: Array<object>}} Each species' graphic symbol, or
+ *          null when the table cannot be found, and diagnostics.
+ */
+function parseSpriteTable(text, macros, name)
+{
+    const { arrays, diagnostics } = readSourceArrays(text, macros);
+    const table = requireArray(arrays, name, diagnostics);
+    if (table == null)
+        return { symbols: null, diagnostics };
+
+    const symbols = {};
+    let unreadable = 0;
+    for (const [species, valueNode] of readDesignatedEntries(table, name, diagnostics))
+    {
+        const first = valueNode?.kind() === KIND_INITIALIZER_LIST ? getElements(valueNode)[0] : null;
+        if (first?.kind() === KIND_IDENTIFIER)
+            symbols[species] = first.text();
+        else
+            unreadable++;
+    }
+
+    if (unreadable > 0)
+        diagnostics.push({ severity: SEVERITY_WARNING, code: "SPRITE_ENTRY_UNREADABLE", message: `${unreadable} species in ${name} do not start with a graphic's name, so they have no sprite.` });
+
+    return { symbols, diagnostics };
+}
+module.exports.parseSpriteTable = parseSpriteTable;

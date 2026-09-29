@@ -35,7 +35,7 @@ const Footer = () =>
                     <Link to="/terms" className="footer-link">Terms of Service</Link>
                 </div>
                 <div className="author">
-                    <span>Created by {packageJson.author}</span>
+                    <span>Created by {packageJson.author} for Unbound</span>
                 </div>
             </div>
         </div>

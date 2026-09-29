@@ -32,6 +32,23 @@
 .header .buttons
 {
     margin-right: 0.5rem;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.header-game-button
+{
+    min-width: 0 !important;
+    gap: 6px;
+}
+
+.header-game-name
+{
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: min(32vw, 220px);
 }
 
 .header .buttons .button

@@ -9,16 +9,19 @@ const { StatusCode } = require("status-code-enum");
 
 const { LEARNSET_COMPLETE } = require("../../shared/catalog.mjs");
 const { ApiError } = require("../middleware/errors");
-const { getBallIcon, getGigantamaxIcon, getItemIcon, getSpeciesSprites, getTypeIcon, readCloudImages } = require("./assets");
-const { parseBattleMoves } = require("./data-parser");
+const { getBallIcon, getGigantamaxIcon, getItemIcon, getSpeciesIcon, getSpeciesSprites, getTypeIcon, getTypeSymbol, readCloudImages } = require("./assets");
+const { parseBattleMoves, parseItemTypes } = require("./data-parser");
 const { buildBattleForms, buildLearnsets, loadDpeData } = require("./learnsets");
 const { createParseCache, getParserVersion, hash, hashMacros } = require("./parse-cache");
 const { createPokeApiIndex } = require("./pokeapi");
 const { evaluatePreprocessor } = require("./preprocessor");
 const { CFRU_CONFIG_FILE, REPOSITORY_CFRU, REPOSITORY_CLOUD, getRootKey, readOwnedFile } = require("./repositories");
+const { getDpeSpriteUrls, loadSpriteTables } = require("./sprites");
 
 const CFRU_MOVES_FILE = "src/Tables/battle_moves.c";
+const CFRU_ITEM_TABLES_FILE = "src/Tables/item_tables.c";
 const CACHE_BATTLE_MOVES = "battle-moves";
+const CACHE_ITEM_TYPES = "item-types";
 const REPOSITORY_FILE_UNAVAILABLE = "REPOSITORY_FILE_UNAVAILABLE";
 
 // Cloud data shared by every game; each is optional, since the editor can fall back to constant names
@@ -61,6 +64,7 @@ const COMPARED_MOVE_FIELDS = ["type", "split", "pp"];
 
 // Unbound's own shiny colors apply only to Unbound games, as in Cloud's GetIconSpeciesLinkBySpecies
 const UNBOUND_GAME_PATTERN = /^unbound(?:_|$)/;
+const SPRITE_SOURCE_DPE = "dpe";
 
 const UNRESOLVED_LABELS = { species: "species", moves: "moves", items: "items", balls: "balls", natures: "natures" };
 const EXAMPLE_COUNT = 5;
@@ -193,16 +197,34 @@ function formatExamples(values)
 }
 
 /**
+ * Returns a species' sprites: DPE's own when it draws the species, otherwise PokeAPI's or Cloud's.
+ *
+ * @param {string} symbol The SPECIES_* constant.
+ * @param {object} spriteInfo What is known about the species, for getSpeciesSprites.
+ * @param {object} context Sprite lookups: the workspace, DPE's sprite files, the PokeAPI index and Cloud images.
+ * @returns {object} The sprites, with the others as a fallback when DPE's are used.
+ */
+function getSprites(symbol, spriteInfo, { workspace, dpeSprites, index, images })
+{
+    const other = getSpeciesSprites(symbol, spriteInfo, { index, images });
+    const dpe = getDpeSpriteUrls(workspace, dpeSprites, symbol);
+    if (dpe == null)
+        return other;
+
+    return { normal: dpe.normal, shiny: dpe.shiny ?? other.shiny, fallback: { normal: other.normal, shiny: other.shiny }, source: SPRITE_SOURCE_DPE, exact: true };
+}
+
+/**
  * Builds the game's species with their stats, types, abilities, names and sprites.
  *
  * @param {object} baseStats The game's BaseStats.json.
  * @param {object} shared The shared Cloud data.
- * @param {object} context Sprite lookups: the PokeAPI index, Cloud images, Cloud icon names and whether the
- *        game uses Unbound's shiny colors.
+ * @param {object} context Sprite lookups: the workspace, DPE's sprite files, the PokeAPI index, Cloud images, Cloud
+ *        icon names and whether the game uses Unbound's shiny colors.
  * @param {Array<object>} diagnostics Diagnostics to append to.
  * @returns {Object<string, object>} Species by constant.
  */
-function buildSpecies(baseStats, shared, { index, images, iconNames, unboundGame }, diagnostics)
+function buildSpecies(baseStats, shared, { iconNames, unboundGame, ...spriteContext }, diagnostics)
 {
     const species = {};
     const incomplete = [];
@@ -232,14 +254,15 @@ function buildSpecies(baseStats, shared, { index, images, iconNames, unboundGame
             baseStats: stats,
             types,
             abilities,
-            sprite: getSpeciesSprites(symbol, spriteInfo, { index, images }),
+            icon: getSpeciesIcon(symbol, iconNames[symbol]),
+            sprite: getSprites(symbol, spriteInfo, spriteContext),
             megas: [],
             gigantamax: null,
         };
     }
 
     if (incomplete.length > 0)
-        diagnostics.push({ severity: SEVERITY_WARNING, code: "CATALOG_SPECIES_INCOMPLETE", message: `${incomplete.length} species are missing base stats, types or abilities, which are shown as unknown. For example: ${formatExamples(incomplete)}.`, repository: REPOSITORY_CLOUD });
+        diagnostics.push({ severity: SEVERITY_WARNING, code: "CATALOG_SPECIES_INCOMPLETE", message: `${incomplete.length} species are missing base stats, types or abilities, which are shown as unknown. For example: ${formatExamples(incomplete)}.`, repository: REPOSITORY_CLOUD, details: incomplete });
 
     return species;
 }
@@ -268,9 +291,11 @@ function buildMoves(gameMoves, localMoves, shared, diagnostics)
             missing.push(symbol);
         else if (cloud != null)
         {
-            const field = COMPARED_MOVE_FIELDS.find((key) => cloud[key] != null && local[key] != null && cloud[key] !== local[key]);
-            if (field != null)
-                differences.push(`${symbol} (${field} ${local[field]} in CFRU, ${cloud[field]} in Cloud)`);
+            for (const field of COMPARED_MOVE_FIELDS)
+            {
+                if (cloud[field] != null && local[field] != null && cloud[field] !== local[field])
+                    differences.push(`${symbol} (${field} ${local[field]} in CFRU, ${cloud[field]} in Cloud)`);
+            }
         }
 
         // Without CFRU's entry only Cloud's type, category and PP are known
@@ -281,6 +306,8 @@ function buildMoves(gameMoves, localMoves, shared, diagnostics)
             split: local?.split ?? cloud?.split ?? null,
             pp: local?.pp ?? cloud?.pp ?? null,
             power: local?.power ?? null,
+            zMovePower: local?.zMovePower ?? null,
+            maxMovePower: local?.maxMovePower ?? null,
             accuracy: local?.accuracy ?? null,
             priority: local?.priority ?? null,
             target: local?.target ?? null,
@@ -292,9 +319,9 @@ function buildMoves(gameMoves, localMoves, shared, diagnostics)
     }
 
     if (missing.length > 0)
-        diagnostics.push({ severity: SEVERITY_WARNING, code: "MOVE_DETAILS_MISSING", message: `${missing.length} moves in this game are not in CFRU's ${CFRU_MOVES_FILE}, so their power and accuracy are unknown. For example: ${formatExamples(missing)}.`, repository: REPOSITORY_CFRU, file: CFRU_MOVES_FILE });
+        diagnostics.push({ severity: SEVERITY_WARNING, code: "MOVE_DETAILS_MISSING", message: `${missing.length} moves in this game are not in CFRU's ${CFRU_MOVES_FILE}, so their power and accuracy are unknown. For example: ${formatExamples(missing)}.`, repository: REPOSITORY_CFRU, file: CFRU_MOVES_FILE, details: missing });
     if (differences.length > 0)
-        diagnostics.push({ severity: SEVERITY_WARNING, code: "MOVE_DATA_MISMATCH", message: `${differences.length} moves differ between CFRU and Unbound Cloud; CFRU's values are used. For example: ${formatExamples(differences)}.`, repository: REPOSITORY_CFRU, file: CFRU_MOVES_FILE });
+        diagnostics.push({ severity: SEVERITY_WARNING, code: "MOVE_DATA_MISMATCH", message: `${differences.length} move values differ between CFRU and Unbound Cloud; CFRU's values are used. For example: ${formatExamples(differences)}.`, repository: REPOSITORY_CFRU, file: CFRU_MOVES_FILE, details: differences });
 
     return moves;
 }
@@ -358,6 +385,35 @@ function createCatalogService({ cache = createParseCache(), pokeApi = createPoke
     }
 
     /**
+     * Loads CFRU's item kinds, which are optional because only filters use them.
+     *
+     * @param {object} workspace The workspace.
+     * @param {Map<string, object>} macros The configuration macros.
+     * @returns {Promise<{itemTypes: Object<string, string>|null, diagnostics: Array<object>}>} Each item's
+     *          ITEM_TYPE_* constant, or null when it cannot be read, and diagnostics.
+     */
+    async function loadItemTypes(workspace, macros)
+    {
+        const withFile = (diagnostics) => diagnostics.map((diagnostic) => ({ ...diagnostic, repository: REPOSITORY_CFRU, file: CFRU_ITEM_TABLES_FILE }));
+        let text;
+        try
+        {
+            text = await readOwnedFile(workspace, REPOSITORY_CFRU, CFRU_ITEM_TABLES_FILE);
+        }
+        catch (error)
+        {
+            if (error.code !== REPOSITORY_FILE_UNAVAILABLE)
+                throw error;
+
+            return { itemTypes: null, diagnostics: withFile([{ severity: SEVERITY_WARNING, code: "ITEM_TYPES_UNAVAILABLE", message: `${CFRU_ITEM_TABLES_FILE} could not be read, so Z-Crystals cannot be filtered.` }]) };
+        }
+
+        const slot = `${getRootKey(workspace, REPOSITORY_CFRU)}\n${CFRU_ITEM_TABLES_FILE}`;
+        const parsed = await cache.getOrCreate(CACHE_ITEM_TYPES, slot, [getParserVersion(), hash(text), hashMacros(macros)], () => parseItemTypes(text, macros));
+        return { itemTypes: parsed.itemTypes, diagnostics: withFile(parsed.diagnostics) };
+    }
+
+    /**
      * Loads the catalog for one of the workspace's games.
      *
      * @param {object} workspace The workspace.
@@ -379,19 +435,26 @@ function createCatalogService({ cache = createParseCache(), pokeApi = createPoke
 
         const diagnostics = [];
         const shared = await readSharedData(workspace, diagnostics);
-        const [battleMoves, dpe, index, images] = await Promise.all([loadBattleMoves(workspace), loadDpeData(workspace, cache), pokeApi.getIndex(), readCloudImages(workspace)]);
-        diagnostics.push(...battleMoves.diagnostics, ...dpe.diagnostics);
+        const [battleMoves, dpe, index, images, dpeSprites] = await Promise.all(
+            [loadBattleMoves(workspace), loadDpeData(workspace, cache), pokeApi.getIndex(), readCloudImages(workspace), loadSpriteTables(workspace, cache)]);
+        const itemTypes = await loadItemTypes(workspace, battleMoves.macros);
+        diagnostics.push(...battleMoves.diagnostics, ...itemTypes.diagnostics, ...dpe.diagnostics, ...dpeSprites.diagnostics);
         if (index == null)
             diagnostics.push({ severity: SEVERITY_WARNING, code: "SPRITES_OFFLINE", message: "PokeAPI could not be reached, so some forms may show their base form's sprite." });
 
         // Species and moves, then everything else a spread can name
-        const spriteContext = { index, images, iconNames: workspace.speciesIconNames ?? {}, unboundGame: UNBOUND_GAME_PATTERN.test(game.id) };
+        const spriteContext = { workspace, dpeSprites: dpeSprites.sprites, index, images, iconNames: workspace.speciesIconNames ?? {}, unboundGame: UNBOUND_GAME_PATTERN.test(game.id) };
         const species = buildSpecies(data[BASE_STATS_KEY], shared, spriteContext, diagnostics);
         const moves = buildMoves(data[MOVES_KEY], battleMoves.moves, shared, diagnostics);
         const items = Object.fromEntries(getAvailable(data[ITEMS_KEY]).map((item) =>
         {
             const itemName = shared.itemNames[item];
-            return [item, { name: typeof itemName?.name === "string" ? itemName.name : toDisplayName(item, SYMBOL_PREFIXES.items), icon: getItemIcon(item, itemName, images) }];
+            return [item,
+            {
+                name: typeof itemName?.name === "string" ? itemName.name : toDisplayName(item, SYMBOL_PREFIXES.items),
+                icon: getItemIcon(item, itemName, images),
+                itemType: itemTypes.itemTypes?.[item] ?? null,
+            }];
         }));
         const balls = Object.fromEntries(getAvailable(data[BALL_TYPES_KEY]).map((ball) =>
         {
@@ -401,7 +464,7 @@ function createCatalogService({ cache = createParseCache(), pokeApi = createPoke
 
         // CFRU picks a random ball for this value, so it has no icon of its own
         balls[BALL_TYPE_RANDOM] = { name: BALL_TYPE_RANDOM_NAME, icon: null };
-        const types = Object.fromEntries(Object.entries(shared.typeNames).map(([type, name]) => [type, { name, icon: getTypeIcon(name, index) }]));
+        const types = Object.fromEntries(Object.entries(shared.typeNames).map(([type, name]) => [type, { name, icon: getTypeIcon(name, index), symbol: getTypeSymbol(name) }]));
 
         // Learnsets and battle forms come from DPE, applied to this game's species
         const speciesInfo = Object.fromEntries(Object.entries(species).map(([symbol, { types: speciesTypes, dex }]) => [symbol, { types: speciesTypes, dex }]));
@@ -435,7 +498,7 @@ function createCatalogService({ cache = createParseCache(), pokeApi = createPoke
             const symbols = Object.keys(counts);
             const spreadCount = Object.values(counts).reduce((sum, count) => sum + count, 0);
             if (symbols.length > 0)
-                diagnostics.push({ severity: SEVERITY_WARNING, code: "UNRESOLVED_SYMBOL", message: `${spreadCount} spreads use ${symbols.length} ${UNRESOLVED_LABELS[kind]} that ${game.name} does not have: ${formatExamples(symbols)}.` });
+                diagnostics.push({ severity: SEVERITY_WARNING, code: "UNRESOLVED_SYMBOL", message: `${spreadCount} spreads use ${symbols.length} ${UNRESOLVED_LABELS[kind]} that ${game.name} does not have: ${formatExamples(symbols)}.`, details: symbols.map((symbol) => `${symbol} (${counts[symbol]} spreads)`) });
         }
 
         catalog.diagnostics = diagnostics;

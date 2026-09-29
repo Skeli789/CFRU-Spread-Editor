@@ -27,10 +27,11 @@ test("uses the red light theme and persists a dark mode toggle", () =>
     const app = container.querySelector(".app");
     expect(app.style.getPropertyValue("--theme")).toBe("#ff0000");
     expect(app.style.getPropertyValue("--app-background")).toBe("#f8f9fa");
+    expect(app.style.getPropertyValue("--focus")).toBe("#1976d2");
 
     fireEvent.click(getByTestId("dark-mode-button"));
     expect(localStorage.getItem("darkMode")).toBe("true");
-    expect(app.style.getPropertyValue("--app-background")).toBe("#121212");
+    expect(app.style.getPropertyValue("--app-background")).toBe("#262626");
 
     fireEvent.click(getByTestId("dark-mode-button"));
     expect(localStorage.getItem("darkMode")).toBe("false");
@@ -58,7 +59,7 @@ test("follows system preference changes when there is no saved preference", () =
 
     const { container, unmount } = render(<App />);
     const app = container.querySelector(".app");
-    expect(app.style.getPropertyValue("--app-background")).toBe("#121212");
+    expect(app.style.getPropertyValue("--app-background")).toBe("#262626");
 
     act(() => onChange({ matches: false }));
     expect(app.style.getPropertyValue("--theme")).toBe("#ff0000");

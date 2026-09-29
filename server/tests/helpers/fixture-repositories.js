@@ -6,7 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { BATTLE_MOVES, CLOUD_FILES, DPE_FILES } = require("./catalog-fixtures");
+const { BATTLE_MOVES, CLOUD_FILES, DPE_FILES, DPE_SPRITE_FILES, ITEM_TABLES } = require("./catalog-fixtures");
 const { CFRU_SOURCE_FILES } = require("./spread-fixtures");
 
 const CLOUD_GAME_CONFIG =
@@ -56,8 +56,9 @@ const REPOSITORY_FILES =
     {
         ...CFRU_SOURCE_FILES,
         "src/Tables/battle_moves.c": BATTLE_MOVES,
+        "src/Tables/item_tables.c": ITEM_TABLES,
     },
-    dpe: DPE_FILES,
+    dpe: { ...DPE_FILES, ...DPE_SPRITE_FILES },
     cloud:
     {
         ...CLOUD_FILES,

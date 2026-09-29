@@ -19,6 +19,7 @@ const MAX_MOVES = 4;
 module.exports.MAX_MOVES = MAX_MOVES;
 const MOVE_NONE = "MOVE_NONE";
 module.exports.MOVE_NONE = MOVE_NONE;
+const PLACEHOLDER_FIELDS = new Set(["species", "nature", "item", "ball", "moves", "forSingles", "forDoubles"]);
 const BYTE_ORDER_MARK = "\uFEFF";
 
 const KIND_DECLARATION = "declaration";
@@ -413,6 +414,12 @@ function parseSpreadEntry(entryNode, text)
     }
 
     const span = getSpan(entryNode);
+    const placeholder = fields.species !== 0 && !fields.forSingles && !fields.forDoubles
+        && unknownFields.length === 0 && Object.keys(rawFields).length === 0
+        && SPREAD_FIELDS.every((field) => field.name === "species" || (field.name === "moves"
+            ? fields.moves.every((move) => move === 0 || move === MOVE_NONE)
+            : fields[field.name] === 0 || fields[field.name] === false
+                || (PLACEHOLDER_FIELDS.has(field.name) && ["ITEM_NONE", "BALL_TYPE_RANDOM", "NATURE_HARDY"].includes(fields[field.name]))));
     return {
         start: span.start,
         end: span.end,
@@ -425,7 +432,8 @@ function parseSpreadEntry(entryNode, text)
         unknownFields,
         abilityComment,
         hiddenPowerComments,
-        editable,
+        editable: editable && !placeholder,
+        placeholder,
         diagnostics,
     };
 }
@@ -659,15 +667,19 @@ function readRaidRankValues(listNode)
  * Returns a readable trainer name from a name symbol such as sTrainerName_Palmer.
  *
  * @param {object|undefined} nameNode The .name value.
+ * @param {object|undefined} trainerClassNode The .trainerClass value.
  * @param {string} table The table name.
  * @param {number} index The trainer's index.
  * @returns {string} The display name.
  */
-function getTrainerLabel(nameNode, table, index)
+function getTrainerLabel(nameNode, trainerClassNode, table, index)
 {
     const symbol = nameNode?.kind() === KIND_IDENTIFIER ? nameNode.text() : null;
-    if (symbol != null)
+    if (symbol != null && symbol !== "NULL")
         return symbol.startsWith(TRAINER_NAME_PREFIX) ? symbol.slice(TRAINER_NAME_PREFIX.length) : symbol;
+
+    if (trainerClassNode?.text() === "CLASS_RIVAL")
+        return "Rival";
 
     return `${table}[${index}]`;
 }
@@ -713,7 +725,7 @@ function parseTrainerTables(text, macros)
                     table,
                     index: position,
                     kind: TRAINER_TABLE_KINDS[structName],
-                    name: getTrainerLabel(fields.get("name"), table, position),
+                    name: getTrainerLabel(fields.get("name"), fields.get("trainerClass"), table, position),
                     line: getLine(entryNode),
                     links: [],
                 };

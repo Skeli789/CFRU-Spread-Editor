@@ -375,6 +375,54 @@ describe("Spread Saving", function ()
 
     describe("New entries and order", () =>
     {
+        it("should remove a deleted spread's lines entirely", async () =>
+        {
+            const { store, workspace, spreads } = await load();
+            const venusaur = findEntry(spreads, "SPECIES_VENUSAUR");
+            const before = readText(BATTLE_TOWER);
+            const result = await store.saveSpreads(workspace, { revision: spreads.revision, operations: [{ type: "delete", entryId: venusaur.id }] });
+            const after = readText(BATTLE_TOWER);
+
+            expect(after).to.include("gFrontierSpreads[] =\r\n{\r\n\t//Gen 8\r\n\t{\r\n\t\t.species = SPECIES_CHARIZARD,");
+            expect(after).not.to.include("SPECIES_VENUSAUR");
+            expect(before.split("\r\n").length - after.split("\r\n").length).to.equal(25);
+            expect(result.spreads.entries.find((entry) => entry.id === venusaur.id)).to.equal(undefined);
+            expect(findSet(result.spreads, "gFrontierSpreads").entryIds).not.to.include(venusaur.id);
+        });
+
+        it("should remove a last spread that has no trailing comma", async () =>
+        {
+            const { store, workspace, spreads } = await load();
+            const raichu = findEntry(spreads, "SPECIES_RAICHU");
+            await store.saveSpreads(workspace, { revision: spreads.revision, operations: [{ type: "delete", entryId: raichu.id }] });
+            const after = readText(MULTI_SPREADS);
+
+            expect(after).not.to.include("SPECIES_RAICHU");
+            expect(after).to.include("\t\t.modifyMovesDoubles = TRUE,\r\n\t},\r\n};");
+        });
+
+        it("should insert a new spread where a deleted last spread was", async () =>
+        {
+            const { store, workspace, spreads } = await load();
+            const set = findSet(spreads, "gMultiTowerSpread_Milo");
+            const raichu = findEntry(spreads, "SPECIES_RAICHU");
+            const result = await store.saveSpreads(workspace, { revision: spreads.revision, operations:
+            [
+                { type: "delete", entryId: raichu.id },
+                { type: "add", tempId: "new-1", setId: set.id, fields: NEW_SPREAD },
+            ] });
+
+            expect(readText(MULTI_SPREADS)).not.to.include("SPECIES_RAICHU");
+            expect(findSet(result.spreads, "gMultiTowerSpread_Milo").entryIds).to.have.length(2);
+        });
+
+        it("should reject deleting every spread in a set", async () =>
+        {
+            const { store, workspace, spreads } = await load();
+            const bulbasaur = findEntry(spreads, "SPECIES_BULBASAUR");
+            await expectRejected(store.saveSpreads(workspace, { revision: spreads.revision, operations: [{ type: "delete", entryId: bulbasaur.id }] }), 422, "INVALID_OPERATION");
+        });
+
         it("should insert new spreads using the file's formatting and give them IDs", async () =>
         {
             const { store, workspace, spreads } = await load();
@@ -516,7 +564,7 @@ describe("Spread Saving", function ()
             await expectRejected(save([{ type: "add", tempId: "x", setId: findSet(spreads, "gSpecialTowerSpread_Fixed").id, fields: NEW_SPREAD }]), 422, "INVALID_OPERATION");
             await expectRejected(save([{ type: "add", tempId: "x", setId: frontier.id, fields: NEW_SPREAD }, { type: "add", tempId: "x", setId: frontier.id, fields: NEW_SPREAD }]), 422, "INVALID_OPERATION");
             await expectRejected(save([{ type: "reorder", setId: frontier.id, order: frontier.entryIds.slice(1) }]), 422, "INVALID_OPERATION");
-            await expectRejected(save([{ type: "delete", entryId: venusaur.id }]), 422, "INVALID_OPERATION");
+            await expectRejected(save([{ type: "delete", entryId: golem.id }]), 422, "INVALID_OPERATION");
             await expectRejected(store.saveSpreads(workspace, { revision: "old", operations: [] }), 409, "SAVE_CONFLICT");
 
             for (const file of SPREAD_FILES)

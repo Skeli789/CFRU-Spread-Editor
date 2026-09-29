@@ -9,13 +9,18 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { BATTLE_MOVES, CLOUD_FILES, DPE_FILES, createPokeApiFetch } = require("../helpers/catalog-fixtures");
+const { BATTLE_MOVES, CLOUD_FILES, DPE_FILES, DPE_SPRITE_FILES, ITEM_TABLES, NORMAL_PALETTE, SHINY_PALETTE, createIndexedPng, createPokeApiFetch } = require("../helpers/catalog-fixtures");
 const { CFRU_SOURCE_FILES } = require("../helpers/spread-fixtures");
-const { getBallIcon, getItemIcon, getSpeciesSprites, getTypeIcon } = require("../../services/assets");
-const { parseBattleMoves, parseCompatibilityFile, parseEggMoves, parseEvolutionTable, parseLevelUpLearnsets, parseTeachableTables, parseTeamTypes } = require("../../services/data-parser");
+const { getBallIcon, getItemIcon, getSpeciesIcon, getSpeciesSprites, getTypeIcon, getTypeSymbol } = require("../../services/assets");
+const
+{
+    parseBattleMoves, parseCompatibilityFile, parseEggMoves, parseEvolutionTable, parseItemTypes, parseLevelUpLearnsets, parseSpriteTable, parseTeachableTables,
+    parseTeamTypes,
+} = require("../../services/data-parser");
 const { buildBattleForms, buildLearnsets, parseDpeSources } = require("../../services/learnsets");
 const { createPokeApiIndex } = require("../../services/pokeapi");
 const { evaluatePreprocessor } = require("../../services/preprocessor");
+const { combineSpritePalette, parseSpriteSources } = require("../../services/sprites");
 const { LEGALITY, POWER_KIND, alwaysHits, getMegaEvolutions, getMoveLegality, getPowerKind } = require("../../../shared/catalog.mjs");
 
 const TM_DIRECTORY = "src/tm_compatibility";
@@ -78,13 +83,14 @@ describe("Game data parser", () =>
         const { moves, diagnostics } = parseBattleMoves(BATTLE_MOVES, CFRU_MACROS);
         expect(moves.MOVE_POUND).to.deep.equal(
         {
-            power: 40, accuracy: 100, pp: 35, priority: 0, secondaryEffectChance: 0,
+            power: 40, accuracy: 100, pp: 35, priority: 0, secondaryEffectChance: 0, zMovePower: 100, maxMovePower: 90,
             effect: "EFFECT_HIT", type: "TYPE_NORMAL", target: "MOVE_TARGET_SELECTED", split: "SPLIT_PHYSICAL",
             flags: ["FLAG_MAKES_CONTACT", "FLAG_PROTECT_AFFECTED", "FLAG_MIRROR_MOVE_AFFECTED"],
         });
         expect(moves.MOVE_FLY.power).to.equal(100);
         expect(moves.MOVE_FLY.flags).to.deep.equal([]);
         expect(moves.MOVE_FLY.secondaryEffectChance).to.equal(null);
+        expect(moves.MOVE_FLY).to.include({ zMovePower: null, maxMovePower: 0 });
         expect(moves.MOVE_VITALTHROW).to.include({ priority: -1, effect: 0, accuracy: 0 });
         expect(moves.MOVE_WEIRD).to.include({ power: null, flags: null, type: "TYPE_NORMAL" });
         expect(diagnostics.map((diagnostic) => diagnostic.code)).to.deep.equal(["MOVE_DATA_UNREADABLE"]);
@@ -99,6 +105,12 @@ describe("Game data parser", () =>
         const { moves, diagnostics } = parseBattleMoves("const u8 gOther[] = {1};\n", CFRU_MACROS);
         expect(moves).to.equal(null);
         expect(diagnostics[0].code).to.equal("DATA_TABLE_NOT_FOUND");
+    });
+
+    it("should leave Max Move powers unknown when Dynamax is not compiled", () =>
+    {
+        const withoutDynamax = BATTLE_MOVES.slice(0, BATTLE_MOVES.indexOf("const u8 gDynamaxMovePowers"));
+        expect(parseBattleMoves(withoutDynamax, CFRU_MACROS).moves.MOVE_POUND).to.include({ zMovePower: 100, maxMovePower: null });
     });
 
     it("should read shared level-up learnsets, skipping padding entries and reporting unreadable ones", () =>
@@ -177,6 +189,14 @@ describe("Game data parser", () =>
         const { teamTypes, diagnostics } = parseTeamTypes("enum { CURR_STREAK };\n", CFRU_MACROS);
         expect(teamTypes).to.equal(null);
         expect(diagnostics[0].code).to.equal("TEAM_TYPES_NOT_FOUND");
+    });
+
+    it("should read item kinds, reporting values that are not constants", () =>
+    {
+        const { itemTypes, diagnostics } = parseItemTypes(ITEM_TABLES, CFRU_MACROS);
+        expect(itemTypes).to.deep.equal({ ITEM_LEFTOVERS: "ITEM_TYPE_HELD_ITEM", ITEM_VENUSAURITE: "ITEM_TYPE_MEGA_STONE", ITEM_NORMALIUM_Z: "ITEM_TYPE_Z_CRYSTAL" });
+        expect(diagnostics.map((diagnostic) => diagnostic.code)).to.deep.equal(["ITEM_TYPE_UNREADABLE"]);
+        expect(parseItemTypes("const u8 gOther[] = {1};\n", CFRU_MACROS)).to.deep.include({ itemTypes: null });
     });
 });
 
@@ -265,6 +285,7 @@ describe("Learnsets", () =>
         expect(learnsets.SPECIES_GARCHOMP.status).to.equal("missing");
         expect(learnsets.SPECIES_CHARIZARD_MEGA_X.status).to.equal("missing");
         expect(diagnostics.find((diagnostic) => diagnostic.code === "LEARNSET_MISSING").message).to.include("SPECIES_CHARIZARD_MEGA_X");
+        expect(diagnostics.find((diagnostic) => diagnostic.code === "LEARNSET_MISSING").details).to.include("SPECIES_CHARIZARD_MEGA_X");
     });
 
     it("should report TM and tutor files that do not match DPE's tables", () =>
@@ -273,6 +294,7 @@ describe("Learnsets", () =>
         const codes = diagnostics.map((diagnostic) => diagnostic.code);
         expect(codes).to.include.members(["COMPATIBILITY_MOVE_MISMATCH", "COMPATIBILITY_MOVE_UNKNOWN", "COMPATIBILITY_SPECIES_UNKNOWN"]);
         expect(diagnostics.find((diagnostic) => diagnostic.code === "COMPATIBILITY_SPECIES_UNKNOWN").message).to.include("SPECIES_MISSINGNO");
+        expect(diagnostics.find((diagnostic) => diagnostic.code === "COMPATIBILITY_SPECIES_UNKNOWN").details).to.include("SPECIES_MISSINGNO");
 
         // Headings are compared ignoring accents and punctuation, and against Cloud's move names
         expect(diagnostics.filter((diagnostic) => diagnostic.code === "COMPATIBILITY_MOVE_MISMATCH")).to.have.length(1);
@@ -375,6 +397,12 @@ describe("Image URLs", () =>
         expect(sprites("SPECIES_CUSTOM", {})).to.include({ normal: null, shiny: null, source: null, exact: false });
     });
 
+    it("should use Cloud's form names for compact species icons", () =>
+    {
+        expect(getSpeciesIcon("SPECIES_RAICHU_A")).to.match(/regular\/raichu-alola\.png$/);
+        expect(getSpeciesIcon("SPECIES_PYROAR_FEMALE", "female/pyroar")).to.match(/regular\/female\/pyroar\.png$/);
+    });
+
     it("should follow Cloud's item, ball and type icon rules", () =>
     {
         const images = { ...EMPTY_IMAGES, items: new Set(["ITEM_CUSTOM_CHARM.png"]) };
@@ -385,6 +413,63 @@ describe("Image URLs", () =>
         expect(getBallIcon("Poké Ball")).to.equal("https://raw.githubusercontent.com/msikma/pokesprite/master/items/ball/poke.png");
         expect(getTypeIcon("Fire", index)).to.equal("https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/types/generation-viii/sword-shield/10.png");
         expect(getTypeIcon("Fire", null)).to.equal("https://raw.githubusercontent.com/msikma/pokesprite/master/misc/types/gen8/fire.png");
+        expect(getTypeSymbol("Fire")).to.equal("https://raw.githubusercontent.com/msikma/pokesprite/master/misc/types/gen8/fire.png");
+    });
+});
+
+describe("DPE sprites", () =>
+{
+    const graphics = Object.keys(DPE_SPRITE_FILES).filter((file) => file.endsWith(".png"));
+    const tables = { tiles: DPE_SPRITE_FILES["src/Front_Pic_Table.c"], palette: DPE_SPRITE_FILES["src/Palette_Table.c"], shinyPalette: DPE_SPRITE_FILES["src/Shiny_Palette_Table.c"] };
+
+    /**
+     * Returns a PNG's chunks.
+     *
+     * @param {Buffer} png The PNG.
+     * @returns {Array<{type: string, data: Buffer}>} The chunks.
+     */
+    const chunks = (png) =>
+    {
+        const result = [];
+        for (let offset = 8; offset < png.length; offset += 12 + png.readUInt32BE(offset))
+            result.push({ type: png.toString("latin1", offset + 4, offset + 8), data: png.subarray(offset + 8, offset + 8 + png.readUInt32BE(offset)) });
+        return result;
+    };
+
+    it("should read which graphic each species uses", () =>
+    {
+        const { symbols, diagnostics } = parseSpriteTable(tables.tiles, DPE_MACROS, "gMonFrontPicTable");
+        expect(symbols).to.deep.equal({ SPECIES_BULBASAUR: "gFrontSprite001BulbasaurTiles", SPECIES_IVYSAUR: "gFrontSprite002IvysaurTiles", SPECIES_VENUSAUR: "gFrontSprite003VenusaurTiles" });
+        expect(diagnostics).to.deep.equal([]);
+        expect(parseSpriteTable(tables.tiles, DPE_MACROS, "gMissing").symbols).to.equal(null);
+    });
+
+    it("should match species to their image files, leaving out species without images", () =>
+    {
+        const { sprites } = parseSpriteSources({ configText: DPE_FILES["src/defines.h"], tables, graphics });
+        expect(sprites).to.deep.equal(
+        {
+            SPECIES_BULBASAUR:
+            {
+                tiles: "graphics/frontspr/gFrontSprite001Bulbasaur.png",
+                palette: "graphics/frontspr/gFrontSprite001Bulbasaur.png",
+                shinyPalette: "graphics/backspr/gBackShinySprite001Bulbasaur.png",
+            },
+            SPECIES_VENUSAUR: { tiles: "graphics/frontspr/gFrontSprite003Venusaur.png", palette: "graphics/frontspr/gFrontSprite003Venusaur.png", shinyPalette: null },
+        });
+        expect(parseSpriteSources({ configText: "", tables: { ...tables, palette: null }, graphics }).sprites).to.equal(null);
+    });
+
+    it("should draw a sprite with another palette and a transparent background", () =>
+    {
+        const tiles = createIndexedPng(NORMAL_PALETTE);
+        const combined = chunks(combineSpritePalette(tiles, createIndexedPng(SHINY_PALETTE)));
+
+        expect(combined.map((chunk) => chunk.type)).to.deep.equal(["IHDR", "PLTE", "tRNS", "IDAT", "IEND"]);
+        expect([...combined[1].data]).to.deep.equal(SHINY_PALETTE.flat());
+        expect([...combined[2].data]).to.deep.equal([0]);
+        expect(combined[3].data.equals(chunks(tiles).find((chunk) => chunk.type === "IDAT").data)).to.equal(true);
+        expect(() => combineSpritePalette(Buffer.from("png"), tiles)).to.throw();
     });
 });
 

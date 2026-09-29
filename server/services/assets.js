@@ -147,6 +147,20 @@ function toIconName(species)
 }
 
 /**
+ * Returns the compact species icon URL using Cloud's form naming when available.
+ *
+ * @param {string} species The species constant.
+ * @param {string|undefined} iconName Cloud's form-specific icon name.
+ * @returns {string} The icon URL.
+ */
+function getSpeciesIcon(species, iconName)
+{
+    const path = (iconName ?? toIconName(species)).split("/").map(encodeURIComponent).join("/");
+    return `${POKESPRITE_POKEMON}${POKESPRITE_REGULAR}${path}${IMAGE_EXTENSION}`;
+}
+module.exports.getSpeciesIcon = getSpeciesIcon;
+
+/**
  * Returns the PokeAPI names a species might have, most specific first.
  *
  * @param {string} species The SPECIES_* constant.
@@ -264,6 +278,18 @@ function getTypeIcon(typeName, index)
     return id != null ? `${POKEAPI_TYPE_SPRITES}${id}${IMAGE_EXTENSION}` : `${POKESPRITE_TYPES}${encodeURIComponent(name)}${IMAGE_EXTENSION}`;
 }
 module.exports.getTypeIcon = getTypeIcon;
+
+/**
+ * Returns a type's round symbol without its name, as Cloud's GetTypeIconUrl shows beside moves.
+ *
+ * @param {string} typeName The type's display name, such as Fire.
+ * @returns {string} The URL.
+ */
+function getTypeSymbol(typeName)
+{
+    return `${POKESPRITE_TYPES}${encodeURIComponent(typeName.toLowerCase())}${IMAGE_EXTENSION}`;
+}
+module.exports.getTypeSymbol = getTypeSymbol;
 
 /**
  * Returns an item's icon following Cloud's GetItemIconLink: its PokeSprite link, or Cloud's own image.

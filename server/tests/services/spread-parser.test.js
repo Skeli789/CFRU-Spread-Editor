@@ -41,9 +41,10 @@ describe("Spread Parser", () =>
             expect(charizard.fields).to.include({ gigantamax: true, specificTeamType: "DOUBLES_SUN_TEAM" });
             expect(charizard.fields.moves).to.deep.equal(["MOVE_FLAMETHROWER", "MOVE_AIRSLASH", 0, 0]);
 
-            // A spread that only names its species is a real entry whose other fields are zero
+            // A species-only entry keeps its position but cannot be edited as a battle spread
             expect(pikachu.fields).to.include({ species: "SPECIES_PIKACHU", hpIv: 0, ability: 0, item: 0, forDoubles: false });
             expect(pikachu.explicitFields).to.deep.equal(["species"]);
+            expect(pikachu).to.include({ placeholder: true, editable: false });
         });
 
         it("should read ability and Hidden Power comments", () =>
@@ -67,6 +68,15 @@ describe("Spread Parser", () =>
             expect(sets[0].entries).to.have.length(0);
             expect(sets[0].placeholders).to.have.length(1);
             expect(sets[0].branch).to.deep.equal(["#else (#ifdef UNBOUND)"]);
+        });
+
+        it("should recognize explicitly zeroed inactive spreads but not active empty-move spreads", () =>
+        {
+            const source = BATTLE_TOWER.replace(".species = SPECIES_PIKACHU, //Placeholder spreads",
+                ".species = SPECIES_PIKACHU,\n\t\t.item = ITEM_NONE,\n\t\t.hpIv = 0,\n\t\t.forSingles = FALSE,");
+            const pikachu = parseSpreadFile(source, UNBOUND_MACROS).sets[0].entries[2];
+            expect(pikachu).to.include({ placeholder: true, editable: false });
+            expect(parseSpreadFile(source.replace(".forSingles = FALSE", ".forSingles = TRUE"), UNBOUND_MACROS).sets[0].entries[2].placeholder).to.equal(false);
         });
 
         it("should separate entries on either side of a directive inside an array", () =>
@@ -97,6 +107,13 @@ describe("Spread Parser", () =>
 
     describe("parseTrainerTables", () =>
     {
+        it("should label the in-game named rival from its trainer class", () =>
+        {
+            const source = TRAINERS.replace(".name = NULL, //Predefined ingame", ".trainerClass = CLASS_RIVAL,\n\t\t.name = NULL, //Predefined ingame");
+            const { trainers } = parseTrainerTables(source, UNBOUND_MACROS);
+            expect(trainers.at(-1).name).to.equal("Rival");
+        });
+
         it("should link facility trainers to their arrays by tier", () =>
         {
             const { trainers } = parseTrainerTables(TRAINERS, UNBOUND_MACROS);
