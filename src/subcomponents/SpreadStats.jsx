@@ -23,6 +23,7 @@ const DIGITS_PATTERN = /^\d{0,3}$/;
 const UNKNOWN_STAT = "?";
 const KEY_ARROW_UP = "ArrowUp";
 const KEY_ARROW_DOWN = "ArrowDown";
+const KEY_TAB = "Tab";
 const REPEAT_DELAY_MS = 150;
 const REPEAT_INTERVAL_MS = 20;
 // Each held tick takes one more step after this many ticks, up to the maximum
@@ -47,9 +48,10 @@ const RESET_IVS_TIP = "Reset all IVs to 31, keeping unused attacking IVs at 0 an
  * @param {Function} props.onCommit - Called with each entered whole number.
  * @param {Function} [props.onStep] - Called with 1 or -1 for the arrow keys, replacing the default step.
  * @param {boolean} [props.error] - Whether the value is invalid.
+ * @param {string} props.kind - The EV or IV keyboard-navigation column.
  * @returns {JSX.Element} The input.
  */
-const NumberInput = ({ value, label, max, onCommit, onStep, error = false }) =>
+const NumberInput = ({ value, label, max, onCommit, onStep, error = false, kind }) =>
 {
     const [text, setText] = useState(String(value));
 
@@ -95,7 +97,7 @@ const NumberInput = ({ value, label, max, onCommit, onStep, error = false }) =>
             onKeyDown={handleKeyDown}
             onFocus={(event) => event.target.select()}
             onClick={(event) => event.target.select()}
-            slotProps={{ input: { "aria-label": label, inputMode: "numeric", "aria-invalid": error } }}
+            slotProps={{ input: { "aria-label": label, inputMode: "numeric", "aria-invalid": error, "data-stat-kind": kind } }}
         />
     );
 };
@@ -193,13 +195,13 @@ const StepperInput = ({ label, canLower, canRaise, onStep, children }) =>
 
     return (
         <span className="stat-stepper">
-            <IconButton size="small" color="error" aria-label={`Lower ${label}`} disabled={!canLower} onClick={() => click(DIRECTION_DOWN)}
+            <IconButton size="small" color="error" tabIndex={-1} aria-label={`Lower ${label}`} disabled={!canLower} onClick={() => click(DIRECTION_DOWN)}
                         onPointerDown={() => start(DIRECTION_DOWN)} onPointerUp={stop}
                         onPointerLeave={() => { stop(); pointerStep.current = false; }} onPointerCancel={() => { stop(); pointerStep.current = false; }}>
                 <RemoveIcon fontSize="inherit" />
             </IconButton>
             {children}
-            <IconButton size="small" color="success" aria-label={`Raise ${label}`} disabled={!canRaise} onClick={() => click(DIRECTION_UP)}
+            <IconButton size="small" color="success" tabIndex={-1} aria-label={`Raise ${label}`} disabled={!canRaise} onClick={() => click(DIRECTION_UP)}
                         onPointerDown={() => start(DIRECTION_UP)} onPointerUp={stop}
                         onPointerLeave={() => { stop(); pointerStep.current = false; }} onPointerCancel={() => { stop(); pointerStep.current = false; }}>
                 <AddIcon fontSize="inherit" />
@@ -232,6 +234,25 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
     const baseTotal = STATS.every((stat) => baseStats?.[stat] != null) ? STATS.reduce((sum, stat) => sum + baseStats[stat], 0) : null;
     const resetIvFields = editing && catalog != null ? getResetIvs(catalog, fields) : null;
     const ivsAreReset = resetIvFields == null || STATS.every((stat) => fields[IV_FIELDS[stat]] === resetIvFields[IV_FIELDS[stat]]);
+
+    /**
+     * Tabs down EVs, then down IVs; Shift+Tab follows the reverse order.
+     *
+     * @param {React.KeyboardEvent} event The table's key event.
+     */
+    const advanceStat = (event) =>
+    {
+        if (event.key !== KEY_TAB || event.ctrlKey || event.altKey || event.metaKey || !event.target.matches("input[data-stat-kind]"))
+            return;
+        const inputs = [...event.currentTarget.querySelectorAll("input[data-stat-kind='ev']"),
+            ...event.currentTarget.querySelectorAll("input[data-stat-kind='iv']")];
+        const index = inputs.indexOf(event.target);
+        const next = inputs[index + (event.shiftKey ? DIRECTION_DOWN : DIRECTION_UP)];
+        if (next == null)
+            return;
+        event.preventDefault();
+        next.focus();
+    };
 
     /**
      * Sets every EV to 0.
@@ -279,6 +300,7 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
 
     return (
         <table className={`spread-stats${editing ? " spread-stats-editing" : " spread-stats-view"}`}
+             onKeyDown={editing ? advanceStat : undefined}
                style={editing ? undefined : { "--stat-grid-divider": alpha(theme.palette.divider, VIEW_DIVIDER_OPACITY) }}>
             <thead>
                 <tr>
@@ -330,7 +352,7 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
                                 {editing
                                     ? <StepperInput label={`${label} EVs`} onStep={(direction) => step(stat, direction)}
                                                     canLower={stepEv(fields, stat, DIRECTION_DOWN, littleCup) != null} canRaise={stepEv(fields, stat, DIRECTION_UP, littleCup) != null}>
-                                        <NumberInput value={ev} label={`${name} ${label} EVs`} max={MAX_EV} error={!Number.isInteger(ev) || ev > MAX_EV}
+                                        <NumberInput kind="ev" value={ev} label={`${name} ${label} EVs`} max={MAX_EV} error={!Number.isInteger(ev) || ev > MAX_EV}
                                                      onCommit={(value) => onChange((current) => setEv(current, stat, value))}
                                                      onStep={(direction) => step(stat, direction)} />
                                     </StepperInput>
@@ -340,7 +362,7 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
                                 {editing
                                     ? <StepperInput label={`${label} IV`} onStep={(direction) => stepIv(stat, direction)}
                                                     canLower={!Number.isInteger(iv) || iv > 0} canRaise={!Number.isInteger(iv) || iv < MAX_IV}>
-                                        <NumberInput value={iv} label={`${name} ${label} IV`} max={MAX_IV} error={!Number.isInteger(iv) || iv > MAX_IV}
+                                        <NumberInput kind="iv" value={iv} label={`${name} ${label} IV`} max={MAX_IV} error={!Number.isInteger(iv) || iv > MAX_IV}
                                                      onCommit={(value) => onChange((current) => setIv(current, stat, value))} />
                                     </StepperInput>
                                     : iv}

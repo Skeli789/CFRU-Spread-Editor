@@ -15,8 +15,9 @@ import
     GROUP_MOVE_PREFIX, getMovedIds, getMovedSpreadIds, getSavedOrder, hasOrderChange, insertSpread, restoreGroupPosition,
     restoreSpreadInGroup,
 } from "../shared/spread-layout.mjs";
-import { BATTLE_TYPES, compactMoves, getBattleType, getChangedFields, isSpreadChanged, validateSpreadFields } from "../shared/spread-model.mjs";
+import { BATTLE_TYPES, compactMoves, getBattleType, getChangedFields, isSpreadChanged, setMove, validateSpreadFields } from "../shared/spread-model.mjs";
 import { config } from "./components/ServerConfig";
+import { getLearnableMoveOptions } from "./subcomponents/MovePicker";
 
 export const SETTINGS_STORAGE_KEY = "cfruSpreadEditor.settings";
 export const SETTINGS_VERSION = 1;
@@ -63,6 +64,8 @@ const OPERATION_DELETE = "delete";
 const OPERATION_ADD = "add";
 const OPERATION_REORDER = "reorder";
 const MOVES_FIELD = "moves";
+const EMPTY_MOVE = 0;
+const MOVE_NONE = "MOVE_NONE";
 const EMPTY_INDEX = Object.freeze({ entries: new Map(), sets: new Map() });
 
 const ACTION =
@@ -928,12 +931,25 @@ function reducer(state, action)
             if (action.editing && state.spreadIndex.entries.get(action.id)?.editable)
                 return { ...state, editing: new Set([action.id]) };
 
-            // Moves after a blank slot shift up once editing ends
+            // Closing keeps existing moves, or seeds the same first option as Add Spread
             const drafts = { ...state.drafts };
             for (const id of state.editing)
             {
-                if (drafts[id] != null)
-                    putDraft(state, drafts, id, compactMoves(drafts[id]));
+                const entry = state.spreadIndex.entries.get(id);
+                if (!entry?.editable || entry.placeholder || state.deleted.has(id))
+                    continue;
+
+                const fields = drafts[id] ?? entry.fields;
+                let next = drafts[id] != null ? compactMoves(fields) : fields;
+                if (state.catalog != null && next.moves.every((move) => move == null || move === EMPTY_MOVE || move === MOVE_NONE))
+                {
+                    const [firstMove] = getLearnableMoveOptions(state.catalog, next.species).options;
+                    if (firstMove != null)
+                        next = setMove(next, 0, firstMove.move, firstMove.hiddenPowerType);
+                }
+
+                if (drafts[id] != null || next !== fields)
+                    putDraft(state, drafts, id, next);
             }
             return { ...state, drafts, editing: new Set() };
         }

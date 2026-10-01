@@ -7,11 +7,12 @@
 import React, { memo, useMemo, useState } from "react";
 import
 {
-    Alert, Autocomplete, Button, Checkbox, Chip, FormControl, FormControlLabel, IconButton, InputLabel, ListItemIcon,
-    ListItemText, Menu, MenuItem, Paper, Select, Stack, Switch, TextField, Tooltip, Typography,
+    Alert, Autocomplete, Button, ButtonGroup, Checkbox, Chip, FormControl, FormControlLabel, IconButton, InputLabel, ListItemIcon,
+    ListItemText, Menu, MenuItem, Paper, Popover, Select, Stack, Switch, TextField, Tooltip, Typography,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import FiberNewIcon from "@mui/icons-material/FiberNew";
 import LockIcon from "@mui/icons-material/Lock";
@@ -22,9 +23,10 @@ import MoreVertIcon from "@mui/icons-material/MoreVert";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
 import { LEGALITY, getMoveLegality } from "../../shared/catalog.mjs";
+import { SPREAD_PRESETS, getSuggestedSpread } from "../../shared/spread-suggestions.mjs";
 import
 {
-    LITTLE_CUP_LEVEL, calculateSpreadStats, getAbilityLabel, getAbilityOptions, getEffectiveAbility, getMegaAbility, getMegaSpecies,
+    EV_FIELDS, STATS, LITTLE_CUP_LEVEL, calculateSpreadStats, getAbilityLabel, getAbilityOptions, getEffectiveAbility, getMegaAbility, getMegaSpecies,
     getNatureEffect, getSpreadLevel,
 } from "../../shared/pokemon-mechanics.mjs";
 import
@@ -77,6 +79,12 @@ const SHOWDOWN_EXPORT = "export";
 const SHOWDOWN_OVERWRITE = "overwrite";
 const NEW_SPREAD_LABEL = "New Spread";
 const NEW_SPREAD_TIP = "New spread, not saved yet";
+const SUGGESTED_SPREAD_UNAVAILABLE = "No Suggested Spread";
+const PRESET_CHOOSER_LABEL = "Choose Preset Spread";
+const PRESET_SEARCH_LABEL = "Preset Spread";
+const AUTOMATIC_PRESET = { name: "Automatic Suggestion", preset: null };
+const PRESET_POPOVER_WIDTH = 320;
+const PRESET_OPTIONS = [AUTOMATIC_PRESET, ...SPREAD_PRESETS.map((preset) => ({ name: preset.name, preset: preset.name }))];
 
 const natureOptionCache = new WeakMap();
 const ballOptionCache = new WeakMap();
@@ -276,6 +284,8 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
     const [showLevelFive, setShowLevelFive] = useState(true);
     const [showdownDialog, setShowdownDialog] = useState(null);
     const [menuAnchor, setMenuAnchor] = useState(null);
+    const [presetAnchor, setPresetAnchor] = useState(null);
+    const [selectedPreset, setSelectedPreset] = useState(null);
     const speciesInfo = getEntry(catalog.species, fields.species);
     const name = speciesInfo?.name ?? String(fields.species);
     const level = getSpreadLevel(set, preview.level);
@@ -306,6 +316,13 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
     const trainers = getTrainerLabels(set);
     const inputId = `spread-${id}`;
     const warnings = entry.diagnostics;
+    const suggestion = useMemo(() => editing && entry.editable && !deleted
+        ? getSuggestedSpread(catalog, fields, { level, preset: selectedPreset }) : null,
+        [editing, entry.editable, deleted, catalog, fields, level, selectedPreset]);
+    const suggestedEvs = suggestion == null ? "" : STATS.filter((stat) => suggestion.fields[EV_FIELDS[stat]] > 0)
+        .map((stat) => `${suggestion.fields[EV_FIELDS[stat]]} ${STAT_SHORT_LABELS[stat]}`).join(" / ");
+    const suggestionLabel = suggestion == null ? SUGGESTED_SPREAD_UNAVAILABLE
+        : `${getLabel(catalog.natures, suggestion.fields.nature)}: ${suggestedEvs}`;
 
     /**
      * Changes the spread's values.
@@ -315,6 +332,17 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
      */
     const update = (change) => actions.updateSpread(id, change);
     const canOpen = !editing && !deleted && entry.editable;
+
+    /**
+     * Applies suggested stats and nature to the current draft without changing other fields.
+     *
+     * @param {string|null} [preset] The preset to apply, or null for automatic inference.
+     */
+    const applySuggestion = (preset = selectedPreset) => update((current, saved) =>
+    {
+        const next = getSuggestedSpread(catalog, current, { level, preset });
+        return next == null ? current : setFieldSymbol({ ...current, ...next.fields }, "nature", next.fields.nature, saved);
+    });
 
     /**
      * Starts editing when the card is clicked outside its buttons and inputs.
@@ -459,9 +487,42 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                         </MenuItem>}
                     </Menu>}
                 </Stack>
-                {editing && trainers.length > 0 &&
-                    <div className="trainer-chips">
-                        {trainerNames}
+                {editing &&
+                    <div className="spread-edit-tools">
+                        {trainers.length > 0 && <div className="trainer-chips">{trainerNames}</div>}
+                        <ButtonGroup className="spread-suggestion-button" size="small" color="info" variant="outlined"
+                                     sx={{ maxWidth: "100%" }}>
+                            <Tooltip title={suggestion?.role ?? ""}>
+                                <Button aria-label={suggestionLabel} disabled={suggestion == null} onClick={() => applySuggestion()}
+                                        sx={{ textTransform: "none", whiteSpace: "nowrap", fontSize: "0.75rem", px: 1 }}>
+                                    {suggestionLabel}
+                                </Button>
+                            </Tooltip>
+                            <Button aria-label={PRESET_CHOOSER_LABEL} aria-haspopup="dialog" aria-expanded={presetAnchor != null}
+                                    onClick={(event) => setPresetAnchor(event.currentTarget)}
+                                    sx={{ minWidth: "28px !important", px: 0 }}>
+                                <ArrowDropDownIcon fontSize="small" />
+                            </Button>
+                        </ButtonGroup>
+                        <Popover open={presetAnchor != null} anchorEl={presetAnchor} onClose={() => setPresetAnchor(null)} transitionDuration={0}
+                                 anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                                 transformOrigin={{ vertical: "top", horizontal: "right" }}
+                                 slotProps={{ paper: { role: "dialog", "aria-label": PRESET_CHOOSER_LABEL,
+                                     sx: { p: 1.5, width: PRESET_POPOVER_WIDTH, maxWidth: "calc(100vw - 32px)", overflow: "visible" } } }}>
+                            <Autocomplete size="small" autoHighlight openOnFocus disableClearable disablePortal options={PRESET_OPTIONS}
+                                          value={PRESET_OPTIONS.find((option) => option.preset === selectedPreset) ?? AUTOMATIC_PRESET}
+                                          getOptionLabel={(option) => option.name}
+                                          isOptionEqualToValue={(option, value) => option.preset === value.preset}
+                                          slotProps={{ popper: { placement: "bottom-start" }, listbox: { sx: { maxHeight: "min(40vh, 280px)" } } }}
+                                          onChange={(event, option) =>
+                                          {
+                                              setSelectedPreset(option.preset);
+                                              applySuggestion(option.preset);
+                                              setPresetAnchor(null);
+                                          }}
+                                          renderInput={(params) => <TextField {...params} autoFocus label={PRESET_SEARCH_LABEL}
+                                              onFocus={(event) => event.target.select()} />} />
+                        </Popover>
                     </div>}
                 <div className="spread-card-subtitle">
                     {!editing &&

@@ -6,6 +6,7 @@ import { ThemeProvider, getContrastRatio } from "@mui/material/styles";
 import { vi } from "vitest";
 
 import { calculateSpreadStats, stepEv } from "../../shared/pokemon-mechanics.mjs";
+import { getSuggestedSpread } from "../../shared/spread-suggestions.mjs";
 import SpreadCard from "../components/SpreadCard";
 import { EditSpreadDialog } from "../components/SpreadDialogs";
 import { APP_THEME, DARK_APP_THEME } from "../Theme";
@@ -87,6 +88,183 @@ function HeldStatCard({ initialFields })
 
 describe("Spread card", () =>
 {
+    it("applies Suggested Spread to the displayed EVs, IVs and nature", async () =>
+    {
+        const user = userEvent.setup();
+        render(<HeldStatCard initialFields={createFields({ hpEv: 252, spAtkEv: 252, spdEv: 4, atkIv: 7, nature: "NATURE_MODEST" })} />);
+        const button = screen.getByRole("button", { name: "Timid: 4 HP / 252 SpA / 252 Spe" });
+        expect(button.closest(".spread-edit-tools")).toBeInTheDocument();
+        await user.click(button);
+        expect(screen.getByRole("textbox", { name: "Charizard Sp. Atk EVs" })).toHaveValue("252");
+        expect(screen.getByRole("textbox", { name: "Charizard Speed EVs" })).toHaveValue("252");
+        expect(screen.getByRole("textbox", { name: "Charizard HP EVs" })).toHaveValue("4");
+        expect(screen.getByRole("textbox", { name: "Charizard Attack IV" })).toHaveValue("0");
+        expect(screen.getByRole("combobox", { name: "Nature" })).toHaveValue("Timid (+Spe, -Atk)");
+        await user.hover(button);
+        expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Fast Special Attacker$/);
+        expect(button).not.toHaveAttribute("title");
+    });
+
+    it("preserves unrelated draft fields and reads the latest moves when applying a suggestion", async () =>
+    {
+        const fields = createFields({ shiny: true, ball: "BALL_TYPE_POKE_BALL" });
+        const { actions, user } = renderCard({ fields, editing: true });
+        await user.click(screen.getByRole("button", { name: "Timid: 4 HP / 252 SpA / 252 Spe" }));
+        const latest = { ...fields, moves: ["MOVE_DRAGONCLAW", "MOVE_EARTHQUAKE"], item: "ITEM_LEFTOVERS" };
+        const result = actions.updateSpread.mock.calls[0][1](latest, fields);
+        expect(result).toEqual({ ...latest, ...getSuggestedSpread(createCatalog(), latest).fields });
+        expect(actions.setEditing).not.toHaveBeenCalled();
+    });
+
+    it("shows the defensive role and only its nonzero EV investments", () =>
+    {
+        renderCard({ editing: true, fields: createFields({ moves: ["MOVE_PROTECT"] }) });
+        expect(screen.getByRole("button", { name: "Modest: 252 HP / 4 Def / 252 SpD" })).toBeEnabled();
+    });
+
+    it.each([{}, { usages: [{ trainerName: "Palmer", ranks: null }] }])("keeps Suggested Spread beside optional trainer chips $usages", (setOverrides) =>
+    {
+        const spreads = createSpreads();
+        const { card } = renderCard({ editing: true, fields: createFields(), set: { ...spreads.sets[0], ...setOverrides } });
+        const row = card.querySelector(".spread-edit-tools");
+        expect(within(row).getByRole("button", { name: "Timid: 4 HP / 252 SpA / 252 Spe" })).toBeEnabled();
+        expect(CARD_STYLES.replace(/\s+/g, " ")).toContain(".spread-suggestion-button { margin-left: auto;");
+    });
+
+    it("disables unsafe suggestions without a tooltip", async () =>
+    {
+        const { user } = renderCard({ editing: true, fields: createFields({ moves: ["MOVE_UNKNOWN"] }) });
+        const button = screen.getByRole("button", { name: "No Suggested Spread" });
+        expect(button).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Choose Preset Spread" })).toBeEnabled();
+        await user.hover(button.parentElement);
+        expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    });
+
+    it("does not show Suggested Spread on view cards", () =>
+    {
+        renderCard();
+        expect(screen.queryByRole("button", { name: /Timid:|No Suggested Spread|Choose Preset Spread/ })).not.toBeInTheDocument();
+    });
+
+    it.each([{ moves: [0, 0, 0, 0] }, { moves: ["MOVE_UNKNOWN"] }])("keeps the preset chooser searchable without a suggestion for $moves", async (fields) =>
+    {
+        const { user, actions } = renderCard({ editing: true, fields: createFields(fields) });
+        await user.click(screen.getByRole("button", { name: "Choose Preset Spread" }));
+        const chooser = await screen.findByRole("dialog", { name: "Choose Preset Spread" });
+        const search = within(chooser).getByRole("combobox", { name: "Preset Spread" });
+        await waitFor(() => expect(search).toHaveFocus());
+        expect(search.selectionStart).toBe(0);
+        expect(search.selectionEnd).toBe(search.value.length);
+        expect(within(chooser).getAllByRole("option").every((option) => option.getAttribute("aria-disabled") !== "true")).toBe(true);
+        await user.keyboard("Fast Physical");
+        expect(search).toHaveValue("Fast Physical");
+        const option = within(chooser).getByRole("option", { name: "Fast Physical Attacker" });
+        expect(option).not.toHaveAttribute("aria-disabled", "true");
+        expect(actions.updateSpread).not.toHaveBeenCalled();
+        await user.keyboard("{Enter}");
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose Preset Spread" })).not.toBeInTheDocument());
+        const apply = screen.getByRole("button", { name: /252 Atk/ });
+        expect(apply).toBeEnabled();
+        expect(actions.updateSpread).toHaveBeenCalledTimes(1);
+        const initial = createFields(fields);
+        const result = actions.updateSpread.mock.calls.at(-1)[1](initial, initial);
+        expect(result.atkEv).toBe(252);
+        expect(result.atkIv).toBe(31);
+        expect(result.moves).toEqual(initial.moves);
+    });
+
+    it("searches without changing drafts and immediately applies the selected preset and automatic option", async () =>
+    {
+        const user = userEvent.setup();
+        render(<HeldStatCard initialFields={createFields()} />);
+        const arrow = screen.getByRole("button", { name: "Choose Preset Spread" });
+        const attackEvs = screen.getByRole("textbox", { name: "Charizard Sp. Atk EVs" });
+        await user.click(arrow);
+        const chooser = await screen.findByRole("dialog", { name: "Choose Preset Spread" });
+        const search = within(chooser).getByRole("combobox", { name: "Preset Spread" });
+        await waitFor(() => expect(search).toHaveFocus());
+        expect(within(chooser).getByRole("listbox", { name: "Preset Spread" })).toBeInTheDocument();
+        expect(within(chooser).getByRole("option", { name: "Fast Physical Attacker" })).not.toHaveAttribute("aria-disabled", "true");
+        expect(attackEvs).toHaveValue("0");
+        await user.clear(search);
+        await user.type(search, "Physically{Enter}");
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose Preset Spread" })).not.toBeInTheDocument());
+        const apply = screen.getByRole("button", { name: "Bold: 252 HP / 252 Def / 4 SpD" });
+        expect(apply).toBeEnabled();
+        expect(screen.getByRole("textbox", { name: "Charizard Defense EVs" })).toHaveValue("252");
+        expect(screen.getByRole("combobox", { name: "Nature" })).toHaveValue("Bold (+Def, -Atk)");
+        await user.click(arrow);
+        const resetSearch = await screen.findByRole("combobox", { name: "Preset Spread" });
+        await waitFor(() => expect(resetSearch).toHaveFocus());
+        expect(resetSearch.selectionEnd).toBe(resetSearch.value.length);
+        expect(resetSearch.selectionStart).toBe(0);
+        await user.keyboard("Automatic{Enter}");
+        expect(await screen.findByRole("button", { name: "Timid: 4 HP / 252 SpA / 252 Spe" })).toBeEnabled();
+        expect(screen.getByRole("textbox", { name: "Charizard Defense EVs" })).toHaveValue("0");
+    });
+
+    it("immediately applies a preset chosen with the mouse", async () =>
+    {
+        const user = userEvent.setup();
+        render(<HeldStatCard initialFields={createFields()} />);
+        await user.click(screen.getByRole("button", { name: "Choose Preset Spread" }));
+        await user.click(await screen.findByRole("option", { name: "Bulky Special Attacker" }));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose Preset Spread" })).not.toBeInTheDocument());
+        expect(screen.getByRole("textbox", { name: "Charizard HP EVs" })).toHaveValue("252");
+        expect(screen.getByRole("textbox", { name: "Charizard Speed EVs" })).toHaveValue("0");
+        expect(screen.getByRole("combobox", { name: "Nature" })).toHaveValue("Modest (+SpA, -Atk)");
+    });
+
+    it("closes the preset chooser with Escape without applying or selecting anything", async () =>
+    {
+        const { user, actions } = renderCard({ editing: true, fields: createFields() });
+        await user.click(screen.getByRole("button", { name: "Choose Preset Spread" }));
+        const search = await screen.findByRole("combobox", { name: "Preset Spread" });
+        await user.clear(search);
+        await user.type(search, "Bulky");
+        await user.keyboard("{Escape}{Escape}");
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose Preset Spread" })).not.toBeInTheDocument());
+        expect(actions.updateSpread).not.toHaveBeenCalled();
+        expect(screen.getByRole("button", { name: "Timid: 4 HP / 252 SpA / 252 Spe" })).toBeEnabled();
+    });
+
+    it("tabs down EVs then IVs in both directions, skipping steppers and selecting each field", async () =>
+    {
+        const { card, user } = renderCard({ editing: true, fields: createFields({ hpEv: 4 }) });
+        const inputs = [...card.querySelectorAll("input[data-stat-kind='ev']"), ...card.querySelectorAll("input[data-stat-kind='iv']")];
+        expect(inputs).toHaveLength(12);
+        await user.click(inputs[0]);
+        for (const input of inputs.slice(1))
+        {
+            await user.tab();
+            expect(input).toHaveFocus();
+            expect(input.selectionStart).toBe(0);
+            expect(input.selectionEnd).toBe(input.value.length);
+        }
+        await user.tab();
+        expect(within(card).getByRole("combobox", { name: "Nature" })).toHaveFocus();
+        await user.tab({ shift: true });
+        expect(inputs.at(-1)).toHaveFocus();
+        for (const input of inputs.slice(0, -1).reverse())
+        {
+            await user.tab({ shift: true });
+            expect(input).toHaveFocus();
+        }
+        await user.tab({ shift: true });
+        expect(within(card).getByRole("button", { name: "Reset IVs" })).toHaveFocus();
+        expect([...card.querySelectorAll(".stat-stepper button")].every((button) => button.tabIndex === -1)).toBe(true);
+    });
+
+    it("keeps stat arrow keys available after tabbing down", async () =>
+    {
+        const { user, actions } = renderCard({ editing: true, fields: createFields() });
+        await user.click(screen.getByRole("textbox", { name: "Charizard HP EVs" }));
+        await user.tab();
+        await user.keyboard("{ArrowUp}");
+        expect(actions.updateSpread.mock.calls.at(-1)[1](createFields()).atkEv).toBe(4);
+    });
+
     it.each([false, true])("advances portaled edit fields with doubles team shown: %s", async (doubles) =>
     {
         const spreads = createSpreads();
@@ -235,7 +413,7 @@ describe("Spread card", () =>
         expect(within(card).queryByText("Lv. 5")).not.toBeInTheDocument();
         if (usages.length)
         {
-            expect(trainers.previousElementSibling).toHaveClass("spread-card-title");
+            expect(trainers.parentElement.previousElementSibling).toHaveClass("spread-card-title");
             expect(within(trainers).getByText("Palmer")).toBeInTheDocument();
         }
         else
@@ -323,7 +501,7 @@ describe("Spread card", () =>
         const { card } = renderCard({ set, editing: true, fields: createFields({ item: "ITEM_CHARIZARDITE_X" }) });
         const trainers = card.querySelector(".trainer-chips");
         expect(trainers.querySelector(".MuiChip-root")).toHaveTextContent("Palmer");
-        expect(trainers.previousElementSibling).toHaveClass("spread-card-title");
+        expect(trainers.parentElement.previousElementSibling).toHaveClass("spread-card-title");
         expect(card.querySelector(".spread-side-checks").parentElement).not.toHaveTextContent("Palmer");
         const held = card.querySelector(".spread-card-held");
         expect(precedes(card.querySelector(".spread-card-moves"), held)).toBe(true);

@@ -5,11 +5,12 @@ import axios from "axios";
 import { StatusCode } from "status-code-enum";
 import { vi } from "vitest";
 
+import { getHiddenPowerType } from "../../shared/pokemon-mechanics.mjs";
 import App from "../App";
 import { AutoFixDialog } from "../components/SpreadDialogs";
 import { LIST_PAGE_SIZE } from "../subcomponents/CatalogDisplay";
 import { DRAFTS_STORAGE_KEY, SETTINGS_STORAGE_KEY, SETTINGS_VERSION } from "../SpreadEditorState";
-import { PATHS, SAVE_ROUTE, apiError, createFields, createSpreads, createWorkspace, mockServer } from "./EditorFixtures";
+import { CATALOG_ROUTE, PATHS, SAVE_ROUTE, apiError, createCatalog, createFields, createSpreads, createWorkspace, mockServer } from "./EditorFixtures";
 
 vi.mock("axios", () => ({ default: { post: vi.fn() } }));
 
@@ -61,6 +62,26 @@ async function editCard(user, name, index = 0)
 {
     await user.click(within(getCard(name, index)).getByRole("heading", { name }));
     return within(screen.getByRole("dialog", { name: `Edit ${name}` })).getByRole("article", { name: `${name} spread` });
+}
+
+/**
+ * Closes the ordinary edit dialog through one of its shared close paths.
+ *
+ * @param {object} user The user-event instance.
+ * @param {string} method Done, Escape or backdrop.
+ * @returns {Promise<void>} Resolves once the dialog has closed.
+ */
+async function closeEditDialog(user, method)
+{
+    const dialog = screen.getByRole("dialog", { name: "Edit Charizard" });
+    if (method === "Done")
+        await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    else if (method === "Escape")
+        await user.keyboard("{Escape}");
+    else
+        await user.click(dialog.parentElement);
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit Charizard" })).not.toBeInTheDocument());
 }
 
 /**
@@ -609,7 +630,164 @@ describe("Spread editor", () =>
         await user.tab();
         expect(within(card).getByRole("combobox", { name: "Move 1" })).toHaveValue("");
         await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Done" }));
+        expect(JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).drafts.e0.moves).toEqual(
+            ["MOVE_AIRSLASH", "MOVE_SCORCHINGSANDS", "MOVE_PROTECT", 0]);
         expect(within(await editCard(user, "Charizard")).getByRole("combobox", { name: "Move 1" })).toHaveValue(second);
+    });
+
+    test.each(["Done", "Escape", "backdrop"])("fills the first name-sorted picker move after clearing all moves and closing with %s", async (method) =>
+    {
+        const spreads = createSpreads();
+        const saved = { ...spreads.entries[0].fields, moves: [...spreads.entries[0].fields.moves] };
+        const { user, calls } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+        const card = await editCard(user, "Charizard");
+        await user.click(within(card).getByRole("button", { name: "Lower Attack IV" }));
+        for (const label of ["Move 1", "Move 2", "Move 3", "Move 4"])
+        {
+            await user.clear(within(card).getByRole("combobox", { name: label }));
+            await user.tab();
+        }
+        expect(within(card).getByRole("combobox", { name: "Move 1" })).toHaveValue("");
+
+        await closeEditDialog(user, method);
+        expect(within(getCard("Charizard")).getByText("Air Slash")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save Changes (1)" })).toBeEnabled();
+        expect(JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).drafts.e0).toEqual(
+            { ...saved, atkIv: 30, moves: ["MOVE_AIRSLASH", 0, 0, 0] });
+        expect(spreads.entries[0].fields).toEqual(saved);
+
+        await user.click(screen.getByRole("button", { name: "Save Changes (1)" }));
+        await waitFor(() => expect(calls.some((call) => call.route.endsWith("/save"))).toBe(true));
+        expect(calls.find((call) => call.route.endsWith("/save")).body.operations).toEqual(
+            [{ type: "update", entryId: "e0", fields: { atkIv: 30, moves: ["MOVE_AIRSLASH", 0, 0, 0] } }]);
+    });
+
+    test("creates a default move draft when an originally empty spread is opened and closed without edits", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: [0, "MOVE_NONE", 0, "MOVE_NONE"] });
+        const saved = spreads.entries[0].fields;
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+        await editCard(user, "Charizard");
+        expect(screen.queryByRole("button", { name: SAVE_BUTTON })).not.toBeInTheDocument();
+        expect(localStorage.getItem(DRAFTS_STORAGE_KEY)).toBeNull();
+
+        await closeEditDialog(user, "Done");
+        expect(JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).drafts.e0).toEqual(
+            { ...saved, moves: ["MOVE_AIRSLASH", "MOVE_NONE", 0, "MOVE_NONE"] });
+        expect(saved.moves).toEqual([0, "MOVE_NONE", 0, "MOVE_NONE"]);
+        const card = await editCard(user, "Charizard");
+        expect(within(card).getByRole("combobox", { name: "Move 1" })).toHaveValue("Air Slash");
+        expect(within(card).getByRole("combobox", { name: "Move 2" })).toHaveValue("");
+    });
+
+    test.each(["empty complete learnset", "empty game moves"])("leaves originally empty moves unchanged with %s", async (reason) =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: [0, 0, 0, 0] });
+        const catalog = createCatalog();
+        if (reason === "empty complete learnset")
+            catalog.learnsets.SPECIES_CHARIZARD = { status: "complete", moves: {}, unknown: {} };
+        else
+            catalog.moves = {};
+        const { user } = await openEditor(
+        {
+            "/workspaces/load": () => createWorkspace("workspace-1", spreads),
+            [CATALOG_ROUTE]: () => catalog,
+        });
+        await editCard(user, "Charizard");
+        await closeEditDialog(user, "Done");
+        expect(screen.queryByRole("button", { name: SAVE_BUTTON })).not.toBeInTheDocument();
+        expect(localStorage.getItem(DRAFTS_STORAGE_KEY)).toBeNull();
+        expect(spreads.entries[0].fields.moves).toEqual([0, 0, 0, 0]);
+    });
+
+    test("keeps cleared move drafts empty when the picker has no learnable options", async () =>
+    {
+        const catalog = createCatalog();
+        catalog.learnsets.SPECIES_CHARIZARD = { status: "complete", moves: {}, unknown: {} };
+        const { user } = await openEditor({ [CATALOG_ROUTE]: () => catalog });
+        const card = await editCard(user, "Charizard");
+        for (const label of ["Move 1", "Move 2", "Move 3", "Move 4"])
+        {
+            await user.clear(within(card).getByRole("combobox", { name: label }));
+            await user.tab();
+        }
+        await closeEditDialog(user, "Done");
+        expect(JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).drafts.e0.moves).toEqual([0, 0, 0, 0]);
+        expect(screen.getByRole("button", { name: "Save Changes (1)" })).toBeEnabled();
+    });
+
+    test.each(["missing", "incomplete", "conditional unknown"])("uses Add Spread's first picker option with a %s learnset", async (kind) =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: [0, 0, 0, 0] });
+        const catalog = createCatalog();
+        if (kind === "missing")
+            delete catalog.learnsets.SPECIES_CHARIZARD;
+        else
+            catalog.learnsets.SPECIES_CHARIZARD = { status: kind === "incomplete" ? "incomplete" : "complete", moves: {}, unknown: { MOVE_AIRSLASH: ["conditional"] } };
+        const { user } = await openEditor(
+        {
+            "/workspaces/load": () => createWorkspace("workspace-1", spreads),
+            [CATALOG_ROUTE]: () => catalog,
+        });
+        await editCard(user, "Charizard");
+        await closeEditDialog(user, "Done");
+        expect(JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).drafts.e0.moves).toEqual(["MOVE_AIRSLASH", 0, 0, 0]);
+    });
+
+    test("sets the first Hidden Power option's type through IVs without mutating saved fields", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: [0, 0, 0, 0] });
+        const saved = { ...spreads.entries[0].fields, moves: [...spreads.entries[0].fields.moves] };
+        const catalog = createCatalog();
+        catalog.types.TYPE_BUG = { name: "Bug", icon: null, symbol: null };
+        catalog.learnsets.SPECIES_CHARIZARD = { status: "complete", moves: { MOVE_HIDDENPOWER: ["level"] }, unknown: {} };
+        const { user } = await openEditor(
+        {
+            "/workspaces/load": () => createWorkspace("workspace-1", spreads),
+            [CATALOG_ROUTE]: () => catalog,
+        });
+        await editCard(user, "Charizard");
+        await closeEditDialog(user, "Done");
+        const fields = JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).drafts.e0;
+        expect(fields.moves).toEqual(["MOVE_HIDDENPOWER", 0, 0, 0]);
+        expect(getHiddenPowerType(fields)).toBe("TYPE_BUG");
+        expect(spreads.entries[0].fields).toEqual(saved);
+        expect(within(await editCard(user, "Charizard")).getByRole("combobox", { name: "Move 1" })).toHaveValue("Hidden Power [Bug]");
+    });
+
+    test("does not draft or replace existing moves when an untouched sparse spread closes", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: [0, "MOVE_PROTECT", 0, 0] });
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+        await editCard(user, "Charizard");
+        await closeEditDialog(user, "Done");
+        expect(screen.queryByRole("button", { name: SAVE_BUTTON })).not.toBeInTheDocument();
+        expect(localStorage.getItem(DRAFTS_STORAGE_KEY)).toBeNull();
+        expect(spreads.entries[0].fields.moves).toEqual([0, "MOVE_PROTECT", 0, 0]);
+    });
+
+    test("does not default empty moves when reverting or deleting a spread", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: [0, 0, 0, 0] });
+        const { user, calls } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+        const card = await editCard(user, "Charizard");
+        await user.click(within(card).getByRole("button", { name: "Lower Attack IV" }));
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Revert Charizard" }));
+        expect(within(card).getByRole("combobox", { name: "Move 1" })).toHaveValue("");
+        expect(localStorage.getItem(DRAFTS_STORAGE_KEY)).toBeNull();
+        await user.click(within(card).getByRole("button", { name: "Spread Actions" }));
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).drafts).toEqual({});
+        await user.click(screen.getByRole("button", { name: "Save Changes (1)" }));
+        await waitFor(() => expect(calls.some((call) => call.route.endsWith("/save"))).toBe(true));
+        expect(calls.find((call) => call.route.endsWith("/save")).body.operations).toEqual([{ type: "delete", entryId: "e0" }]);
     });
 
     test("previews the IV auto-fix for every matching spread before applying it", async () =>
