@@ -158,6 +158,24 @@ describe("Source archive exchange", function ()
         }
     });
 
+    it("roundtrips a repository with only one spread header", async () =>
+    {
+        const { CFRU_SPREAD_FILES, getWorkspace } = require("../../services/repositories");
+        const onlyFile = "src/Tables/raid_rush_spreads.h";
+        for (const file of CFRU_SPREAD_FILES.filter((file) => file !== onlyFile))
+            fs.unlinkSync(path.join(fixture.paths.cfru, file));
+        const loaded = await post("/api/workspaces/load", { paths: fixture.paths });
+        expect(loaded.status, JSON.stringify(loaded.body)).to.equal(200);
+        const exported = await archiveService.exportArchive(getWorkspace(loaded.body.workspaceId));
+        const zip = new AdmZip(exported);
+        for (const file of CFRU_SPREAD_FILES)
+            expect(zip.getEntry(`cfru/${file}`) != null).to.equal(file === onlyFile);
+        const imported = await upload(exported);
+        expect(imported.status, JSON.stringify(imported.body)).to.equal(200);
+        expect(imported.body.spreads.files.map((file) => file.path)).to.deep.equal([onlyFile]);
+        expect(imported.body.spreads.sets).to.deep.equal(loaded.body.spreads.sets);
+    });
+
     it("roundtrips binaries, empty compatibility directories and normal spreads", async () =>
     {
         for (const folder of ["src/tm_compatibility", "src/tutor_compatibility"])

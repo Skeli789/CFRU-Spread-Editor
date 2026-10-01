@@ -38,6 +38,7 @@ const CFRU_SPREAD_FILES =
     "src/Tables/frontier_special_trainer_spreads.h",
     "src/Tables/frontier_multi_spreads.h",
     "src/Tables/raid_partners.h",
+    "src/Tables/raid_rush_spreads.h",
 ];
 const CFRU_CONFIG_FILE = "src/config.h";
 const CFRU_TRAINERS_FILE = "src/Tables/battle_frontier_trainers.c";
@@ -374,13 +375,16 @@ async function validateRepositoryPath(kind, rawPath, onCheck)
     }
 
     // Confirm the folder contains the files that identify this repository
-    const problems = (await Promise.all(REPOSITORY_SENTINELS[kind].map(async (sentinel) =>
+    const checks = await Promise.all(REPOSITORY_SENTINELS[kind].map(async (sentinel) =>
     {
         const problem = await checkSentinel(root, sentinel);
         onCheck?.();
         return problem;
-    })))
-        .filter((problem) => problem != null);
+    }));
+    const hasSpreadFile = kind === REPOSITORY_CFRU && REPOSITORY_SENTINELS[kind].some((sentinel, index) =>
+        CFRU_SPREAD_FILES.includes(sentinel.path) && checks[index] == null);
+    const problems = checks.filter((problem) => problem != null &&
+        !(hasSpreadFile && problem.code === "MISSING" && CFRU_SPREAD_FILES.includes(problem.path)));
     if (problems.length > 0)
     {
         // Point out swapped folders, which are the most common mistake
@@ -532,8 +536,10 @@ async function checkSpreadFileAccess(cfruRoot)
         {
             await fs.promises.access(await resolveInsideRoot(cfruRoot, relativePath), fs.constants.W_OK);
         }
-        catch
+        catch (error)
         {
+            if (error.code === "ENOENT")
+                continue;
             diagnostics.push(
             {
                 severity: SEVERITY_WARNING,
@@ -768,9 +774,10 @@ module.exports.forgetWorkspace = forgetWorkspace;
  * @param {object} workspace The workspace.
  * @param {string} kind The repository kind.
  * @param {string} relativePath The repository-relative path, which must come from server-owned data.
- * @returns {Promise<string>} The canonical absolute path.
+ * @param {boolean} [optional] Whether a missing file may be skipped.
+ * @returns {Promise<string|null>} The canonical absolute path, or null for a missing optional file.
  */
-async function resolveOwnedFile(workspace, kind, relativePath)
+async function resolveOwnedFile(workspace, kind, relativePath, optional = false)
 {
     try
     {
@@ -784,6 +791,8 @@ async function resolveOwnedFile(workspace, kind, relativePath)
     }
     catch (error)
     {
+        if (optional && error.code === "ENOENT")
+            return null;
         if (error instanceof ApiError)
             throw error;
 
@@ -800,17 +809,22 @@ module.exports.resolveOwnedFile = resolveOwnedFile;
  * @param {object} workspace The workspace.
  * @param {string} kind The repository kind.
  * @param {string} relativePath The repository-relative path, which must come from server-owned data.
- * @returns {Promise<Buffer>} The contents.
+ * @param {boolean} [optional] Whether a missing file may be skipped.
+ * @returns {Promise<Buffer|null>} The contents, or null for a missing optional file.
  */
-async function readOwnedBuffer(workspace, kind, relativePath)
+async function readOwnedBuffer(workspace, kind, relativePath, optional = false)
 {
-    const filePath = await resolveOwnedFile(workspace, kind, relativePath);
+    const filePath = await resolveOwnedFile(workspace, kind, relativePath, optional);
+    if (filePath == null)
+        return null;
     try
     {
         return await fs.promises.readFile(filePath);
     }
-    catch
+    catch (error)
     {
+        if (optional && error.code === "ENOENT")
+            return null;
         throw new ApiError(StatusCode.ClientErrorConflict, "REPOSITORY_FILE_UNAVAILABLE",
             `${relativePath} in the ${REPOSITORY_LABELS[kind]} repository can no longer be read. Load the repositories again.`,
             { repository: kind, file: relativePath });

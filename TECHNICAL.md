@@ -53,10 +53,16 @@ src/config.h
 include/new/frontier.h
 src/Tables/battle_frontier_trainers.c
 src/Tables/battle_moves.c
+```
+
+At least one of these spread headers is required; any one is sufficient. Missing headers are skipped, while present headers must be readable regular files:
+
+```text
 src/Tables/battle_tower_spreads.h
 src/Tables/frontier_special_trainer_spreads.h
 src/Tables/frontier_multi_spreads.h
 src/Tables/raid_partners.h
+src/Tables/raid_rush_spreads.h
 ```
 
 Optional for item kinds and item-type filtering:
@@ -65,7 +71,7 @@ Optional for item kinds and item-type filtering:
 src/Tables/item_tables.c
 ```
 
-Only the four spread headers are save targets and need write access to save changes.
+Only present spread headers are save targets and need write access to save changes. Missing headers are not created by saves and are omitted from ZIP exports. Adding or removing a header after loading triggers a save conflict and requires reloading. Raid Rush's Easy, Medium, Hard, and Impossible sets load when `UNBOUND` is defined, and empty sets support adding their first spread.
 
 ### Dynamic Pokemon Expansion
 
@@ -162,12 +168,13 @@ ZIP limits are 128 MiB compressed, 32 MiB per file, 512 MiB expanded, and 16,384
 
 ## Saves, backups, and security
 
-Save Changes submits updates, deletions, additions, and reorders together. The API validates permissions/fields, checks the loaded revision and input hashes (including configuration/trainer inputs), and reparses proposed source before replacing files. Targeted edits preserve unrelated source bytes, comments, line endings, and inactive branches. Only these four CFRU-relative headers from the [repository allowlist](server/services/repositories.js) are save targets:
+Save Changes submits updates, deletions, additions, and reorders together. The API validates permissions/fields, checks the loaded revision and input hashes (including configuration/trainer inputs), and reparses proposed source before replacing files. Targeted edits preserve unrelated source bytes, comments, line endings, and inactive branches. Only these five CFRU-relative headers from the [repository allowlist](server/services/repositories.js) are save targets:
 
 - `src/Tables/battle_tower_spreads.h`
 - `src/Tables/frontier_special_trainer_spreads.h`
 - `src/Tables/frontier_multi_spreads.h`
 - `src/Tables/raid_partners.h`
+- `src/Tables/raid_rush_spreads.h`
 
 DPE and Cloud are read-only reference repositories.
 

@@ -18,12 +18,14 @@ const BATTLE_TOWER = "src/Tables/battle_tower_spreads.h";
 const SPECIAL_TRAINERS = "src/Tables/frontier_special_trainer_spreads.h";
 const MULTI_SPREADS = "src/Tables/frontier_multi_spreads.h";
 const RAID_PARTNERS = "src/Tables/raid_partners.h";
+const RAID_RUSH = "src/Tables/raid_rush_spreads.h";
+const RAID_RUSH_SETS = ["sRaidRushEasySpreads", "sRaidRushMediumSpreads", "sRaidRushHardSpreads", "sRaidRushImpossibleSpreads"];
 const CONFIG = "src/config.h";
-const SPREAD_FILES = [BATTLE_TOWER, SPECIAL_TRAINERS, MULTI_SPREADS, RAID_PARTNERS];
+const SPREAD_FILES = [BATTLE_TOWER, SPECIAL_TRAINERS, MULTI_SPREADS, RAID_PARTNERS, RAID_RUSH];
 const GAME_WITH_ABILITIES = "zeta";
 const RETRY_DELAY_MS = 1;
 const FIXTURE_TIMEOUT_MS = 20000;
-const PARSED_FILE_COUNT = 7;
+const PARSED_FILE_COUNT = 8;
 
 const NEW_SPREAD =
 {
@@ -95,6 +97,7 @@ describe("Spread Saving", function ()
 
     let fixture;
     let dataDirectory;
+    let originalDataDirectory;
 
     const cfruPath = (file) => path.join(fixture.paths.cfru, ...file.split("/"));
     const readText = (file) => fs.readFileSync(cfruPath(file), "utf8");
@@ -110,9 +113,10 @@ describe("Spread Saving", function ()
     async function load(options = {})
     {
         const store = createSpreadStore({ dataDirectory, retryDelayMs: RETRY_DELAY_MS, ...options });
-        const workspace = getWorkspace((await loadWorkspace(fixture.paths)).workspaceId);
+        const loaded = await loadWorkspace(fixture.paths);
+        const workspace = getWorkspace(loaded.workspaceId);
         const { spreads, diagnostics } = await store.loadSpreads(workspace);
-        return { workspace, store, spreads, diagnostics };
+        return { workspace, store, spreads, diagnostics, repositoryDiagnostics: loaded.diagnostics };
     }
 
     const findEntry = (spreads, species) => spreads.entries.find((entry) => entry.fields.species === species);
@@ -146,15 +150,99 @@ describe("Spread Saving", function ()
     {
         fixture = createFixtureRepositories();
         dataDirectory = path.join(fixture.base, "editor data");
+        originalDataDirectory = process.env.SPREAD_EDITOR_DATA_DIR;
+        process.env.SPREAD_EDITOR_DATA_DIR = dataDirectory;
     });
 
     afterEach(() =>
     {
+        if (originalDataDirectory === undefined)
+            delete process.env.SPREAD_EDITOR_DATA_DIR;
+        else
+            process.env.SPREAD_EDITOR_DATA_DIR = originalDataDirectory;
         fixture.cleanup();
     });
 
     describe("Loading", () =>
     {
+        for (const onlyFile of SPREAD_FILES)
+        {
+            it(`should load and save with only ${onlyFile} present`, async () =>
+            {
+                for (const file of SPREAD_FILES.filter((file) => file !== onlyFile))
+                    fs.unlinkSync(cfruPath(file));
+                const { store, workspace, spreads, diagnostics, repositoryDiagnostics } = await load();
+                expect(spreads.files.map((file) => file.path)).to.deep.equal([onlyFile]);
+                expect(spreads.sets.length).to.be.greaterThan(0);
+                expect(repositoryDiagnostics.filter((diagnostic) => diagnostic.code === "FILE_READ_ONLY")).to.deep.equal([]);
+                expect(diagnostics.filter((diagnostic) => diagnostic.code === "FILE_READ_ONLY")).to.deep.equal([]);
+                const set = spreads.sets.find((candidate) => candidate.canInsert);
+                const result = await store.saveSpreads(workspace,
+                {
+                    revision: spreads.revision,
+                    operations: [{ type: "add", tempId: "single-file", setId: set.id, fields: NEW_SPREAD }],
+                });
+                expect(result.files).to.deep.equal([{ path: onlyFile, status: "saved" }]);
+                for (const file of SPREAD_FILES.filter((file) => file !== onlyFile))
+                    expect(fs.existsSync(cfruPath(file))).to.equal(false);
+            });
+        }
+
+        it("should reject a repository with no spread headers", async () =>
+        {
+            for (const file of SPREAD_FILES)
+                fs.unlinkSync(cfruPath(file));
+            const error = await expectRejected(load(), 422, "REPOSITORY_VALIDATION_FAILED");
+            expect(error.details.fields.cfru.code).to.equal("REPOSITORY_INVALID_STRUCTURE");
+        });
+
+        it("should reject a present spread path that is not a file", async () =>
+        {
+            fs.unlinkSync(cfruPath(RAID_RUSH));
+            fs.mkdirSync(cfruPath(RAID_RUSH));
+            const error = await expectRejected(load(), 422, "REPOSITORY_VALIDATION_FAILED");
+            expect(error.details.fields.cfru.missing).to.deep.include({ code: "WRONG_TYPE", path: RAID_RUSH });
+        });
+
+        for (const change of ["added", "removed"])
+        {
+            it(`should reject saving when a spread header was ${change} after loading`, async () =>
+            {
+                const original = readBytes(RAID_RUSH);
+                if (change === "added")
+                    fs.unlinkSync(cfruPath(RAID_RUSH));
+                const { store, workspace, spreads } = await load();
+                if (change === "added")
+                    fs.writeFileSync(cfruPath(RAID_RUSH), original);
+                else
+                    fs.unlinkSync(cfruPath(RAID_RUSH));
+                const error = await expectRejected(store.saveSpreads(workspace, { revision: spreads.revision, operations: [] }), 409, "SAVE_CONFLICT");
+                expect(error.details.files).to.deep.equal([RAID_RUSH]);
+                const reloaded = await load();
+                expect(reloaded.spreads.revision).to.not.equal(spreads.revision);
+            });
+        }
+
+        it("should load empty Raid Rush difficulty sets with insertion permissions", async () =>
+        {
+            const { spreads } = await load();
+            const sets = spreads.sets.filter((set) => set.file === RAID_RUSH);
+            expect(sets.map((set) => set.name)).to.deep.equal(RAID_RUSH_SETS);
+            for (const set of sets)
+            {
+                expect(set).to.include({ category: "raidRush", isStatic: true, canEdit: true, canInsert: true, canReorder: true });
+                expect(set.entryIds).to.deep.equal([]);
+                expect(set.branch).to.deep.equal(["#ifdef UNBOUND"]);
+            }
+        });
+
+        it("should omit Raid Rush sets when UNBOUND is not defined", async () =>
+        {
+            fs.writeFileSync(cfruPath(CONFIG), CONFIG_VANILLA);
+            const { spreads } = await load();
+            expect(spreads.sets.filter((set) => set.file === RAID_RUSH)).to.deep.equal([]);
+        });
+
         it("should load spreads, trainer links and set permissions", async () =>
         {
             const { spreads, diagnostics } = await load();
@@ -261,6 +349,41 @@ describe("Spread Saving", function ()
 
     describe("Minimal edits", () =>
     {
+        it("should add and update spreads in every Raid Rush difficulty without changing other files", async () =>
+        {
+            const before = readAllSpreadFiles();
+            const { store, workspace, spreads } = await load();
+            const added = await store.saveSpreads(workspace,
+            {
+                revision: spreads.revision,
+                operations: RAID_RUSH_SETS.map((name) =>
+                ({ type: "add", tempId: name, setId: findSet(spreads, name).id, fields: NEW_SPREAD })),
+            });
+            expect(added.files).to.deep.equal([{ path: RAID_RUSH, status: "saved" }]);
+            for (const name of RAID_RUSH_SETS)
+                expect(findSet(added.spreads, name).entryIds).to.deep.equal([added.createdIds[name]]);
+
+            const beforeUpdate = readText(RAID_RUSH);
+            const updated = await store.saveSpreads(workspace,
+            {
+                revision: added.spreads.revision,
+                operations: RAID_RUSH_SETS.map((name) =>
+                ({ type: "update", entryId: added.createdIds[name], fields: { nature: "NATURE_TIMID" } })),
+            });
+            expect(updated.files).to.deep.equal([{ path: RAID_RUSH, status: "saved" }]);
+            expect(readText(RAID_RUSH)).to.equal(beforeUpdate.replaceAll(".nature = NATURE_HARDY", ".nature = NATURE_TIMID"));
+            for (const file of SPREAD_FILES.filter((file) => file !== RAID_RUSH))
+                expect(readBytes(file).equals(before[file]), file).to.equal(true);
+
+            const reloaded = await load();
+            for (const name of RAID_RUSH_SETS)
+            {
+                const set = findSet(reloaded.spreads, name);
+                expect(set.entryIds).to.have.length(1);
+                expect(reloaded.spreads.entries.find((entry) => entry.id === set.entryIds[0]).fields).to.include({ species: NEW_SPREAD.species, nature: "NATURE_TIMID" });
+            }
+        });
+
         it("should leave every file byte-for-byte unchanged when nothing changes", async () =>
         {
             const before = readAllSpreadFiles();

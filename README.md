@@ -1,6 +1,6 @@
 # CFRU Spread Editor
 
-A tool for editing CFRU Battle Frontier, special trainer, multi partner, and raid partner spreads in your browser.
+A tool for editing CFRU Battle Frontier, special trainer, multi partner, raid partner, and Raid Rush spreads in your browser.
 
 ## Features
 

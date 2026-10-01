@@ -14,7 +14,7 @@ const { validateCatalogData } = require("./catalog");
 const { getDataDirectory } = require("./parse-cache");
 const
 {
-    CLOUD_GAME_CONFIG_FILE, REPOSITORY_KINDS, REPOSITORY_SENTINELS,
+    CFRU_SPREAD_FILES, CLOUD_GAME_CONFIG_FILE, REPOSITORY_KINDS, REPOSITORY_SENTINELS,
     forgetWorkspace, getWorkspace, loadWorkspace, readOwnedBuffer,
 } = require("./repositories");
 const { createSourceInventory, isInventoryFile, listArchiveSources } = require("./source-inventory");
@@ -305,7 +305,8 @@ async function exportArchive(workspace, gameId, onProgress)
     const inventory = await listArchiveSources(workspace);
     onProgress?.({ percentage: 5, label: PROGRESS_LABELS.reading });
     const required = new Set(REPOSITORY_KINDS.flatMap((kind) => REPOSITORY_SENTINELS[kind]
-        .filter((entry) => entry.type === "file").map((entry) => `${kind}/${entry.path}`)));
+        .filter((entry) => entry.type === "file" && !(kind === "cfru" && CFRU_SPREAD_FILES.includes(entry.path)))
+        .map((entry) => `${kind}/${entry.path}`)));
     for (const game of workspace.games.values())
     {
         for (const file of Object.values(game.dataFiles))

@@ -22,13 +22,14 @@ const
 const { ROLE_LITTLE_CUP, SPREAD_FIELDS, isAutomaticSize, parseSpreadFile, parseTrainerTables } = require("./spread-parser");
 const { applyEdits, buildSetEdits, createSpreadFields, isSameValue, mergeSpreadFields, toAbilityName } = require("./spread-writer");
 
-const [BATTLE_TOWER_FILE, SPECIAL_TRAINER_FILE, MULTI_PARTNER_FILE, RAID_PARTNER_FILE] = CFRU_SPREAD_FILES;
+const [BATTLE_TOWER_FILE, SPECIAL_TRAINER_FILE, MULTI_PARTNER_FILE, RAID_PARTNER_FILE, RAID_RUSH_FILE] = CFRU_SPREAD_FILES;
 const SPREAD_CATEGORIES =
 {
     [BATTLE_TOWER_FILE]: "battleTower",
     [SPECIAL_TRAINER_FILE]: "specialTrainer",
     [MULTI_PARTNER_FILE]: "multiPartner",
     [RAID_PARTNER_FILE]: "raidPartner",
+    [RAID_RUSH_FILE]: "raidRush",
 };
 const INPUT_FILES = [CFRU_CONFIG_FILE, CFRU_FRONTIER_HEADER, CFRU_TRAINERS_FILE, ...CFRU_SPREAD_FILES];
 const LITTLE_CUP_POOLS = new Set(["gLittleCupSpreads"]);
@@ -143,8 +144,8 @@ function invalid(message)
  */
 async function readInputs(workspace)
 {
-    const contents = await Promise.all(INPUT_FILES.map((file) => readOwnedBuffer(workspace, REPOSITORY_CFRU, file)));
-    return new Map(INPUT_FILES.map((file, index) => [file, contents[index]]));
+    const contents = await Promise.all(INPUT_FILES.map((file) => readOwnedBuffer(workspace, REPOSITORY_CFRU, file, CFRU_SPREAD_FILES.includes(file))));
+    return new Map(INPUT_FILES.map((file, index) => [file, contents[index]]).filter(([, bytes]) => bytes != null));
 }
 
 /**
@@ -324,6 +325,8 @@ async function buildState(workspace, inputs, cache)
 
     for (const file of CFRU_SPREAD_FILES)
     {
+        if (!decoded.has(file))
+            continue;
         const parsed = await parse(CACHE_SPREAD_FILE, file, () => parseSpreads(decoded.get(file).text, macros));
         const fileState = createFileState(file, decoded.get(file), parsed);
         state.files.set(file, fileState);
@@ -333,6 +336,8 @@ async function buildState(workspace, inputs, cache)
     // Trainer tables live in the trainers file, and raid partners next to their spreads
     for (const file of [CFRU_TRAINERS_FILE, RAID_PARTNER_FILE])
     {
+        if (!decoded.has(file))
+            continue;
         const { trainers, diagnostics } = await parse(CACHE_TRAINER_TABLES, file, () => parseTrainerTables(decoded.get(file).text, macros));
         state.trainers.push(...trainers.map((trainer) => ({ ...trainer, id: `${file}#${trainer.id}`, file })));
         state.diagnostics.push(...withFile(diagnostics, file));
@@ -971,7 +976,7 @@ function createSpreadStore(
 
         // The files must not have changed outside the editor since they were loaded
         const inputs = await readInputs(workspace);
-        const changedFiles = INPUT_FILES.filter((file) => hashBytes(inputs.get(file)) !== state.hashes.get(file));
+        const changedFiles = INPUT_FILES.filter((file) => (inputs.has(file) ? hashBytes(inputs.get(file)) : undefined) !== state.hashes.get(file));
         if (changedFiles.length > 0)
             throw new ApiError(StatusCode.ClientErrorConflict, "SAVE_CONFLICT", `${changedFiles.join(", ")} changed outside the editor. Load the repositories again to see those changes.`, { files: changedFiles });
 

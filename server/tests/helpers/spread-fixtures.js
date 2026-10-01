@@ -283,6 +283,23 @@ const FRONTIER_HEADER =
     "",
 ].join(CRLF);
 
+const RAID_RUSH_SPREADS =
+[
+    '#include "../config.h"',
+    "",
+    "#ifdef UNBOUND",
+    "",
+    ...["Easy", "Medium", "Hard", "Impossible"].flatMap((difficulty) =>
+    [
+        `static const struct BattleTowerSpread sRaidRush${difficulty}Spreads[] =`,
+        "{",
+        "};",
+        "",
+    ]),
+    "#endif",
+    "",
+].join(CRLF);
+
 const CFRU_SOURCE_FILES =
 {
     "src/config.h": CONFIG_UNBOUND,
@@ -292,6 +309,7 @@ const CFRU_SOURCE_FILES =
     "src/Tables/frontier_special_trainer_spreads.h": SPECIAL_TRAINER_SPREADS,
     "src/Tables/frontier_multi_spreads.h": MULTI_SPREADS,
     "src/Tables/raid_partners.h": RAID_PARTNERS,
+    "src/Tables/raid_rush_spreads.h": RAID_RUSH_SPREADS,
 };
 module.exports.CFRU_SOURCE_FILES = CFRU_SOURCE_FILES;
 module.exports.CONFIG_VANILLA = CONFIG_VANILLA;
