@@ -34,6 +34,7 @@ const CLOUD_IMAGE_FOLDERS =
     gen9Shiny: "public/images/gen_9/shiny",
     unboundShinies: "public/images/unbound_shinies",
 };
+module.exports.CLOUD_IMAGE_FOLDERS = CLOUD_IMAGE_FOLDERS;
 const GIGANTAMAX_IMAGE = "gigantamax";
 
 const SPECIES_PREFIX = "SPECIES_";

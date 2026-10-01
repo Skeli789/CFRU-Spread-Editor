@@ -3,14 +3,15 @@
  * It is used to display a header at the top of the page.
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Accordion, AccordionDetails, AccordionSummary, Button, Dialog, DialogActions, DialogContent, DialogTitle, Menu, MenuItem, Stack, Typography } from "@mui/material";
+import { Accordion, AccordionDetails, AccordionSummary, Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Menu, MenuItem, Stack, Typography } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MenuIcon from "@mui/icons-material/Menu";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
 import DarkModeButton from "../subcomponents/DarkModeButton";
+import OperationProgress from "../subcomponents/OperationProgress";
 import { EDITOR_PHASE, useSpreadEditor } from "../SpreadEditorState";
 import { UnsavedChangesDialog } from "./SpreadDialogs";
 
@@ -57,10 +58,22 @@ const Header = ({ darkMode, toggleParentDarkMode }) =>
     const { state, dirtyCount, saveProblems, saveChanges, discardChanges } = editor;
     const [menuAnchor, setMenuAnchor] = useState(null);
     const [showWarnings, setShowWarnings] = useState(false);
+    const [showDownload, setShowDownload] = useState(false);
     const [pendingAction, setPendingAction] = useState(null);
     const ready = state.phase === EDITOR_PHASE.READY;
     const diagnostics = ready ? [...(state.workspace?.diagnostics ?? []), ...(state.catalog?.diagnostics ?? [])] : [];
     const warningGroups = groupDiagnostics(diagnostics);
+    const busy = state.saving || state.downloading || !ready;
+    const { downloadArchive } = editor;
+
+    /**
+     * Starts exporting after the unsaved-change decision has committed to editor state.
+     */
+    useEffect(() =>
+    {
+        if (showDownload)
+            downloadArchive();
+    }, [showDownload, downloadArchive]);
 
     /**
      * Runs a menu action after asking about unsaved changes.
@@ -94,8 +107,9 @@ const Header = ({ darkMode, toggleParentDarkMode }) =>
                         {diagnostics.length > 0 && <WarningAmberIcon fontSize="small" role="img" aria-label={`${diagnostics.length} load warnings`} />}
                     </Button>
                     <Menu anchorEl={menuAnchor} open={menuAnchor != null} onClose={() => setMenuAnchor(null)}>
-                        <MenuItem onClick={() => chooseAction(editor.changeGame)}>Change Game</MenuItem>
-                        <MenuItem onClick={() => chooseAction(editor.changeRepositories)}>Change Repositories</MenuItem>
+                        <MenuItem disabled={busy} onClick={() => chooseAction(editor.changeGame)}>Change Game</MenuItem>
+                        <MenuItem disabled={busy} onClick={() => chooseAction(editor.changeRepositories)}>Change Repositories</MenuItem>
+                        <MenuItem disabled={busy} onClick={() => chooseAction(() => setShowDownload(true))}>Download Required Files</MenuItem>
                         {diagnostics.length > 0 && <MenuItem onClick={() => { setMenuAnchor(null); setShowWarnings(true); }}>View Load Warnings</MenuItem>}
                     </Menu>
                     <Dialog open={showWarnings} onClose={() => setShowWarnings(false)} aria-labelledby="load-warnings-title" fullWidth maxWidth="sm" scroll="paper">
@@ -114,6 +128,24 @@ const Header = ({ darkMode, toggleParentDarkMode }) =>
                                 </Accordion>)}
                         </DialogContent>
                         <DialogActions><Button onClick={() => setShowWarnings(false)}>Close</Button></DialogActions>
+                    </Dialog>
+                    <Dialog open={showDownload} onClose={() => !state.downloading && setShowDownload(false)}
+                            aria-labelledby="archive-download-title" fullWidth maxWidth="sm">
+                        <DialogTitle id="archive-download-title">Download Required Files</DialogTitle>
+                        <DialogContent>
+                            <Stack spacing={2}>
+                                <Typography variant="body2">
+                                    The ZIP contains saved source files, not unsaved drafts. Uploaded archives are edited in a local cached copy.
+                                    Saves only update that cache; re-download the ZIP to transfer your saved changes elsewhere.
+                                </Typography>
+                                <OperationProgress progress={state.archiveProgress} />
+                                {state.archiveError && <Alert severity="error">{state.archiveError.message}</Alert>}
+                            </Stack>
+                        </DialogContent>
+                        <DialogActions>
+                            <Button disabled={state.downloading} onClick={() => setShowDownload(false)}>Close</Button>
+                            {state.archiveError && <Button disabled={state.downloading || state.saving} onClick={downloadArchive}>Retry</Button>}
+                        </DialogActions>
                     </Dialog>
                     <UnsavedChangesDialog open={pendingAction != null} count={dirtyCount} saving={state.saving} canSave={saveProblems.length === 0}
                                           error={state.saveError} onCancel={() => setPendingAction(null)}

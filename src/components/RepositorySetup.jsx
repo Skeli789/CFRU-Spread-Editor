@@ -3,15 +3,17 @@
  * It asks for the three repository folders and the game to edit before the editor opens.
  */
 
-import React from "react";
+import React, { useRef } from "react";
 import
 {
     Alert, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton,
     InputAdornment, LinearProgress, List, ListItemButton, ListItemText, Stack, TextField, Tooltip, Typography,
 } from "@mui/material";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutlineOutlined";
 
 import { EDITOR_PHASE, REPOSITORY_KINDS, REPOSITORY_LABELS, hasAllPaths, useSpreadEditor } from "../SpreadEditorState";
+import OperationProgress from "../subcomponents/OperationProgress";
 
 const REPOSITORY_HINTS =
 {
@@ -24,6 +26,8 @@ const SETUP_TITLE_ID = "repository-setup-title";
 const GAME_TITLE_ID = "game-select-title";
 const SEVERITY_WARNING = "warning";
 const PICKER_PROGRESS_SIZE = 20;
+const ARCHIVE_INPUT_ID = "repository-archive-upload";
+const ZIP_UPLOAD_HELP = "Use the archive from Download Required Files. Uploaded roots are validated and kept in a persistent local cache. Save writes the cached CFRU copy, not the original ZIP or checkout. Re-download Required Files to transfer saved changes. The local server is still required. Maximum ZIP size: 128 MiB.";
 
 
 /**
@@ -69,9 +73,10 @@ export const DiagnosticList = ({ diagnostics }) =>
  */
 const RepositoryDialog = () =>
 {
-    const { state, setPath, browse, loadRepositories, cancelChange } = useSpreadEditor();
+    const { state, setPath, browse, loadRepositories, importArchive, cancelChange } = useSpreadEditor();
+    const archiveInputRef = useRef(null);
     const loading = state.phase === EDITOR_PHASE.LOADING;
-    const busy = loading || state.pickingKind != null;
+    const busy = loading || state.pickingKind != null || state.saving || state.downloading;
     const canCancel = state.catalog != null && !busy;
     const open = state.phase === EDITOR_PHASE.SETUP || loading;
 
@@ -87,6 +92,19 @@ const RepositoryDialog = () =>
             loadRepositories();
     };
 
+    /**
+     * Uploads the selected ZIP and clears the input so the same file can be retried.
+     *
+     * @param {React.ChangeEvent<HTMLInputElement>} event The file selection.
+     */
+    const handleUpload = (event) =>
+    {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (file && !busy)
+            importArchive(file);
+    };
+
     return (
         <Dialog open={open} fullWidth maxWidth="sm" aria-labelledby={SETUP_TITLE_ID}
                 onClose={() => canCancel && cancelChange()}>
@@ -97,6 +115,19 @@ const RepositoryDialog = () =>
                         <Typography variant="body2" color="text.secondary">
                             Choose the local folder for each repository. The editor checks the folders every time it opens.
                         </Typography>
+                        <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+                            <Typography variant="body2" color="text.secondary">
+                                Or upload a required-files ZIP without entering folder paths.
+                            </Typography>
+                            <Tooltip title={ZIP_UPLOAD_HELP}>
+                                <IconButton size="small" aria-label="About ZIP Uploads">
+                                    <HelpOutlineIcon fontSize="small" />
+                                </IconButton>
+                            </Tooltip>
+                        </Stack>
+                        <input ref={archiveInputRef} id={ARCHIVE_INPUT_ID} type="file" accept=".zip,application/zip"
+                               aria-label="Upload ZIP" hidden disabled={busy} onChange={handleUpload} />
+                        <Button variant="outlined" disabled={busy} onClick={() => archiveInputRef.current?.click()}>Upload ZIP</Button>
                         {REPOSITORY_KINDS.map((kind) =>
                         {
                             const label = REPOSITORY_LABELS[kind];
@@ -138,11 +169,7 @@ const RepositoryDialog = () =>
                         })}
                         {state.error != null && <Alert severity="error">{state.error.message}</Alert>}
                         <DiagnosticList diagnostics={state.error?.details?.diagnostics ?? []} />
-                        {loading &&
-                            <Stack spacing={1}>
-                                <Typography variant="body2">Checking repositories...</Typography>
-                                <LinearProgress />
-                            </Stack>}
+                        {loading && <OperationProgress progress={state.setupProgress} />}
                     </Stack>
                 </DialogContent>
                 <DialogActions>

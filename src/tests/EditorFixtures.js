@@ -9,6 +9,7 @@ export const PATHS = { cfru: "C:\\Code\\CFRU", dpe: "C:\\Code\\DPE", cloud: "C:\
 export const GAMES = [{ id: "cfru", name: "Official Games" }, { id: "unbound", name: "Unbound" }];
 export const CATALOG_ROUTE = "/workspaces/:id/catalog";
 export const SAVE_ROUTE = "/workspaces/:id/save";
+export const ARCHIVE_ROUTE = "/workspaces/:id/archive";
 
 const BATTLE_TOWER_FILE = "src/Tables/battle_tower_spreads.h";
 const SPECIAL_FILE = "src/Tables/frontier_special_trainer_spreads.h";
@@ -320,7 +321,7 @@ export function apiError(status, code, message, details)
  * Routes mocked axios requests to handlers, recording each call. axios must be mocked by the test file.
  *
  * @param {Object<string, Function>} [overrides] Handlers replacing the defaults.
- * @returns {Array<{route: string, body: object, token: string}>} The recorded calls.
+ * @returns {Array<{route: string, body: object, token: string, options: object}>} The recorded calls.
  */
 export function mockServer(overrides = {})
 {
@@ -331,6 +332,8 @@ export function mockServer(overrides = {})
         "/workspaces/load": () => createWorkspace(),
         [CATALOG_ROUTE]: (body) => createCatalog(body.gameId),
         [SAVE_ROUTE]: () => ({ spreads: createSpreads("revision-2"), createdIds: {}, files: [], backupId: "backup-1" }),
+        [ARCHIVE_ROUTE]: () => new Blob(["ZIP"], { type: "application/zip" }),
+        "/progress/:id": () => ({ percentage: 0, label: "Checking repositories...", status: "running" }),
         "/repositories/pick": () => ({ status: "cancelled" }),
         ...overrides,
     };
@@ -338,10 +341,11 @@ export function mockServer(overrides = {})
     axios.post.mockImplementation(async (url, body, options) =>
     {
         const route = url.replace(/^.*\/api/, "");
-        const handlerRoute = route.replace(/^\/workspaces\/[^/]+\/(catalog|save)$/, "/workspaces/:id/$1");
+        const handlerRoute = route.replace(/^\/workspaces\/[^/]+\/(catalog|save|archive)$/, "/workspaces/:id/$1")
+            .replace(/^\/progress\/[^/]+$/, "/progress/:id");
         const token = options?.headers?.["X-Session-Token"];
-        calls.push({ route, body, token });
-        return { data: await handlers[handlerRoute](body, token) };
+        calls.push({ route, body, token, options, params: options?.params });
+        return { data: await handlers[handlerRoute](body, token, options) };
     });
 
     return calls;

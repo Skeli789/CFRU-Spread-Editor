@@ -9,6 +9,7 @@ A selected Unbound Cloud game defines which species, moves, items, and balls exi
 
 ## Files
 
+- [source-inventory.js](../../../server/services/source-inventory.js) consumes exported reader constants from repositories, catalog, learnsets, sprites, and assets to define portable ZIP sources. `validateCatalogData` checks available-game/shared JSON offline before accepting an imported archive.
 - [repositories.js](../../../server/services/repositories.js): `readCloudGames` discovers Cloud's declared games and form icon names from `src/PokemonUtil.jsx`, filters games without required files, and orders official games first, then by display name.
 - [workspaces.js](../../../server/endpoints/workspaces.js): `POST /api/workspaces/load` supplies the game menu; `POST /api/workspaces/:id/catalog` calls `loadGameCatalog` for a selected `gameId`.
 - [catalog.js](../../../server/services/catalog.js): `createCatalogService`, `loadGameCatalog`, `readGameData`; joins Cloud JSON, CFRU tables, DPE data, sprites, and unresolved-symbol warnings into one per-game response.

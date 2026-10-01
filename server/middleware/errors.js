@@ -67,6 +67,9 @@ module.exports.handleUnknownApiRoute = handleUnknownApiRoute;
  */
 function handleErrors(error, req, res, next)
 {
+    req.stopProgressUpload?.();
+    req.operationProgress?.fail();
+
     // Errors from the JSON body parser
     if (error.type === BODY_TOO_LARGE)
         return sendError(res, StatusCode.ClientErrorPayloadTooLarge, "REQUEST_TOO_LARGE", "The request is too large.");

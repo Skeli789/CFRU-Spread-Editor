@@ -17,12 +17,15 @@ const { createPokeApiIndex } = require("./pokeapi");
 const { evaluatePreprocessor } = require("./preprocessor");
 const { CFRU_CONFIG_FILE, REPOSITORY_CFRU, REPOSITORY_CLOUD, getRootKey, readOwnedFile } = require("./repositories");
 const { getDpeSpriteUrls, loadSpriteTables } = require("./sprites");
+const { PROGRESS_LABELS } = require("./progress");
 
 const CFRU_MOVES_FILE = "src/Tables/battle_moves.c";
 const CFRU_ITEM_TABLES_FILE = "src/Tables/item_tables.c";
 const CACHE_BATTLE_MOVES = "battle-moves";
 const CACHE_ITEM_TYPES = "item-types";
 const REPOSITORY_FILE_UNAVAILABLE = "REPOSITORY_FILE_UNAVAILABLE";
+module.exports.CFRU_MOVES_FILE = CFRU_MOVES_FILE;
+module.exports.CFRU_ITEM_TABLES_FILE = CFRU_ITEM_TABLES_FILE;
 
 // Cloud data shared by every game; each is optional, since the editor can fall back to constant names
 const CLOUD_SHARED_FILES =
@@ -40,6 +43,7 @@ const CLOUD_SHARED_FILES =
     ballNames: "src/data/BallTypeNames.json",
     unboundShinies: "src/data/UnboundShinies.json",
 };
+module.exports.CLOUD_SHARED_FILES = CLOUD_SHARED_FILES;
 
 const BASE_STATS_KEY = "baseStats";
 const MOVES_KEY = "moves";
@@ -136,9 +140,10 @@ module.exports.readGameData = readGameData;
  *
  * @param {object} workspace The workspace.
  * @param {Array<object>} diagnostics Diagnostics to append to.
+ * @param {Function} [onRead] Reports each completed shared-file read attempt.
  * @returns {Promise<Object<string, object>>} Each file's data, empty when missing.
  */
-async function readSharedData(workspace, diagnostics)
+async function readSharedData(workspace, diagnostics, onRead)
 {
     const shared = {};
 
@@ -156,10 +161,42 @@ async function readSharedData(workspace, diagnostics)
             shared[key] = {};
             diagnostics.push({ severity: SEVERITY_WARNING, code: "CATALOG_FILE_MISSING", message: `${relativePath} could not be read, so constant names are shown instead.`, repository: REPOSITORY_CLOUD, file: relativePath });
         }
+        onRead?.();
     }
 
     return shared;
 }
+
+/**
+ * Checks every available game's JSON and shared data without fetching remote artwork.
+ *
+ * @param {object} workspace The workspace to validate.
+ * @param {Function} [onProgress] Receives {percentage, label} after real JSON read completions.
+ * @returns {Promise<void>} Resolves when the catalog data is valid.
+ */
+async function validateCatalogData(workspace, onProgress)
+{
+    const keys = [BASE_STATS_KEY, MOVES_KEY, ITEMS_KEY, BALL_TYPES_KEY];
+    const total = workspace.games.size * keys.length + Object.keys(CLOUD_SHARED_FILES).length;
+    let completed = 0;
+    /** Reports a completed game or shared JSON read. */
+    function readComplete()
+    {
+        completed++;
+        onProgress?.({ percentage: Math.floor(100 * completed / total), label: PROGRESS_LABELS.catalog });
+    }
+    for (const gameId of workspace.games.keys())
+    {
+        for (const key of keys)
+        {
+            await readGameData(workspace, gameId, key);
+            readComplete();
+        }
+    }
+
+    await readSharedData(workspace, [], readComplete);
+}
+module.exports.validateCatalogData = validateCatalogData;
 
 /**
  * Turns a constant into a readable name, such as MOVE_THUNDERPUNCH into Thunderpunch.

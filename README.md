@@ -9,6 +9,7 @@ A tool for editing CFRU Battle Frontier, special trainer, multi partner, and rai
 - Add, delete, and reorder spreads.
 - Preview stats and automatically fix common move, IV, and EV issues.
 - Import and export Pokémon Showdown sets.
+- Download the editor's required and available optional files as a ZIP, or upload that ZIP to edit a cached copy.
 - Save changes with automatic backups, or revert unwanted edits.
 
 ## Run Locally
@@ -55,6 +56,12 @@ To stop the app, close the Client and Server terminal windows.
 3. Review **Load Warnings** if any appear, then start editing.
 
 The editor remembers your folders and game for the next launch.
+
+### Use a Portable ZIP
+
+On **Connect Repositories**, choose **Upload ZIP** instead of entering repository folders. The included game opens automatically when specified; otherwise choose a game.
+
+**Save Changes** writes to the cached copy, not the original ZIP or checkout. Download the ZIP again to transfer saved changes.
 
 ## Using the Editor
 

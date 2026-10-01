@@ -43,11 +43,18 @@ export const EDITOR_PHASE = Object.freeze(
 const API_BASE = `${config.devServer}/api`;
 const SESSION_HEADER = "X-Session-Token";
 const MAX_REQUEST_ATTEMPTS = 2;
+const ARCHIVE_FILENAME = "spread-editor-reqs.zip";
+const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024;
+const ARCHIVE_CONTENT_TYPE = "application/zip";
+const PROGRESS_POLL_INTERVAL = 250;
+const UPLOAD_PROGRESS_LIMIT = 20;
+const PENDING_PROGRESS_LIMIT = 99;
 const PICKER_SELECTED = "selected";
 const ERROR_WORKSPACE_NOT_FOUND = "WORKSPACE_NOT_FOUND";
 const ERROR_VALIDATION_FAILED = "REPOSITORY_VALIDATION_FAILED";
 const ERROR_SERVER_UNREACHABLE = "SERVER_UNREACHABLE";
 const ERROR_SERVER_RESPONSE = "SERVER_ERROR";
+const ERROR_OPERATION_CANCELLED = "OPERATION_CANCELLED";
 const EMPTY_PATHS = Object.freeze({ cfru: "", dpe: "", cloud: "" });
 const MISSING_GAME_NOTICE = "The previously selected game is no longer available in Unbound Cloud. Choose a game to continue.";
 const RESTART_CHANGED_MESSAGE = "The editor server restarted and the spread files changed since they were loaded, so these changes cannot be saved. Load the repositories again.";
@@ -93,6 +100,9 @@ const ACTION =
     SAVE_FAILURE: "saveFailure",
     CLEAR_SAVE_ERROR: "clearSaveError",
     REPLACE_WORKSPACE: "replaceWorkspace",
+    ARCHIVE_START: "archiveStart",
+    ARCHIVE_END: "archiveEnd",
+    PROGRESS: "progress",
 };
 
 const EMPTY_DRAFTS =
@@ -120,6 +130,10 @@ const INITIAL_STATE =
     gameId: "",
     catalog: null,
     storageUnavailable: false,
+    downloading: false,
+    archiveError: null,
+    setupProgress: null,
+    archiveProgress: null,
     spreadIndex: EMPTY_INDEX,
     preview: { level: DEFAULT_PREVIEW_LEVEL },
     ...EMPTY_DRAFTS,
@@ -649,7 +663,9 @@ function reducer(state, action)
             return {
                 ...state,
                 ...withWorkspace({ ...state, workspace: null }, action.workspace),
+                paths: action.paths ?? state.paths,
                 phase: EDITOR_PHASE.SELECT_GAME,
+                setupProgress: { ...state.setupProgress, percentage: 100 },
                 gameId: action.gameId,
                 catalog: null,
                 notice: action.notice ?? null,
@@ -696,6 +712,13 @@ function reducer(state, action)
             };
         case ACTION.STORAGE_UNAVAILABLE:
             return { ...state, storageUnavailable: true };
+        case ACTION.ARCHIVE_START:
+            return { ...state, downloading: true, archiveError: null };
+        case ACTION.ARCHIVE_END:
+            return { ...state, downloading: false, archiveError: action.error ?? null,
+                archiveProgress: action.error ? state.archiveProgress : { ...state.archiveProgress, percentage: 100 } };
+        case ACTION.PROGRESS:
+            return { ...state, [action.key]: action.progress };
         case ACTION.ADD_SPREAD:
         {
             const set = state.spreadIndex.sets.get(action.setId);
@@ -965,40 +988,194 @@ export const SpreadEditorProvider = ({ children }) =>
 {
     const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
     const tokenRef = useRef(null);
+    const tokenPromiseRef = useRef(null);
+    const progressRef = useRef(new Map());
     const newEntryCounter = useRef(0);
     const loadedPathsRef = useRef(null);
+    const archiveBusyRef = useRef(false);
     const stateRef = useRef(state);
     stateRef.current = state;
 
     /**
-     * Sends a JSON request to the local server, starting a new session if the server has restarted.
+     * Sends a request to the local server, starting a new session if the server has restarted.
      *
      * @param {string} route The API route.
      * @param {object} body The request body.
+     * @param {object} [options] Additional Axios request options.
      * @returns {Promise<object>} The response body.
      */
-    const post = useCallback(async (route, body) =>
+    const post = useCallback(async (route, body, options = {}) =>
     {
         for (let attempt = 1; ; ++attempt)
         {
+            let requestToken;
             try
             {
                 // Get a token the first time, or again after the server restarts
                 if (tokenRef.current == null)
-                    tokenRef.current = (await axios.post(`${API_BASE}/session`)).data.token;
+                {
+                    if (tokenPromiseRef.current == null)
+                        tokenPromiseRef.current = axios.post(`${API_BASE}/session`).then((response) =>
+                        {
+                            tokenRef.current = response.data.token;
+                            return response.data.token;
+                        }).finally(() => { tokenPromiseRef.current = null; });
+                    await tokenPromiseRef.current;
+                }
 
-                return (await axios.post(`${API_BASE}${route}`, body, { headers: { [SESSION_HEADER]: tokenRef.current } })).data;
+                if (options.signal?.aborted)
+                    throw new Error("Request cancelled.");
+                requestToken = tokenRef.current;
+
+                return (await axios.post(`${API_BASE}${route}`, body,
+                    { ...options, headers: { ...options.headers, [SESSION_HEADER]: requestToken } })).data;
             }
             catch (error)
             {
                 // A rejected token means the server restarted, so retry once with a new one
-                const apiError = toApiError(error);
+                let responseData = error.response?.data;
+                if (responseData instanceof Blob)
+                {
+                    try
+                    {
+                        const text = await new Promise((resolve, reject) =>
+                        {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = () => reject(reader.error);
+                            reader.readAsText(responseData);
+                        });
+                        responseData = JSON.parse(text);
+                    }
+                    catch
+                    {
+                        responseData = null;
+                    }
+                }
+                const apiError = toApiError(error.response ? { response: { ...error.response, data: responseData } } : error);
                 if (apiError.status !== StatusCode.ClientErrorUnauthorized || attempt >= MAX_REQUEST_ATTEMPTS)
                     throw apiError;
 
-                tokenRef.current = null;
+                if (tokenRef.current === requestToken)
+                    tokenRef.current = null;
             }
         }
+    }, []);
+
+    /**
+     * Tracks completed server steps and upload bytes without estimating elapsed-time progress.
+     *
+     * @param {string} route The main API route.
+     * @param {object|File} body The unchanged request body.
+     * @param {string} key The progress state field.
+     * @param {string} label The initial operation label.
+     * @param {object} [options] Additional Axios options.
+     * @returns {Promise<object>} The main response, independent of polling failures.
+     */
+    const trackedPost = useCallback(async (route, body, key, label, options = {}) =>
+    {
+        progressRef.current.get(key)?.stop();
+        const bytes = new Uint8Array(16);
+        let progressId;
+        if (globalThis.crypto.randomUUID)
+            progressId = globalThis.crypto.randomUUID();
+        else
+        {
+            globalThis.crypto.getRandomValues(bytes);
+            bytes[6] = (bytes[6] & 15) | 64;
+            bytes[8] = (bytes[8] & 63) | 128;
+            const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+            progressId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        }
+        let pending = true;
+        let timeout;
+        let controller;
+        let percentage = 0;
+        let serverStage = false;
+        const operation =
+        {
+            stop: () =>
+            {
+                pending = false;
+                clearTimeout(timeout);
+                controller?.abort();
+            },
+        };
+        progressRef.current.set(key, operation);
+
+        /** Updates only the active operation and never moves its percentage backwards. */
+        const update = (value, nextLabel) =>
+        {
+            if (!pending || progressRef.current.get(key) !== operation || !Number.isFinite(value))
+                return;
+            const next = Math.max(percentage, Math.min(PENDING_PROGRESS_LIMIT, Math.max(0, Math.floor(value))));
+            if (value < percentage)
+                return;
+            percentage = next;
+            dispatch({ type: ACTION.PROGRESS, key, progress: { percentage, label: nextLabel || label } });
+        };
+        update(0, label);
+
+        /** Polls sequentially; an absent or unavailable record never fails the main request. */
+        const poll = async () =>
+        {
+            if (!pending)
+                return;
+            controller = new AbortController();
+            try
+            {
+                const progress = await post(`/progress/${progressId}`, {}, { signal: controller.signal });
+                if (pending && progress.percentage >= UPLOAD_PROGRESS_LIMIT)
+                    serverStage = true;
+                update(progress.percentage, progress.label);
+            }
+            catch
+            {
+                // Progress is optional, including before the server creates its record.
+            }
+            if (pending)
+                timeout = setTimeout(poll, PROGRESS_POLL_INTERVAL);
+        };
+
+        try
+        {
+            const request = post(route, body,
+            {
+                ...options,
+                params: { ...options.params, progressId },
+                ...(route === "/workspaces/import" ? { onUploadProgress: (event) =>
+                {
+                    const total = event.total || body.size;
+                    if (total > 0 && !serverStage)
+                        update(Math.min(UPLOAD_PROGRESS_LIMIT, event.loaded / total * UPLOAD_PROGRESS_LIMIT), "Uploading ZIP...");
+                } } : {}),
+            });
+            timeout = setTimeout(poll, PROGRESS_POLL_INTERVAL);
+            const result = await request;
+            if (!pending)
+                throw { code: ERROR_OPERATION_CANCELLED };
+            return result;
+        }
+        catch (error)
+        {
+            if (!pending)
+                throw { code: ERROR_OPERATION_CANCELLED };
+            throw error;
+        }
+        finally
+        {
+            operation.stop();
+            if (progressRef.current.get(key) === operation)
+                progressRef.current.delete(key);
+        }
+    }, [post]);
+
+    /** Stops timers, in-flight polls and late upload callbacks when the provider unmounts. */
+    useEffect(() => () =>
+    {
+        for (const operation of progressRef.current.values())
+            operation.stop();
+        progressRef.current.clear();
     }, []);
 
     /**
@@ -1070,10 +1247,12 @@ export const SpreadEditorProvider = ({ children }) =>
         let workspace;
         try
         {
-            workspace = await post("/workspaces/load", { paths: trimmedPaths });
+            workspace = await trackedPost("/workspaces/load", { paths: trimmedPaths }, "setupProgress", "Checking repositories...");
         }
         catch (error)
         {
+            if (error.code === ERROR_OPERATION_CANCELLED)
+                return;
             dispatch({ type: ACTION.LOAD_FAILURE, error });
             return;
         }
@@ -1088,7 +1267,107 @@ export const SpreadEditorProvider = ({ children }) =>
         // Reopen the saved game, otherwise the game dialog stays open for a choice
         if (gameAvailable)
             await selectGame(workspace, savedGameId);
-    }, [post, saveSettings, selectGame]);
+    }, [trackedPost, saveSettings, selectGame]);
+
+    /**
+     * Imports a ZIP into server-owned cached repositories without needing local checkout paths.
+     *
+     * @param {File} file The uploaded archive.
+     * @returns {Promise<void>} Resolves after setup or catalog loading finishes.
+     */
+    const importArchive = useCallback(async (file) =>
+    {
+        const current = stateRef.current;
+        if (current.phase !== EDITOR_PHASE.SETUP || current.pickingKind != null || current.saving || archiveBusyRef.current)
+            return;
+
+        if (!file || !/\.zip$/i.test(file.name) || file.size === 0 || file.size > MAX_ARCHIVE_BYTES)
+        {
+            dispatch({ type: ACTION.LOAD_FAILURE, error: { code: "ARCHIVE_INVALID", message: "Choose a non-empty ZIP file no larger than 128 MiB." } });
+            return;
+        }
+
+        dispatch({ type: ACTION.LOAD_START, paths: current.paths, gameId: current.gameId });
+        let workspace;
+        try
+        {
+            workspace = await trackedPost("/workspaces/import", file, "setupProgress", "Uploading ZIP...",
+                { headers: { "Content-Type": ARCHIVE_CONTENT_TYPE } });
+            if (typeof workspace?.workspaceId !== "string" || !Array.isArray(workspace.games)
+                || !REPOSITORY_KINDS.every((kind) => typeof workspace.repositories?.[kind]?.path === "string" && workspace.repositories[kind].path.trim()))
+                throw { code: ERROR_SERVER_RESPONSE, message: "The editor server returned an unexpected import response." };
+        }
+        catch (error)
+        {
+            if (error.code === ERROR_OPERATION_CANCELLED)
+                return;
+            dispatch({ type: ACTION.LOAD_FAILURE, error });
+            return;
+        }
+
+        const paths = Object.fromEntries(REPOSITORY_KINDS.map((kind) => [kind, workspace.repositories[kind].path]));
+        const manifestGame = typeof workspace.gameId === "string" ? workspace.gameId : "";
+        const gameId = workspace.games.some((game) => game.id === manifestGame) ? manifestGame : "";
+        loadedPathsRef.current = paths;
+        saveSettings(paths, gameId);
+        dispatch({ type: ACTION.LOAD_SUCCESS, workspace, paths, gameId, notice: manifestGame && !gameId ? MISSING_GAME_NOTICE : null });
+        if (gameId)
+            await selectGame(workspace, gameId);
+    }, [trackedPost, saveSettings, selectGame]);
+
+    /**
+     * Downloads the saved source files, recovering a workspace lost after a server restart.
+     *
+     * @returns {Promise<void>} Resolves after download or visible error feedback.
+     */
+    const downloadArchive = useCallback(async () =>
+    {
+        const current = stateRef.current;
+        if (current.phase !== EDITOR_PHASE.READY || current.saving || archiveBusyRef.current)
+            return;
+
+        archiveBusyRef.current = true;
+        dispatch({ type: ACTION.ARCHIVE_START });
+        let url;
+        let anchor;
+        try
+        {
+            let workspace = current.workspace;
+            let blob;
+            try
+            {
+                blob = await trackedPost(`/workspaces/${workspace.workspaceId}/archive`, { gameId: current.gameId }, "archiveProgress", "Preparing download...", { responseType: "blob" });
+            }
+            catch (error)
+            {
+                if (error.code !== ERROR_WORKSPACE_NOT_FOUND)
+                    throw error;
+                workspace = await trackedPost("/workspaces/load", { paths: loadedPathsRef.current }, "archiveProgress", "Checking repositories...");
+                dispatch({ type: ACTION.REPLACE_WORKSPACE, workspace: { ...workspace, spreads: current.workspace.spreads } });
+                blob = await trackedPost(`/workspaces/${workspace.workspaceId}/archive`, { gameId: current.gameId }, "archiveProgress", "Preparing download...", { responseType: "blob" });
+            }
+            url = URL.createObjectURL(blob);
+            anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = ARCHIVE_FILENAME;
+            document.body.appendChild(anchor);
+            anchor.click();
+            dispatch({ type: ACTION.ARCHIVE_END });
+        }
+        catch (error)
+        {
+            if (error.code === ERROR_OPERATION_CANCELLED)
+                return;
+            dispatch({ type: ACTION.ARCHIVE_END, error: { message: error.message ?? "Could not download the saved source files. Try again." } });
+        }
+        finally
+        {
+            anchor?.remove();
+            if (url != null)
+                URL.revokeObjectURL(url);
+            archiveBusyRef.current = false;
+        }
+    }, [trackedPost]);
 
     /**
      * Opens the native folder dialog for a repository.
@@ -1143,7 +1422,7 @@ export const SpreadEditorProvider = ({ children }) =>
     {
         const { drafts, deleted, spreadIndex, catalog, gameId, saving, newEntries, orders } = stateRef.current;
         let { workspace } = stateRef.current;
-        if (saving || findSaveProblems(Object.fromEntries(Object.entries(drafts).filter(([id]) => !deleted.has(id))), spreadIndex.entries, catalog).length > 0)
+        if (saving || archiveBusyRef.current || findSaveProblems(Object.fromEntries(Object.entries(drafts).filter(([id]) => !deleted.has(id))), spreadIndex.entries, catalog).length > 0)
             return false;
 
         const additions = Object.entries(newEntries).map(([tempId, entry]) =>
@@ -1255,12 +1534,14 @@ export const SpreadEditorProvider = ({ children }) =>
         saveChanges,
         setPath: (kind, pathValue) => dispatch({ type: ACTION.SET_PATH, kind, value: pathValue }),
         browse,
+        importArchive,
+        downloadArchive,
         loadRepositories: () => loadRepositories(state.paths, state.gameId),
         selectGame: (gameId) => selectGame(state.workspace, gameId),
         changeRepositories: () => dispatch({ type: ACTION.CHANGE_REPOSITORIES }),
         changeGame: () => dispatch({ type: ACTION.CHANGE_GAME }),
         cancelChange: () => dispatch({ type: ACTION.CANCEL_CHANGE, paths: loadedPathsRef.current ?? state.paths }),
-    }), [state, actions, movedIds, orderMoves, transferredIds, saveProblems, saveChanges, browse, loadRepositories, selectGame]);
+    }), [state, actions, movedIds, orderMoves, transferredIds, saveProblems, saveChanges, browse, importArchive, downloadArchive, loadRepositories, selectGame]);
 
     return (
         <SpreadEditorContext.Provider value={value}>

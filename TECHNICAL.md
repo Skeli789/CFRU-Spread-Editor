@@ -150,6 +150,16 @@ Bulk Export includes every current filter result across pages, using current edi
 
 Showdown text does not preserve CFRU file/set/trainer ownership, battle flags, Modify Moves Doubles, doubles team type, source comments, random-ball semantics, or identical-name ability-slot identity. Imported level, nickname, happiness, Dynamax Level, and Tera Type are not saved; gender is silently ignored. Custom game names may not be understood by a standard Showdown simulator. Use source backups, not exported team text, for lossless recovery.
 
+## Portable repository archives
+
+The game menu's **Download Required Files** exports `spread-editor-reqs.zip` through authenticated `POST /api/workspaces/:id/archive`. It includes exact source bytes from the reader-derived [source inventory](server/services/source-inventory.js): required files, present optional tables/shared JSON, all declared game data imports, compatibility text, and local Cloud/DPE images. It does not include whole repositories, remote artwork, parse caches, backups, journals, or unsaved browser drafts. The download uses the existing Save/Discard/Cancel guard.
+
+**Upload ZIP** on Connect Repositories sends raw `application/zip` to authenticated `POST /api/workspaces/import`. A version-1 manifest identifies the format and optional selected game; source roots are `cfru/`, `dpe/`, and `cloud/`, without original absolute paths. Imports validate ZIP metadata, checksums, source allowlists, repository requirements, available-game/shared JSON, and spread parsing before returning a normal workspace. Optional-source warnings still allow loading.
+
+Each successful upload persists under `<data root>/imports/<UUID>/`. Saved settings remember those cached roots for subsequent launches and server restarts. Saves affect only the cached CFRU copy; download another ZIP to transfer saved changes. Failed uploads remove their fresh extraction directory and retain earlier imports. Successful imports are not automatically pruned.
+
+ZIP limits are 128 MiB compressed, 32 MiB per file, 512 MiB expanded, and 16,384 entries. The exact import POST accepts binary data only after Host, Origin, and session checks; other routes retain their JSON guards. Unsafe/nonportable paths, case or file/directory collisions, duplicates, symlinks, nonregular entries, encryption, unsupported compression/ZIP64, and invalid payloads are rejected by the [archive service](server/services/archives.js).
+
 ## Saves, backups, and security
 
 Save Changes submits updates, deletions, additions, and reorders together. The API validates permissions/fields, checks the loaded revision and input hashes (including configuration/trainer inputs), and reparses proposed source before replacing files. Targeted edits preserve unrelated source bytes, comments, line endings, and inactive branches. Only these four CFRU-relative headers from the [repository allowlist](server/services/repositories.js) are save targets:

@@ -6,6 +6,9 @@ const { ApiError } = require('../middleware/errors');
 const { loadGameCatalog } = require('../services/catalog');
 const { getWorkspace, loadWorkspace } = require('../services/repositories');
 const { loadSpreads, saveSpreads } = require('../services/spread-store');
+const { ARCHIVE_CONTENT_TYPE, ARCHIVE_FILENAME, exportArchive } = require('../services/archives');
+const { registerRequestProgress } = require('../middleware/progress');
+const { PROGRESS_LABELS } = require('../services/progress');
 
 
 /**
@@ -16,12 +19,15 @@ const { loadSpreads, saveSpreads } = require('../services/spread-store');
  */
 router.post('/load', async (req, res) =>
 {
+    const progress = registerRequestProgress(req, res, PROGRESS_LABELS.repositories);
     const { paths } = req.body ?? {};
     if (paths === null || typeof paths !== 'object' || Array.isArray(paths))
         throw new ApiError(StatusCode.ClientErrorBadRequest, 'INVALID_REQUEST', 'Repository paths are required.');
 
-    const snapshot = await loadWorkspace(paths);
+    const snapshot = await loadWorkspace(paths, progress?.update);
+    progress?.update({ percentage: 95, label: PROGRESS_LABELS.spreads });
     const { spreads, diagnostics } = await loadSpreads(getWorkspace(snapshot.workspaceId));
+    progress?.complete();
     res.status(StatusCode.SuccessOK).send({ ...snapshot, spreads, diagnostics: [...snapshot.diagnostics, ...diagnostics] });
 });
 
@@ -52,6 +58,21 @@ router.post('/:id/save', async (req, res) =>
 {
     const workspace = getWorkspace(req.params.id);
     res.status(StatusCode.SuccessOK).send(await saveSpreads(workspace, req.body ?? {}));
+});
+
+
+/**
+ * Exports all editor sources across declared games, with an optional selected game ID.
+ * @route POST /api/workspaces/:id/archive
+ * @returns {Buffer} 200 - The source ZIP attachment.
+ */
+router.post('/:id/archive', async (req, res) =>
+{
+    const progress = registerRequestProgress(req, res, PROGRESS_LABELS.listing);
+    const workspace = getWorkspace(req.params.id);
+    const bytes = await exportArchive(workspace, req.body?.gameId, progress?.update);
+    progress?.complete();
+    res.attachment(ARCHIVE_FILENAME).type(ARCHIVE_CONTENT_TYPE).send(bytes);
 });
 
 module.exports = router;

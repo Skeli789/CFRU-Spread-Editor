@@ -7,6 +7,8 @@ const imagesRouter = require('./endpoints/images');
 const repositoriesRouter = require('./endpoints/repositories');
 const sessionRouter = require('./endpoints/session');
 const workspacesRouter = require('./endpoints/workspaces');
+const archiveImportRouter = require('./endpoints/archive-import');
+const progressRouter = require('./endpoints/progress');
 
 const { handleErrors, handleUnknownApiRoute } = require('./middleware/errors');
 const
@@ -26,6 +28,7 @@ const http = require('http').Server(app);
 app.use(allowLocalHostsOnly);
 app.use(allowEditorOriginsOnly);
 app.use(editorCors);
+app.use(archiveImportRouter); // Only the exact authenticated import POST parses binary data before the JSON guards
 app.use(requireJsonBody);
 app.use(parseJsonBody);
 app.use(requireObjectBody);
@@ -35,6 +38,7 @@ app.use(requireObjectBody);
 app.use('/api/session', sessionRouter);
 app.use('/api/images', imagesRouter);
 app.use('/api', requireSession);
+app.use('/api/progress', progressRouter);
 app.use('/api/repositories', repositoriesRouter);
 app.use('/api/workspaces', workspacesRouter);
 // Add more endpoint routers here as needed

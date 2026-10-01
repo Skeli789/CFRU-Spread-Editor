@@ -25,6 +25,8 @@ const IMAGE_EXTENSION = ".png";
 const CACHE_SPRITE_TABLES = "dpe-sprites";
 const REPOSITORY_FILE_UNAVAILABLE = "REPOSITORY_FILE_UNAVAILABLE";
 const SEVERITY_WARNING = "warning";
+module.exports.SPRITE_TABLES = SPRITE_TABLES;
+module.exports.GRAPHICS_FOLDERS = GRAPHICS_FOLDERS;
 
 const SPRITE_ROUTE = "/api/images/";
 const SPRITE_FOLDER = "sprites";

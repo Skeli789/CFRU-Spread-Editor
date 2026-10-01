@@ -11,6 +11,7 @@ const { StatusCode } = require("status-code-enum");
 
 const { ApiError } = require("../middleware/errors");
 const { parseCloudGameConfig } = require("./source-parser");
+const { PROGRESS_LABELS } = require("./progress");
 
 const REPOSITORY_CFRU = "cfru";
 const REPOSITORY_DPE = "dpe";
@@ -19,6 +20,7 @@ module.exports.REPOSITORY_CFRU = REPOSITORY_CFRU;
 module.exports.REPOSITORY_DPE = REPOSITORY_DPE;
 module.exports.REPOSITORY_CLOUD = REPOSITORY_CLOUD;
 const REPOSITORY_KINDS = [REPOSITORY_CFRU, REPOSITORY_DPE, REPOSITORY_CLOUD];
+module.exports.REPOSITORY_KINDS = REPOSITORY_KINDS;
 
 const REPOSITORY_LABELS =
 {
@@ -50,6 +52,7 @@ const CLOUD_DATA_DIRECTORY = "src/data/";
 const CLOUD_DATA_EXTENSION = ".json";
 const REQUIRED_GAME_DATA_KEYS = ["baseStats", "moves", "items", "ballTypes"];
 const OFFICIAL_GAME_ID = "cfru";
+module.exports.CLOUD_GAME_CONFIG_FILE = CLOUD_GAME_CONFIG_FILE;
 
 const REPOSITORY_SENTINELS =
 {
@@ -79,6 +82,7 @@ const REPOSITORY_SENTINELS =
 };
 
 const MAX_PATH_LENGTH = 4096;
+module.exports.REPOSITORY_SENTINELS = REPOSITORY_SENTINELS;
 const MAX_OWNED_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_LISTED_FILES = 4096;
 const MAX_WORKSPACES = 8;
@@ -326,10 +330,11 @@ async function detectRepositoryKind(root, expectedKind)
  *
  * @param {string} kind The repository kind.
  * @param {*} rawPath The submitted path.
+ * @param {Function} [onCheck] Reports a completed sentinel check.
  * @returns {Promise<{path: string}|{error: {code: string, message: string, missing?: Array<object>}}>}
  *          The canonical path, or a field error.
  */
-async function validateRepositoryPath(kind, rawPath)
+async function validateRepositoryPath(kind, rawPath, onCheck)
 {
     const label = REPOSITORY_LABELS[kind];
     const fieldError = (code, message, extra = {}) => ({ error: { code, message, ...extra } });
@@ -369,7 +374,12 @@ async function validateRepositoryPath(kind, rawPath)
     }
 
     // Confirm the folder contains the files that identify this repository
-    const problems = (await Promise.all(REPOSITORY_SENTINELS[kind].map((sentinel) => checkSentinel(root, sentinel))))
+    const problems = (await Promise.all(REPOSITORY_SENTINELS[kind].map(async (sentinel) =>
+    {
+        const problem = await checkSentinel(root, sentinel);
+        onCheck?.();
+        return problem;
+    })))
         .filter((problem) => problem != null);
     if (problems.length > 0)
     {
@@ -431,6 +441,7 @@ function resolveCloudDataSpecifier(specifier)
 
     return relativePath;
 }
+module.exports.resolveCloudDataSpecifier = resolveCloudDataSpecifier;
 
 /**
  * Reads the games Unbound Cloud declares and keeps those whose required data files exist.
@@ -646,12 +657,27 @@ module.exports.pickRepository = pickRepository;
  * Validates the three repositories and starts a workspace session.
  *
  * @param {Object<string, *>} paths Submitted paths by repository kind.
+ * @param {Function} [onProgress] Receives {percentage, label} for completed checks and phases, below 100.
  * @returns {Promise<object>} The workspace snapshot.
  */
-async function loadWorkspace(paths)
+async function loadWorkspace(paths, onProgress)
 {
     // Validate all three folders together so every problem is reported at once
-    const results = await Promise.all(REPOSITORY_KINDS.map((kind) => validateRepositoryPath(kind, paths?.[kind])));
+    const totalChecks = REPOSITORY_KINDS.reduce((total, kind) => total + 1 + REPOSITORY_SENTINELS[kind].length, 0);
+    let completedChecks = 0;
+    /** Reports an actual root validation or sentinel check completion. */
+    function checked()
+    {
+        completedChecks++;
+        onProgress?.({ percentage: Math.floor(85 * completedChecks / totalChecks), label: PROGRESS_LABELS.repositories });
+    }
+    onProgress?.({ percentage: 0, label: PROGRESS_LABELS.repositories });
+    const results = await Promise.all(REPOSITORY_KINDS.map(async (kind) =>
+    {
+        const result = await validateRepositoryPath(kind, paths?.[kind], checked);
+        checked();
+        return result;
+    }));
     const fieldErrors = {};
     const roots = {};
     REPOSITORY_KINDS.forEach((kind, index) =>
@@ -677,7 +703,9 @@ async function loadWorkspace(paths)
         throw new ApiError(StatusCode.ClientErrorUnprocessableEntity, "REPOSITORY_VALIDATION_FAILED", "Some repository folders need to be corrected.", { fields: fieldErrors });
 
     // Gather the games and any warnings about the repositories
+    onProgress?.({ percentage: 85, label: PROGRESS_LABELS.games });
     const { games, speciesIconNames, diagnostics: gameDiagnostics } = await readCloudGames(roots[REPOSITORY_CLOUD]);
+    onProgress?.({ percentage: 90, label: PROGRESS_LABELS.access });
     const diagnostics = [...gameDiagnostics, ...(await checkSpreadFileAccess(roots[REPOSITORY_CFRU]))];
     if (games.length === 0)
         throw new ApiError(StatusCode.ClientErrorUnprocessableEntity, "NO_GAMES_AVAILABLE", "Unbound Cloud does not list any games with complete data.", { diagnostics });
@@ -694,6 +722,8 @@ async function loadWorkspace(paths)
     workspaces.set(workspace.id, workspace);
     while (workspaces.size > MAX_WORKSPACES)
         workspaces.delete(workspaces.keys().next().value);
+
+    onProgress?.({ percentage: 95, label: PROGRESS_LABELS.spreads });
 
     // Game data file paths stay on the server
     return {
@@ -720,6 +750,17 @@ function getWorkspace(workspaceId)
     return workspace;
 }
 module.exports.getWorkspace = getWorkspace;
+
+/**
+ * Forgets a workspace whose imported sources failed validation.
+ *
+ * @param {string} workspaceId The failed workspace ID.
+ */
+function forgetWorkspace(workspaceId)
+{
+    workspaces.delete(workspaceId);
+}
+module.exports.forgetWorkspace = forgetWorkspace;
 
 /**
  * Resolves a file the workspace owns, rechecking that it is still a regular file inside its repository.
