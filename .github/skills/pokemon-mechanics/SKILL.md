@@ -26,7 +26,7 @@ The pure mechanics module calculates displayed stats, selects ability and Mega p
 
 - Stat keys are `hp`, `atk`, `def`, `spAtk`, `spDef`, `spd`; `spd` means Speed. For each stat, calculate `base = floor((2 * baseStat + iv + floor(ev / 4)) * level / 100)`. HP is `base + level + 10`; non-HP stats start at `base + 5` and apply `floor(value * 110 / 100)` for a raised nature or `floor(value * 90 / 100)` for a lowered nature. Nature does not modify HP. Shedinja HP is always 1, even without a known base stat. Other missing base stats yield `null` and display as `?`.
 - `getNatureEffect` uses CFRU's 25-nature order, grouping five lowered stats for each raised stat. The stat order is Attack, Defense, Speed, Sp. Atk, Sp. Def. Same raised/lowered stat means a neutral nature with both fields `null`; an unknown nature returns `null`. The stat table uses red up arrows for raised stats and blue down arrows for lowered stats; the nature picker labels non-neutral effects.
-- `PREVIEW_LEVELS` is `[50, 100]`, default 50. `getSpreadLevel(set, previewLevel)` overrides the chosen level with 5 for a set with `littleCup`; the card shows its Lv. 5 badge. `calculateSpreadStats` uses the selected species' base stats and returns `{ species, mega, stats }` without changing the spread fields.
+- `PREVIEW_LEVELS` is `[50, 100]`, default 50. `getSpreadLevel(set, previewLevel)` overrides the chosen level with 5 for a set with `littleCup`; view cards show their Lv. 5 badge. Little Cup edit cards instead show an enabled-by-default Level 5 switch in the Total-row footer. Turning it off previews at the page's current level and uses normal EV stepping; turning it on restores level 5 and Little Cup stepping. This local preview does not change fields or the effective Showdown exchange level. `calculateSpreadStats` uses the selected species' base stats and returns `{ species, mega, stats }` without changing the spread fields.
 
 ### EV and IV limits and stepping
 
@@ -61,7 +61,7 @@ The pure mechanics module calculates displayed stats, selects ability and Mega p
 
 ## User decisions
 
-- Preserve the user's chosen preview level for ordinary sets; Little Cup always previews at level 5. Default to Mega stats when a Mega is available, without changing the spread.
+- Preserve the user's chosen preview level for ordinary sets; Little Cup defaults to level 5 but its edit-footer switch allows the page level instead. Default to Mega stats when a Mega is available, without changing the spread. Mega Stats and Level 5 are independent local preview switches.
 - Preserve distinct ability slots even when they name the same ability, and show the Mega ability separately. Missing chosen slots fall back to the first ability.
 - Keep an attacking IV for a variable-power move with a known damage effect. Foul Play does not require the user's Attack, and Body Press does not require the user's Attack or Sp. Atk. Unknown move details must not trigger a speculative change to an attacking IV.
 - Minimize Speed to 0 for Gyro Ball or Trick Room when Hidden Power permits it, otherwise use 1 when needed. Raise used attacking IVs to 31 unless preserving Hidden Power requires 30; lower unused attacking IVs to 0 unless preserving Hidden Power requires 1.

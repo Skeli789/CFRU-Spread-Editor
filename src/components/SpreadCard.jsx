@@ -273,12 +273,14 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
     const theme = useTheme();
     const { id } = entry;
     const [showMega, setShowMega] = useState(true);
+    const [showLevelFive, setShowLevelFive] = useState(true);
     const [showdownDialog, setShowdownDialog] = useState(null);
     const [menuAnchor, setMenuAnchor] = useState(null);
     const speciesInfo = getEntry(catalog.species, fields.species);
     const name = speciesInfo?.name ?? String(fields.species);
     const level = getSpreadLevel(set, preview.level);
-    const stats = useMemo(() => calculateSpreadStats(catalog, fields, { level, mega: showMega }), [catalog, fields, level, showMega]);
+    const statLevel = editing && !showLevelFive ? preview.level : level;
+    const stats = useMemo(() => calculateSpreadStats(catalog, fields, { level: statLevel, mega: showMega }), [catalog, fields, statLevel, showMega]);
     const megaSpecies = getMegaSpecies(catalog, fields);
     const megaInfo = getEntry(catalog.species, megaSpecies);
     const shownInfo = getEntry(catalog.species, stats.species);
@@ -345,6 +347,8 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
         name: `${abilityLabel(option.slot, option.ability)}${megaAbilityName != null && option.ability !== megaAbility.ability ? ` → ${MEGA_ABILITY_LABEL} ${megaAbilityName}` : ""}` }));
     const megaToggle = megaAbility != null &&
         <FormControlLabel label="Mega Stats" labelPlacement="start" control={<Switch size="small" checked={showMega} onChange={(event) => setShowMega(event.target.checked)} />} />;
+    const levelToggle = set.littleCup &&
+        <FormControlLabel label={`Lv. ${LITTLE_CUP_LEVEL}`} labelPlacement="start" control={<Switch size="small" checked={showLevelFive} onChange={(event) => setShowLevelFive(event.target.checked)} />} />;
     const trainerNames = trainers.map((trainer) =>
         <Chip key={trainer} size="small" variant="outlined" label={trainer} />);
     const battleLabel = battleType === BATTLE_TYPES.BOTH
@@ -455,7 +459,10 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                         </MenuItem>}
                     </Menu>}
                 </Stack>
-                {editing && trainers.length > 0 && <div className="trainer-chips">{trainerNames}</div>}
+                {editing && trainers.length > 0 &&
+                    <div className="trainer-chips">
+                        {trainerNames}
+                    </div>}
                 <div className="spread-card-subtitle">
                     {!editing &&
                         <div className="spread-card-chips">
@@ -474,12 +481,12 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                     fields={fields}
                     preview={stats}
                     baseStats={shownInfo?.baseStats ?? null}
-                    littleCup={set.littleCup ? { species: stats.species, baseStats: shownInfo?.baseStats ?? null, level } : null}
+                    littleCup={set.littleCup && statLevel === LITTLE_CUP_LEVEL ? { species: stats.species, baseStats: shownInfo?.baseStats ?? null, level: statLevel } : null}
                     editing={editing}
                     onChange={update}
                     name={name}
                     catalog={catalog}
-                    footer={editing ? megaToggle : null}
+                    footer={editing ? <Stack alignItems="flex-end">{levelToggle}{megaToggle}</Stack> : null}
                 />
             </div>
 

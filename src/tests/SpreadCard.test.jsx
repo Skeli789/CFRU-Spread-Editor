@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { ThemeProvider, getContrastRatio } from "@mui/material/styles";
 import { vi } from "vitest";
 
+import { calculateSpreadStats, stepEv } from "../../shared/pokemon-mechanics.mjs";
 import SpreadCard from "../components/SpreadCard";
 import { EditSpreadDialog } from "../components/SpreadDialogs";
 import { APP_THEME, DARK_APP_THEME } from "../Theme";
@@ -220,6 +221,99 @@ describe("Spread card", () =>
         expect(precedes(trainers, card.querySelector(".battle-chips"))).toBe(true);
         expect(card.querySelector(".spread-card-side")).not.toHaveTextContent("Palmer");
         expect(card.querySelector(".side-ability .ability-slot")).toHaveTextContent("[1]");
+    });
+
+    it.each([{ usages: [] }, { usages: [{ trainerName: "Palmer", ranks: null }] }])("shows the Little Cup toggle in the stats footer with usages $usages", ({ usages }) =>
+    {
+        const spreads = createSpreads();
+        const set = { ...spreads.sets[0], littleCup: true, usages };
+        const { card } = renderCard({ set, editing: true, preview: { level: 100 } });
+        const trainers = card.querySelector(".trainer-chips");
+        const toggle = within(card.querySelector(".spread-stats tfoot")).getByRole("switch", { name: "Lv. 5" });
+
+        expect(toggle).toBeChecked();
+        expect(within(card).queryByText("Lv. 5")).not.toBeInTheDocument();
+        if (usages.length)
+        {
+            expect(trainers.previousElementSibling).toHaveClass("spread-card-title");
+            expect(within(trainers).getByText("Palmer")).toBeInTheDocument();
+        }
+        else
+            expect(trainers).toBeNull();
+    });
+
+    it.each([50, 100])("previews Little Cup stats at the page level %s when Lv. 5 is off", async (pageLevel) =>
+    {
+        const spreads = createSpreads();
+        const fields = createFields();
+        const catalog = createCatalog();
+        const { card, actions, user } = renderCard({ fields, catalog, set: { ...spreads.sets[0], littleCup: true }, editing: true, preview: { level: pageLevel } });
+        const toggle = within(card).getByRole("switch", { name: "Lv. 5" });
+        const finalHp = within(card).getByText("HP", { selector: ".stat-label" }).closest("tr").querySelector(".stat-final");
+
+        expect(finalHp).toHaveTextContent(String(calculateSpreadStats(catalog, fields, { level: 5 }).stats.hp));
+        await user.click(toggle);
+        expect(toggle).not.toBeChecked();
+        expect(finalHp).toHaveTextContent(String(calculateSpreadStats(catalog, fields, { level: pageLevel }).stats.hp));
+        expect(actions.updateSpread).not.toHaveBeenCalled();
+
+        await user.click(within(card).getByRole("button", { name: "Raise HP EVs" }));
+        const change = actions.updateSpread.mock.calls.at(-1)[1];
+        expect(change(fields).hpEv).toBe(stepEv(fields, "hp", 1));
+
+        await user.click(toggle);
+        expect(toggle).toBeChecked();
+        expect(finalHp).toHaveTextContent(String(calculateSpreadStats(catalog, fields, { level: 5 }).stats.hp));
+    });
+
+    it("keeps the Lv. 5 and Mega Stats footer toggles independent", async () =>
+    {
+        const spreads = createSpreads();
+        const fields = createFields({ item: "ITEM_CHARIZARDITE_X" });
+        const catalog = createCatalog();
+        const { card, actions, user } = renderCard({ fields, catalog, set: { ...spreads.sets[0], littleCup: true }, editing: true });
+        const footer = within(card.querySelector(".spread-stats tfoot"));
+        const mega = footer.getByRole("switch", { name: "Mega Stats" });
+        const level = footer.getByRole("switch", { name: "Lv. 5" });
+        const finalAttack = within(card).getByText("Attack", { selector: ".stat-label" }).closest("tr").querySelector(".stat-final");
+
+        await user.click(level);
+        expect(mega).toBeChecked();
+        expect(finalAttack).toHaveTextContent(String(calculateSpreadStats(catalog, fields, { level: 50 }).stats.atk));
+        await user.click(mega);
+        expect(level).not.toBeChecked();
+        expect(finalAttack).toHaveTextContent(String(calculateSpreadStats(catalog, fields, { level: 50, mega: false }).stats.atk));
+        expect(actions.updateSpread).not.toHaveBeenCalled();
+    });
+
+    it("updates the edit level toggle when the destination set or page level changes", async () =>
+    {
+        const spreads = createSpreads();
+        const user = userEvent.setup();
+        const props =
+        {
+            entry: spreads.entries[2], fields: createFields(), catalog: createCatalog(), teamTypes: spreads.teamTypes,
+            preview: PREVIEW, editing: true, changed: false, problems: [], actions: { updateSpread: vi.fn(), setEditing: vi.fn() },
+        };
+        const { rerender } = render(<ThemeProvider theme={APP_THEME}><SpreadCard {...props} set={spreads.sets[0]} /></ThemeProvider>);
+        expect(screen.queryByRole("switch", { name: "Lv. 5" })).not.toBeInTheDocument();
+        const set = { ...spreads.sets[0], littleCup: true };
+        rerender(<ThemeProvider theme={APP_THEME}><SpreadCard {...props} set={set} /></ThemeProvider>);
+        expect(screen.getByRole("switch", { name: "Lv. 5" })).toBeChecked();
+        await user.click(screen.getByRole("switch", { name: "Lv. 5" }));
+        rerender(<ThemeProvider theme={APP_THEME}><SpreadCard {...props} set={set} preview={{ level: 100 }} /></ThemeProvider>);
+        const finalHp = screen.getByText("HP", { selector: ".stat-label" }).closest("tr").querySelector(".stat-final");
+        expect(finalHp).toHaveTextContent(String(calculateSpreadStats(props.catalog, props.fields, { level: 100 }).stats.hp));
+        rerender(<ThemeProvider theme={APP_THEME}><SpreadCard {...props} set={spreads.sets[0]} /></ThemeProvider>);
+        expect(screen.queryByRole("switch", { name: "Lv. 5" })).not.toBeInTheDocument();
+    });
+
+    it("keeps the Little Cup view chip in the battle chips", () =>
+    {
+        const spreads = createSpreads();
+        const { card } = renderCard({ set: { ...spreads.sets[0], littleCup: true } });
+        expect(within(card.querySelector(".battle-chips")).getByText("Lv. 5")).toBeInTheDocument();
+        expect(within(card).getAllByText("Lv. 5")).toHaveLength(1);
     });
 
     it("puts trainer chips under the edit title and item and ability under the moves", () =>

@@ -1,73 +1,78 @@
 # CFRU Spread Editor
 
-## What is this?
-
-CFRU Spread Editor is a tool for editing CFRU Battle Frontier spreads.
+A tool for editing CFRU Battle Frontier, special trainer, multi partner, and raid partner spreads in your browser.
 
 ## Features
 
-- **Put your feature here!**
-  - Explain your feature.
+- Find spreads by Pokémon, trainer, battle type, and more.
+- Edit moves, items, abilities, natures, IVs, EVs, and battle settings.
+- Add, delete, and reorder spreads.
+- Preview stats and automatically fix common move, IV, and EV issues.
+- Import and export Pokémon Showdown sets.
+- Save changes with automatic backups, or revert unwanted edits.
 
 ## Run Locally
 
-To run the `main` branch locally for personal or development purposes, the steps are as follows:
+### First-Time Setup
 
-### Setup
+1. Install [Git](https://git-scm.com/downloads) and the current **LTS** version of [Node.js](https://nodejs.org/en/download).
+2. Download or clone this editor and the following repositories onto your computer:
+	- [Complete Fire Red Upgrade](https://github.com/Skeli789/Complete-Fire-Red-Upgrade)
+	- [Dynamic Pokemon Expansion](https://github.com/Skeli789/Dynamic-Pokemon-Expansion)
+	- [Unbound Cloud](https://github.com/Skeli789/Unbound-Cloud)
 
-1. Install [Git](https://git-scm.com/downloads)
+	To download a repository without Git, open its GitHub page, click **Code → Download ZIP**, and extract the ZIP.
 
-1. Install [Node.js](https://nodejs.org/en/download)
+Already have these repositories? Use your existing folders. They do not need to be beside the editor.
 
-### Run Build Locally
+### Build the App
 
-If you only plan to use the application, it is recommended to run a build for faster runtime. The steps to create and run one are as follows:
+Open the editor folder and run the build script:
 
-1. Every time you update the code, run the appopriate build script:
-    - On Windows, double-click [build.bat](build.bat) to run it.
-    - On MacOS and Linux, run [build.sh](build.sh).
+- **Windows:** double-click [build.bat](build.bat).
+- **macOS/Linux:** open a terminal in the editor folder and run `bash build.sh`.
 
-1. Once the build completes, run the appropriate start script:
-    - On Windows, double-click [start.bat](start.bat) to run it.
-    - On MacOS and Linux, run [start.sh](start.sh).
+Wait until you see **Build completed successfully!** You only need to do this the first time and after updating the editor. The script installs the other tools it needs, so an internet connection is required.
 
-1. Visit http://localhost:3000 in your browser to access the site.
+### Start the App
 
-### Develop Locally
+1. Run the start script from the editor folder:
+	- **Windows:** double-click [start.bat](start.bat).
+	- **macOS/Linux:** open a terminal in the editor folder and run `bash start.sh`.
+2. Leave the Client and Server terminal windows open while using the editor.
+3. Open http://localhost:3000 in your browser. If a launcher keeps saying it is waiting, try opening this address yourself.
 
-If you plan to make changes to the application, the steps are as follows:
+To stop the app, close the Client and Server terminal windows.
 
-#### Setup
+**macOS/Linux:** use an editor folder whose full path contains no spaces. If the launcher cannot open terminal windows, see [manual startup](TECHNICAL.md#manual-installation-and-startup).
 
-1. Install [Yarn](https://classic.yarnpkg.com/lang/en/docs/install/).
+### Connect Your Repositories
 
-1. Install the dependencies with:
-    ```bash
-    yarn install
-    ```
+1. In **Connect Repositories**, select the folders for CFRU, DPE, and Unbound Cloud. Choose each repository's main folder, not a folder inside it.
+	- **Windows:** use **Browse** to choose each folder.
+	- **macOS/Linux:** enter each folder's full path.
+2. Choose the game that matches your project.
+3. Review **Load Warnings** if any appear, then start editing.
 
-1. Install the server's dependencies with:
-    ```bash
-    cd server
-    yarn install
-    ```
+The editor remembers your folders and game for the next launch.
 
-1. Create a file `.env.development.local` with the content:
-    ```
-    VITE_DEV_SERVER = "http://localhost:3001"
-    ```
+## Using the Editor
 
-#### Running the App
+- Use the filters to find the spreads you want to change.
+- Edit an existing spread, or use **Add Spread** to create one.
+- To import Showdown sets, choose **Add Spread → Import Showdown Text** and paste your sets.
+- Click **Save Changes** when you are ready to write your edits to CFRU. Until then, your source files are unchanged.
+- Use the revert actions to discard unwanted edits.
 
-1. Run the client in one terminal with:
-    ```bash
-    yarn start
-    ```
+The editor only changes supported CFRU spread files. DPE and Unbound Cloud are never modified. Showdown exports are useful for sharing sets, but are not a complete backup of your source files.
 
-1. Run the server in a second terminal with:
-    ```bash
-    cd server
-    yarn start
-    ```
+## Need Help?
 
-1. Visit http://localhost:3000 in your browser to access the site.
+- **The page does not open:** make sure the Client and Server windows are still running, then try http://localhost:3000 again.
+- **A repository will not connect:** select its main folder and make sure the download is fully extracted.
+- **The app reports outside changes when saving:** your source files changed since they were loaded. Review those changes before reloading; do not discard unsaved work you still need.
+- **You updated the editor:** run the build script again, then restart the app.
+
+For manual setup, development, tests, repository file requirements, and explanations of how saving and backups work, see the [Technical Reference](TECHNICAL.md).
+
+This app is intended for use on your own computer, not as a public website.
