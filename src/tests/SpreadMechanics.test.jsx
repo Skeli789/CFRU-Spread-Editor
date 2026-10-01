@@ -9,7 +9,7 @@ import
 } from "../../shared/pokemon-mechanics.mjs";
 import
 {
-    BATTLE_TYPES, applyBattleType, changeBattleType, getBattleType, getChangedFields, getFieldSymbol, getTeamType, getTeamTypeLabel,
+    BATTLE_TYPES, applyBattleType, changeBattleType, createNewSpreadFields, getBattleType, getChangedFields, getFieldSymbol, getTeamType, getTeamTypeLabel,
     isSpreadChanged, setEv, setFieldSymbol, setIv, setMove, setTeamType, validateSpreadFields,
 } from "../../shared/spread-model.mjs";
 
@@ -619,5 +619,17 @@ describe("Changed fields", () =>
 
         expect(getChangedFields(edited, saved)).toEqual({ atkIv: 0, moves: ["MOVE_EARTHQUAKE", "MOVE_PROTECT", 0, 0] });
         expect(isSpreadChanged(setMove(setIv(edited, "atk", 31), 1, 0), saved)).toBe(false);
+    });
+
+    it("creates new spreads with the documented defaults", () =>
+    {
+        const fields = createNewSpreadFields("SPECIES_GARCHOMP", CATALOG.species.SPECIES_GARCHOMP);
+
+        expect(fields).toMatchObject({ species: "SPECIES_GARCHOMP", nature: "NATURE_HARDY", ability: 1, item: "ITEM_NONE", ball: "BALL_TYPE_RANDOM",
+            moves: [0, 0, 0, 0], shiny: false, gigantamax: false, specificTeamType: 0 });
+        expect(getBattleType(fields)).toBe(BATTLE_TYPES.BOTH);
+        expect(fields.modifyMovesDoubles).toBe(true);
+        expect(IV_KEYS.map((key) => fields[key])).toEqual([31, 31, 31, 31, 31, 31]);
+        expect(createNewSpreadFields("SPECIES_SHEDINJA", CATALOG.species.SPECIES_SHEDINJA).ability).toBe(1);
     });
 });

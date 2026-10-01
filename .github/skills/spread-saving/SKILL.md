@@ -1,0 +1,67 @@
+---
+name: spread-saving
+description: "Use when changing spread saving, Save Changes, POST /api/workspaces/:id/save, spread-store.js, spread-writer.js, update/delete/add/reorder operations, SAVE_CONFLICT, backups, journals, or recovery."
+---
+
+# Spread Saving
+
+The browser saves a revisioned list of changes to CFRU spread arrays. The server validates and reparses the proposed source before replacing files, then keeps external backups and a journal for rollback and restart recovery. The current browser submits updates and deletes; the server also accepts adds and reorders.
+
+## Files
+
+- [workspaces.js](../../../server/endpoints/workspaces.js): `POST /api/workspaces/load` calls `loadSpreads`; `POST /api/workspaces/:id/save` calls `saveSpreads` with `revision`, optional `gameId`, and `operations`, returning the new snapshot, `createdIds`, `files`, and `backupId`.
+- [spread-store.js](../../../server/services/spread-store.js): `createSpreadStore`, `loadSpreads`, `saveSpreads`; internal `describeSets`, `buildPlans`, `verifyFile`, `commit`, `rollBack`, and `recoverSaves` own permissions, transaction planning, verification, and recovery.
+- [spread-writer.js](../../../server/services/spread-writer.js): `mergeSpreadFields`, `createSpreadFields`, `isSameValue`, `getRemovalRange`, `applyEdits`, `renderNewEntry`, `buildEntryEdits`, `buildSetEdits`, `toAbilityName` validate values and generate source edits.
+- [spread-parser.js](../../../server/services/spread-parser.js): `parseSpreadFile`, `parseSpreadEntry`, `parseTrainerTables`, `isAutomaticSize`, `SPREAD_FIELDS`, and comment patterns provide active arrays, original spans, segments, trainer sizes, and editable flags.
+- [data-parser.js](../../../server/services/data-parser.js): `parseTeamTypes` reads the compiled doubles team type enum from CFRU's frontier header.
+- [parse-cache.js](../../../server/services/parse-cache.js): `getDataDirectory`, `createParseCache`, `getParserVersion`, and `hashMacros` keep caches, journals, and backups outside source repositories.
+- [catalog.js](../../../server/services/catalog.js): `readGameData` supplies selected-game base stats for ability comments; an unavailable game lookup leaves these comments without a resolved name.
+- [repositories.js](../../../server/services/repositories.js): `CFRU_SPREAD_FILES`, `readOwnedBuffer`, `resolveOwnedFile`, and `getRootKey` constrain input and output paths to the selected CFRU repository.
+- [SpreadEditorState.jsx](../../../src/SpreadEditorState.jsx): `saveChanges`, `findSaveProblems`, draft persistence, and restart retry build browser requests and keep unsaved work after failures.
+- [spread-model.mjs](../../../shared/spread-model.mjs): `getChangedFields`, `isSpreadChanged`, `validateSpreadFields` provide field differences and browser-side validation.
+
+## Data flow
+
+1. `POST /api/workspaces/load` loads the repositories and calls `loadSpreads`. Recovery runs first. CFRU config, frontier header, trainer tables, and four spread files form the hashed revision. Active arrays are parsed and indexed with set and entry IDs. The snapshot includes permissions, trainer usages, editable entries, file formats, team types, and diagnostics.
+2. `saveChanges` rejects an already-running save or invalid drafts, sends an `update` for each non-deleted draft with only `getChangedFields` and a `delete` for each deleted ID, and includes the snapshot revision and selected `gameId`. A draft marked deleted is not also submitted as an update.
+3. `saveSpreads` queues requests by CFRU root key. `performSave` requires a loaded non-stale snapshot, an array of at most 20,000 operations, a matching revision, and unchanged hashes of every input file, including config and trainer inputs. Revision or hash mismatch is HTTP 409 `SAVE_CONFLICT`; missing or stale server state is `RELOAD_REQUIRED`.
+4. `buildPlans` validates operations and resolves add/reorder IDs into per-set plans. `buildSetEdits` changes only affected source spans; each changed file is reparsed by `verifyFile` before any write. A save with no changed text returns unchanged spreads, empty `createdIds` and `files`, and `backupId: null`.
+5. `commit` durably writes original-byte backups and a manifest outside CFRU, journals the plan, stages new bytes beside each source file, checks the original hash again, and replaces files in sequence. Success removes the journal, updates parsed state, hashes, stable existing IDs and revision, assigns new IDs, and caches verified parses. Response `files` lists changed files with `status: "saved"`.
+6. Failed commits roll back files that still contain exactly this save's bytes; externally changed files are not overwritten. Later loads retry unfinished journals. Browser success replaces the snapshot and removes submitted drafts/deletions while preserving edits made during an in-flight save. Browser failure keeps unsaved work.
+
+## Behavior and user decisions
+
+- `update`: requires an existing editable entry in a `canEdit` set. Multiple updates to the same entry merge in request order. Fields must be known `SPREAD_FIELDS`; symbolic values are bounded uppercase constants with the field's required prefix, booleans are booleans, ability is slot 0, 1, or 2, IVs and EVs respect their field maxima, total EVs cannot exceed 510, and moves have at most four slots. Empty move slots normalize to zero. An update and deletion of the same entry in one request are rejected in either order.
+- `delete`: requires an existing editable entry in a `canEdit` set. A set with existing spreads cannot be left with zero spreads after accounting for additions. Deletion removes the entry's whole lines, comma, and trailing same-line comment. The snapshot no longer contains the deleted ID.
+- `add`: requires a unique `tempId` matching `[A-Za-z0-9_-]{1,64}`, a valid `setId` with `canInsert`, and new fields with a species and at least one move. `afterEntryId`, when supplied, must name an existing entry in that set and cannot name one deleted in this request; when omitted, insertion follows the last surviving entry or fills an empty-array placeholder. New entries write the routinely explicit fields plus non-default fields and use the neighboring indentation, comma convention, and file line ending. `createdIds` maps temporary IDs to permanent entry IDs.
+- `reorder`: requires `canReorder`, one string `order` list per set, and exactly one occurrence of each existing entry and same-save addition ID. Resolution occurs after all operations so an order can mention new `tempId`s. The writer rejects movement across preprocessor directive segments. Existing IDs follow their entries through reorder; the writer moves complete entry spans, including fields/comments inside the braces.
+- A set has `canEdit` only when its file parses safely as lossless UTF-8 and this is the first active occurrence of its array name. An individual entry must also parse as editable; placeholders and unsupported entries cannot be updated or deleted. `canReorder` additionally needs a structurally readable initializer list. `canInsert` additionally rejects fixed-size declarations and trainer links whose size is not an automatic `NELEMS` or `ARRAY_COUNT` of the same array. `insertBlockedReason` explains the first failing condition. A known Little Cup pool or trainer pointer marks a set as Little Cup but does not itself change save permissions.
+- A changed `specificTeamType` and every addition must use the compiled enum name from `frontier.h` or omitted numeric zero. Unrelated existing values are not revalidated as a changed team type. Rejected operation values return HTTP 422 `INVALID_OPERATION` before file writes.
+- `buildEntryEdits` replaces only changed literal value spans, adds missing fields in field order, and changes moves by slot. Hidden Power's `//TYPE_*` comment follows IV-derived type when moves or IVs change, is added where possible for Hidden Power, and is removed when a Hidden Power move is replaced. A recognized `//ABILITY_*` comment updates when ability slot or species changes and the chosen game's base stats resolve a safe ability constant; unrelated comments are preserved.
+- `verifyFile` requires the same array names/count and readable source, the expected entry count and field values in every set, and unchanged `unknownFields` and `rawFields` for preexisting entries. Failure is `SAVE_VERIFICATION_FAILED` before commit. Untouched bytes, BOM, CRLF or LF, Unicode comments, indentation, inactive branches, and unknown fields remain intact where edits do not target them; non-lossless UTF-8 blocks editing.
+- The backup folder is `<data directory>/backups/<backupId>/`, with a manifest and original source bytes. `<data directory>/journal/` records `staged`, `committing`, or `failed`, with per-file original/new hashes and state. The data directory uses `SPREAD_EDITOR_DATA_DIR` when set, otherwise LOCALAPPDATA or a home-directory fallback. Staged and restore temporary files sit beside their source for same-drive replacement. `EPERM`, `EBUSY`, and `EACCES` replacements are retried up to five attempts.
+- On commit failure `SAVE_CONFLICT` or `SAVE_FAILED` includes `details.files` with `rolledBack`, `notReplaced`, `externallyModified`, or `failed`, plus `backupId` and `restored`. A fully restored transaction removes its journal. An incomplete commit rollback marks the current snapshot stale. An incomplete restart recovery retains the journal and backup and reports `SAVE_RECOVERY_INCOMPLETE`; successful restart recovery reports `SAVE_RECOVERED`. Recovery considers only journals for this CFRU root naming known spread files and restores only files still matching the journal's new hash.
+- The browser retries a save after `WORKSPACE_NOT_FOUND` only by loading repositories again and comparing revision, set IDs, and ordered entry IDs with the old snapshot. If they differ, it reports that the server restarted and the files changed. An invalid session token is reacquired and the request retried once; ordinary `SAVE_CONFLICT` does not silently overwrite external changes.
+
+## Invariants and pitfalls
+
+- Never edit DPE or Cloud during a save. Only allowlisted CFRU spread files are written; config, frontier header, and trainer tables still participate in conflict hashes.
+- Do not use whole-file regeneration for field edits. Preserve source spans, unknown content, newlines, BOM, comments, and preprocessor boundaries. A delete removes the entry, not unrelated surrounding comments or directives.
+- Reparse and compare every proposed file before committing any file. Keep rollback hash-gated so an outside writer is never overwritten; retain backups and failed journals for manual recovery.
+- The server supports `add` and `reorder` even though this version of `saveChanges` does not construct those operations. Do not claim the current browser exposes server-only save actions.
+- Keep serialized commits and ID continuity scoped to the CFRU root, and update the parse cache only with the verified saved parse.
+
+## Tests
+
+- [spread-writer.test.js](../../../server/tests/services/spread-writer.test.js): loading permissions and team types, caches, byte-minimal edits, missing fields, BOM/LF/CRLF, comments, add/delete/reorder and IDs, validation, conflicts, backups, rollback, and restart recovery. Run: `cd server; yarn test tests/services/spread-writer.test.js`.
+- [workspaces.test.js](../../../server/tests/endpoints/workspaces.test.js): authorized save endpoint, revision conflict, rejection without writing, and workspace errors. Run: `cd server; yarn test tests/endpoints/workspaces.test.js`.
+- [spread-parser.test.js](../../../server/tests/services/spread-parser.test.js) and [parse-cache.test.js](../../../server/tests/services/parse-cache.test.js): source spans, parser editability, and cache inputs. Run: `cd server; yarn test tests/services/spread-parser.test.js` and `cd server; yarn test tests/services/parse-cache.test.js`.
+- [SpreadEditor.test.jsx](../../../src/tests/SpreadEditor.test.jsx): `Save Changes`, changed-field operations, deletion, draft persistence, failures, and restart retry. Run: `$env:DEBUG_PRINT_LIMIT=0; yarn test src/tests/SpreadEditor.test.jsx --run`.
+- [fixture-repositories.js](../../../server/tests/helpers/fixture-repositories.js) and [spread-fixtures.js](../../../server/tests/helpers/spread-fixtures.js) create disposable synthetic repositories. Server endpoint tests set `SPREAD_EDITOR_DATA_DIR` to the fixture's data folder; store tests pass a fixture-local `dataDirectory`. Set `SPREAD_EDITOR_DATA_DIR` for any new server test and use temporary fixture repository copies. Never write the real CFRU, DPE, or Unbound Cloud checkouts.
+
+## Change checklist
+
+1. Check the request contract, client diffing, operation validation, and parser permissions together. Add or adjust behavior tests for all changed operation types and browser-visible outcomes.
+2. Verify untouched bytes, comments, BOM, CRLF/LF, unsupported entries, inactive branches, preprocessor segments, and reparsed field/unknown-field equality.
+3. Exercise stale revision and external hash conflicts, multiple-file rollback, recovery after interruption, per-file outcomes, backups, and stable/created IDs when transaction behavior changes.
+4. Run the narrowest relevant commands above. Update this skill when its behavior or file ownership changes. After server code changes, remind the user to restart the API server on port 3001.

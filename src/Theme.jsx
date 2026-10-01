@@ -7,6 +7,11 @@ import { autocompleteClasses, formLabelClasses, inputClasses, listItemButtonClas
 
 // Focused fields and chosen entries use Material UI's standard blue rather than the red theme color
 const FOCUS_COLORS = { light: "#1976d2", dark: "#90caf9" };
+const FOCUS_PALETTES =
+{
+    light: { main: FOCUS_COLORS.light, light: "#42a5f5", dark: "#1565c0", contrastText: "#fff" },
+    dark: { main: FOCUS_COLORS.dark, light: "#e3f2fd", dark: "#42a5f5", contrastText: "rgba(0, 0, 0, 0.87)" },
+};
 const SELECTED_OPACITY = 0.16;
 const SELECTED_HOVER_OPACITY = 0.24;
 const BACKGROUND_COLORS = { light: "#f8f9fa", dark: "#262626" };
@@ -59,7 +64,7 @@ function createAppTheme(mode)
     {
         mode,
         primary: PRIMARY_COLORS[mode],
-        focus: { main: focus },
+        focus: FOCUS_PALETTES[mode],
         background: { default: BACKGROUND_COLORS[mode], paper: PAPER_COLORS[mode] },
     },
     components:

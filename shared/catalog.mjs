@@ -47,6 +47,35 @@ const POWER_NONE = 0;
 const POWER_VARIABLE = 1;
 const ACCURACY_ALWAYS_HITS = 0;
 
+// Unbound Cloud's forms that cannot exist outside of battle, besides Mega, Primal and Gigantamax forms
+const BATTLE_ONLY_BASE_FORMS =
+{
+    SPECIES_CHERRIM_SUN: "SPECIES_CHERRIM",
+    SPECIES_DARMANITANZEN: "SPECIES_DARMANITAN",
+    SPECIES_DARMANITAN_G_ZEN: "SPECIES_DARMANITAN_G",
+    SPECIES_MELOETTA_PIROUETTE: "SPECIES_MELOETTA",
+    SPECIES_ASHGRENINJA: "SPECIES_GRENINJA",
+    SPECIES_AEGISLASH_BLADE: "SPECIES_AEGISLASH",
+    SPECIES_XERNEAS_NATURAL: "SPECIES_XERNEAS",
+    SPECIES_ZYGARDE_COMPLETE: "SPECIES_ZYGARDE",
+    SPECIES_WISHIWASHI_S: "SPECIES_WISHIWASHI",
+    SPECIES_MIMIKYU_BUSTED: "SPECIES_MIMIKYU",
+    SPECIES_NECROZMA_ULTRA: "SPECIES_NECROZMA",
+    SPECIES_CRAMORANT_GULPING: "SPECIES_CRAMORANT",
+    SPECIES_CRAMORANT_GORGING: "SPECIES_CRAMORANT",
+    SPECIES_EISCUE_NOICE: "SPECIES_EISCUE",
+    SPECIES_MORPEKO_HANGRY: "SPECIES_MORPEKO",
+    SPECIES_ZACIAN_CROWNED: "SPECIES_ZACIAN",
+    SPECIES_ZAMAZENTA_CROWNED: "SPECIES_ZAMAZENTA",
+    SPECIES_ETERNATUS_ETERNAMAX: "SPECIES_ETERNATUS",
+    SPECIES_PALAFIN_HERO: "SPECIES_PALAFIN",
+    SPECIES_TERAPAGOS_TERASTAL: "SPECIES_TERAPAGOS",
+    SPECIES_TERAPAGOS_STELLAR: "SPECIES_TERAPAGOS",
+};
+const GIGANTAMAX_SUFFIX = "GIGA";
+const BATTLE_ONLY_SUFFIX = /_(MEGA(?:_[XYZ])?|PRIMAL|GIGA)$/;
+const battleOnlyForms = new WeakMap();
+
 
 /**
  * Classifies whether a species can know a move in the selected game.
@@ -122,4 +151,70 @@ export function getMegaEvolutions(catalog, species, item, moves = [])
 {
     const megas = Object.hasOwn(catalog.species, species) ? catalog.species[species].megas : [];
     return megas.filter((mega) => (mega.item != null ? mega.item === item : moves.includes(mega.move)));
+}
+
+/**
+ * Finds the form a species takes outside of battle, following Unbound Cloud's rules for battle-only forms.
+ *
+ * @param {object} catalog The game catalog.
+ * @param {string} species The SPECIES_* constant.
+ * @returns {{species: string, item: string|null, gigantamax: boolean}|null} The base form, the item that triggers
+ *          the battle form and whether it is a Gigantamax form, or null when the species exists outside of battle.
+ */
+export function getOutOfBattleForm(catalog, species)
+{
+    if (!battleOnlyForms.has(catalog))
+        battleOnlyForms.set(catalog, findBattleOnlyForms(catalog));
+
+    return battleOnlyForms.get(catalog).get(species) ?? null;
+}
+
+/**
+ * Returns whether a species can only exist during a battle, such as a Mega Evolution or Gigantamax form.
+ *
+ * @param {object} catalog The game catalog.
+ * @param {string} species The SPECIES_* constant.
+ * @returns {boolean} Whether the species is a battle-only form.
+ */
+export function isBattleOnlySpecies(catalog, species)
+{
+    return getOutOfBattleForm(catalog, species) != null;
+}
+
+/**
+ * Maps every battle-only form in a catalog to its base form.
+ *
+ * @param {object} catalog The game catalog.
+ * @returns {Map<string, {species: string, item: string|null, gigantamax: boolean}>} The base forms by battle form.
+ */
+function findBattleOnlyForms(catalog)
+{
+    const forms = new Map();
+    const species = catalog.species ?? {};
+
+    // Cloud's fixed list, then DPE's Mega Evolutions and Gigantamax forms
+    for (const [form, base] of Object.entries(BATTLE_ONLY_BASE_FORMS))
+    {
+        if (Object.hasOwn(species, form) && Object.hasOwn(species, base))
+            forms.set(form, { species: base, item: null, gigantamax: false });
+    }
+
+    for (const [base, info] of Object.entries(species))
+    {
+        for (const mega of info.megas ?? [])
+            forms.set(mega.species, { species: base, item: mega.item ?? null, gigantamax: false });
+        if (info.gigantamax?.species != null)
+            forms.set(info.gigantamax.species, { species: base, item: null, gigantamax: true });
+    }
+
+    // Forms named like battle forms but missing from DPE's evolution table
+    for (const form of Object.keys(species))
+    {
+        const match = BATTLE_ONLY_SUFFIX.exec(form);
+        const base = match != null ? form.slice(0, match.index) : null;
+        if (base != null && !forms.has(form) && Object.hasOwn(species, base))
+            forms.set(form, { species: base, item: null, gigantamax: match[1] === GIGANTAMAX_SUFFIX });
+    }
+
+    return forms;
 }

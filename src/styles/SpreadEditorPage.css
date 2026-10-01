@@ -1,4 +1,4 @@
-.default-page
+.page-content
 {
     display: flex;
     flex-direction: column;
@@ -130,17 +130,208 @@
     font-weight: 600 !important;
 }
 
+/* Cards in a row stretch to the tallest one */
 .spread-row
 {
     display: grid;
     gap: 8px;
-    align-items: start;
+}
+
+/* A row with a group heading keeps every card below the headings, so card tops line up */
+.spread-row.with-headers
+{
+    grid-template-rows: auto 1fr;
+    row-gap: 4px;
+}
+
+.spread-row.with-headers > .species-segment
+{
+    grid-row: 1 / span 2;
+    grid-template-rows: subgrid;
+}
+
+.spread-row.with-headers > .species-segment:not(.has-header) > .movable-spread,
+.spread-row.with-headers > .add-spread-slot
+{
+    grid-row: 2;
+}
+
+.spread-row.with-headers > .group-gap-cell
+{
+    grid-row: 1 / span 2;
+}
+
+.group-gap-cell
+{
+    display: flex;
+    min-height: 120px;
+}
+
+/* A placeholder the size of a spread card */
+.add-spread-slot
+{
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 260px;
+}
+
+.add-spread-tooltip-target
+{
+    display: flex;
+    flex: 1;
+    min-width: 0;
+}
+
+.add-spread-card
+{
+    flex: 1;
+    border-style: dashed !important;
+    border-width: 2px !important;
+    border-radius: 8px !important;
+    font-size: 1rem !important;
+}
+
+/* Sits at the right of the edit dialog's title, outside it so it is not part of the dialog's name */
+.edit-spread-revert
+{
+    position: absolute !important;
+    top: 14px;
+    right: 24px;
+}
+
+.edit-spread-set
+{
+    margin-top: 16px;
+}
+
+.placing-alert
+{
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+/* Each species in a row spans its own cards, sharing the row's columns */
+.species-segment
+{
+    position: relative;
+    display: grid;
+    grid-template-columns: subgrid;
+    row-gap: 4px;
+    min-width: 0;
+    border-radius: 6px;
+}
+
+.species-segment.is-moving
+{
+    outline: 2px dashed var(--focus);
+    outline-offset: 2px;
+}
+
+.species-segment.is-moving .movable-spread
+{
+    opacity: 0.5;
+}
+
+.species-order-controls,
+.spread-order-controls
+{
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.species-order-controls
+{
+    grid-column: 1 / -1;
+    border-left: 2px solid var(--focus);
+    padding-left: 4px;
+}
+
+.movable-spread
+{
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-radius: 6px;
+}
+
+.movable-spread > .spread-card
+{
+    flex: 1;
+}
+
+.movable-spread.is-dragging
+{
+    opacity: 0.4;
+}
+
+.movable-spread.is-drop-target
+{
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+}
+
+.spread-order-controls
+{
+    min-height: 30px;
+    justify-content: flex-end;
+}
+
+/* Places between species groups, shown only while a group is being moved */
+.group-gap
+{
+    border-style: dashed !important;
+    border-width: 2px !important;
+    background-color: rgba(25, 118, 210, 0.12) !important;
+}
+
+/* A narrow bar standing between two groups, its label reading downwards */
+.group-gap-vertical
+{
+    min-width: 40px !important;
+    padding: 8px 4px !important;
+    writing-mode: vertical-rl;
+    white-space: nowrap;
+}
+
+.spread-section-heading.is-drop-allowed
+{
+    border-radius: 4px;
+    outline: 2px dashed var(--focus);
+}
+
+.spread-section-heading.is-drop-target
+{
+    background-color: rgba(25, 118, 210, 0.16);
+    outline-style: solid;
+}
+
+.spread-drag-overlay
+{
+    padding: 8px 16px;
+    border: 1px solid var(--focus);
+    border-radius: 4px;
+    background: var(--app-background);
+}
+
+.visually-hidden
+{
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
 }
 
 /* Spread card, laid out like the mockup with the sprite, item and ability on the left */
 .spread-card
 {
     position: relative;
+    display: flex;
+    flex-direction: column;
     padding: 8px;
     border-radius: 8px;
     font-size: 0.85rem;
@@ -152,15 +343,16 @@
 {
     display: grid;
     grid-template-columns: 124px minmax(0, 1fr);
-    /* The side column runs beside the moves, so its extra lines never make the card taller */
     grid-template-areas:
         "side header"
         "side stats"
         "side details"
-        "side moves"
+        "moves moves"
         "battle battle";
+    /* The details row takes any spare height, so the moves sit at the bottom of a stretched card */
+    grid-template-rows: auto auto 1fr auto auto;
     gap: 5px 8px;
-    align-content: start;
+    flex: 1;
     min-width: 0;
 }
 
@@ -173,6 +365,7 @@
 {
     cursor: default;
     border-color: var(--theme);
+    container: spread-edit-card / inline-size;
 }
 
 .spread-card-editing .spread-card-content
@@ -183,8 +376,57 @@
         "side stats"
         "details details"
         "moves moves"
+        "held held"
         "battle battle";
+    grid-template-rows: auto auto auto auto auto auto;
     gap: 12px 16px;
+}
+
+.spread-card-held
+{
+    grid-area: held;
+}
+
+.stat-footer .MuiFormControlLabel-root
+{
+    margin: 0;
+}
+
+.stat-footer .MuiFormControlLabel-label
+{
+    font-size: 0.8rem;
+}
+
+.trainer-chips
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.spread-card-chips
+{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 4px;
+    min-width: 0;
+    margin-bottom: 8px;
+}
+
+.spread-card-chips .trainer-chips
+{
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    margin: 0;
+}
+
+.spread-card-chips .battle-chips
+{
+    flex: 0 0 auto;
+    max-width: 100%;
 }
 
 /* Inside the edit dialog the card is the dialog's content, not a tile */
@@ -201,6 +443,14 @@
 .spread-card-editing .spread-card-side
 {
     gap: 10px;
+}
+
+.spread-card-appearance
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
 }
 
 .spread-side-checks
@@ -228,7 +478,7 @@
 .spread-card-editing .spread-stats th,
 .spread-card-editing .spread-stats td
 {
-    padding: 3px 8px;
+    padding: 3px 7px;
 }
 
 .spread-card-editing .stat-stepper
@@ -322,7 +572,6 @@
 {
     grid-area: header;
     min-width: 0;
-    padding-bottom: 5px;
 }
 
 .spread-card-stats
@@ -376,12 +625,15 @@
     font-size: 0.7rem;
 }
 
+/* The two move columns are centred as a block at the bottom of the card, each column left aligned */
 .spread-card-moves
 {
     grid-area: moves;
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 180px));
-    gap: 4px 8px;
+    grid-template-columns: repeat(2, minmax(0, max-content));
+    justify-content: center;
+    align-self: end;
+    gap: 4px 16px;
 }
 
 .spread-card-editing .spread-card-moves
@@ -526,6 +778,11 @@
     font-variant-numeric: tabular-nums;
 }
 
+.spread-stats:not(.spread-stats-editing) td
+{
+    min-width: 32px;
+}
+
 .spread-stats-editing
 {
     width: 100%;
@@ -543,6 +800,11 @@
 .spread-stats thead th
 {
     font-weight: 600;
+}
+
+.spread-stats-view thead th
+{
+    border-bottom: 1px solid var(--stat-grid-divider);
 }
 
 .spread-stats-editing .stat-stepper-heading,
@@ -757,6 +1019,77 @@
     }
 }
 
+/* The 200px side column, 16px gap and 379px stat table need about 595px together */
+@container spread-edit-card (max-width: 595px)
+{
+    .spread-card.spread-card-editing .spread-card-content
+    {
+        grid-template-columns: 80px minmax(0, 1fr);
+        grid-template-areas:
+            "side header"
+            "side appearance"
+            "stats stats"
+            "details details"
+            "moves moves"
+            "held held"
+            "battle battle";
+        grid-template-rows: repeat(7, auto);
+    }
+
+    .spread-card-editing .spread-card-side
+    {
+        display: contents;
+    }
+
+    .spread-card-editing .spread-sprite
+    {
+        grid-area: side;
+        align-self: start;
+        width: 80px;
+        height: 80px;
+    }
+
+    .spread-card-editing .spread-card-title
+    {
+        flex-wrap: wrap;
+    }
+
+    .spread-card-appearance
+    {
+        grid-area: appearance;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 12px;
+    }
+
+    .spread-card-appearance > .MuiAutocomplete-root
+    {
+        flex: 1 1 140px;
+        min-width: 140px;
+        max-width: 220px;
+    }
+
+    /* Shiny and Gigantamax stay together on the Ball field's line */
+    .spread-card-appearance .spread-side-checks
+    {
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+    }
+
+    .spread-card-appearance .MuiFormControlLabel-root
+    {
+        flex-shrink: 0;
+        margin: 0;
+    }
+
+    .spread-card-editing .spread-card-stats
+    {
+        justify-self: center;
+        max-width: 100%;
+    }
+}
+
 .move-slot-type
 {
     display: inline-flex;
@@ -807,10 +1140,20 @@
     min-width: 0 !important;
 }
 
+.item-list-viewport
+{
+    display: flex;
+    flex: 1 1 0;
+    min-height: 120px;
+    min-width: 0;
+    overflow: hidden;
+    position: relative;
+}
+
 .item-list
 {
     flex: 1 1 auto;
-    min-height: 120px;
+    min-height: 0;
     overflow-y: auto;
 }
 
@@ -846,7 +1189,7 @@
     font-size: 0.8rem;
 }
 
-/* Save button and its messages stay above the footer and notifications */
+/* Save button and its messages stay above the footer, while notifications sit at the bottom left */
 .save-area
 {
     position: fixed;
@@ -860,9 +1203,52 @@
     max-width: min(480px, calc(100vw - 48px));
 }
 
-/* The Save button would cover the Choose Moves, Choose Item and Revert All dialogs */
-body:has(.chooser-dialog) .save-area,
-body:has(.revert-all-dialog) .save-area
+.showdown-dialog .MuiDialog-paper
+{
+    max-height: calc(100% - 64px);
+    overflow: hidden;
+}
+
+.showdown-dialog .MuiDialogContent-root
+{
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.import-preview
+{
+    flex-shrink: 0;
+}
+
+.import-preview-heading
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 16px;
+}
+
+.import-preview-messages
+{
+    margin: 4px 0 0;
+    padding-left: 24px;
+    list-style-type: disc;
+}
+
+.import-preview-messages li
+{
+    overflow-wrap: anywhere;
+}
+
+/* Clicking the exported text copies it */
+.export-text textarea
+{
+    cursor: pointer;
+}
+
+/* The Save and Revert All buttons would cover any open dialog */
+body:has(.MuiDialog-root) .save-area
 {
     display: none;
 }
@@ -883,6 +1269,31 @@ body:has(.revert-all-dialog) .save-area
 {
     max-height: 40vh;
     overflow-y: auto;
+}
+
+.auto-fix-dialog .auto-fix-content
+{
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.auto-fix-dialog .auto-fix-list
+{
+    max-height: 40vh;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+}
+
+.auto-fix-dialog .auto-fix-tabs
+{
+    margin-top: 12px;
+}
+
+.auto-fix-descriptions
+{
+    margin: 4px 0 0;
+    padding-left: 20px;
+    list-style-type: disc;
 }
 
 /* Narrow cards stack their sections under the sprite */

@@ -7,13 +7,18 @@
 import React, { memo, useMemo, useState } from "react";
 import
 {
-    Alert, Autocomplete, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControl, FormControlLabel, IconButton, InputLabel, MenuItem, Paper, Select, Stack,
-    Switch, TextField, Tooltip, Typography,
+    Alert, Autocomplete, Button, Checkbox, Chip, FormControl, FormControlLabel, IconButton, InputLabel, ListItemIcon,
+    ListItemText, Menu, MenuItem, Paper, Select, Stack, Switch, TextField, Tooltip, Typography,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import FiberNewIcon from "@mui/icons-material/FiberNew";
 import LockIcon from "@mui/icons-material/Lock";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
+import ContentPasteIcon from "@mui/icons-material/ContentPaste";
+import IosShareIcon from "@mui/icons-material/IosShare";
+import MoreVertIcon from "@mui/icons-material/MoreVert";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
 import { LEGALITY, getMoveLegality } from "../../shared/catalog.mjs";
@@ -31,6 +36,7 @@ import { GameImage, OverflowText, STAT_SHORT_LABELS, TypeIcon, filterBySearch, g
 import ItemPicker, { ITEM_NONE, NO_ITEM_LABEL } from "../subcomponents/ItemPicker";
 import MoveEditor, { getMoveOption } from "../subcomponents/MovePicker";
 import SpreadStats from "../subcomponents/SpreadStats";
+import { ExportSpreadsDialog, OverwriteSpreadDialog } from "./SpreadDialogs";
 
 const SPRITE_SIZE = 112;
 const ICON_SIZE = 24;
@@ -55,14 +61,22 @@ const BATTLE_TYPE_COLORS =
     [BATTLE_TYPES.NEITHER]: "error",
 };
 const SELECTABLE_BATTLE_TYPES = [BATTLE_TYPES.BOTH, BATTLE_TYPES.SINGLES, BATTLE_TYPES.DOUBLES];
-const MODIFY_MOVES_LABEL = "Modify Doubles";
-const KEEP_MOVES_LABEL = "Keep Doubles";
+const BOTH_MODIFIED_SUFFIX = "(Modify)";
+const BOTH_EXACT_SUFFIX = "(Exact)";
+// Orange marks modified doubles moves, while exact ones keep the plain text color of the theme
+const MODIFIED_SUFFIX_COLORS = { light: "#ffcc80", dark: "#8f3800" };
+const EXACT_SUFFIX_COLORS = { light: "#ffffff", dark: "#000000" };
+const BATTLE_SUFFIX_WEIGHT = 600;
 
 const LOCKED_REASON = "This spread's source cannot be changed safely.";
 const TEAM_TYPE_WARNING = "This spread needs a doubles team type but is not Doubles Only. Set it to Any to clear it.";
 const GIGANTAMAX_WARNING = "This species cannot Gigantamax.";
 const DUPLICATE_MOVE = "Duplicate move";
 const PLACEHOLDER_REASON = "This entry is a placeholder with no active battle spread and cannot be edited.";
+const SHOWDOWN_EXPORT = "export";
+const SHOWDOWN_OVERWRITE = "overwrite";
+const NEW_SPREAD_LABEL = "New Spread";
+const NEW_SPREAD_TIP = "New spread, not saved yet";
 
 const natureOptionCache = new WeakMap();
 const ballOptionCache = new WeakMap();
@@ -157,16 +171,25 @@ function getTypes(speciesInfo)
  * @param {string} props.label - The label.
  * @param {*} props.value - The selected value.
  * @param {Function} props.onChange - Called with the new value.
+ * @param {Function} [props.onFieldCommit] Called after a menu choice.
  * @param {React.ReactNode} props.children - The menu items.
  * @returns {JSX.Element} The select.
  */
-const CompactSelect = ({ id, label, value, onChange, children }) =>
+const CompactSelect = ({ id, label, value, onChange, onFieldCommit, children }) =>
 {
     return (
-        <FormControl size="small" fullWidth>
+        <FormControl size="small" fullWidth data-advance-field={label}>
             <InputLabel id={id}>{label}</InputLabel>
-            <Select labelId={id} label={label} value={value} onChange={(event) => onChange(event.target.value)}>
-                {children}
+            <Select labelId={id} label={label} value={value} MenuProps={{ disableRestoreFocus: onFieldCommit != null }}
+                    onChange={(event) => onChange(event.target.value)}>
+                {React.Children.map(children, (child) => React.isValidElement(child) ? React.cloneElement(child,
+                {
+                    onClick: (event) =>
+                    {
+                        child.props.onClick?.(event);
+                        onFieldCommit?.(event, label);
+                    },
+                }) : child)}
             </Select>
         </FormControl>
     );
@@ -181,9 +204,10 @@ const CompactSelect = ({ id, label, value, onChange, children }) =>
  * @param {*} props.value - The selected value.
  * @param {Array<{value: *, name: string, icon?: string|null}>} props.options - The choices.
  * @param {Function} props.onChange - Called with the new value.
+ * @param {Function} [props.onFieldCommit] Called after an option selection.
  * @returns {JSX.Element} The autocomplete.
  */
-const FieldAutocomplete = ({ label, value, options, onChange }) =>
+const FieldAutocomplete = ({ label, value, options, onChange, onFieldCommit }) =>
 {
     // A value the game does not name stays listed so it can be seen and kept
     const selected = options.find((option) => option.value === value);
@@ -193,11 +217,17 @@ const FieldAutocomplete = ({ label, value, options, onChange }) =>
     return (
         <Autocomplete
             size="small"
+            data-advance-field={label}
             options={choices}
             value={selected ?? choices[0]}
             disableClearable
             autoHighlight
-            onChange={(event, option) => onChange(option.value)}
+            onChange={(event, option, reason) =>
+            {
+                onChange(option.value);
+                if (reason === "selectOption")
+                    onFieldCommit?.(event, label);
+            }}
             filterOptions={(list, state) => filterBySearch(list, state.inputValue, (option) => option.name)}
             getOptionLabel={(option) => option.name}
             isOptionEqualToValue={(option, choice) => option.value === choice.value}
@@ -232,15 +262,19 @@ const FieldAutocomplete = ({ label, value, options, onChange }) =>
  * @param {{level: number}} props.preview - The preview level.
  * @param {boolean} props.editing - Whether the fields can be changed.
  * @param {boolean} props.changed - Whether the spread has unsaved changes.
+ * @param {boolean} [props.deleted] - Whether the spread will be deleted on save.
  * @param {Array<{message: string}>} props.problems - Problems that stop the spread from being saved.
- * @param {object} props.actions - The editor actions updateSpread, setEditing and revertSpread.
+ * @param {object} props.actions - The editor actions updateSpread, setEditing, deleteSpread and restoreSpread.
+ * @param {Function} [props.onFieldCommit] Advances focus after an inline field choice.
  * @returns {JSX.Element} The card.
  */
-const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, changed, deleted = false, problems, actions }) =>
+const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, changed, deleted = false, problems, actions, onFieldCommit }) =>
 {
+    const theme = useTheme();
     const { id } = entry;
     const [showMega, setShowMega] = useState(true);
-    const [confirmDelete, setConfirmDelete] = useState(false);
+    const [showdownDialog, setShowdownDialog] = useState(null);
+    const [menuAnchor, setMenuAnchor] = useState(null);
     const speciesInfo = getEntry(catalog.species, fields.species);
     const name = speciesInfo?.name ?? String(fields.species);
     const level = getSpreadLevel(set, preview.level);
@@ -311,14 +345,15 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
         name: `${abilityLabel(option.slot, option.ability)}${megaAbilityName != null && option.ability !== megaAbility.ability ? ` → ${MEGA_ABILITY_LABEL} ${megaAbilityName}` : ""}` }));
     const megaToggle = megaAbility != null &&
         <FormControlLabel label="Mega Stats" labelPlacement="start" control={<Switch size="small" checked={showMega} onChange={(event) => setShowMega(event.target.checked)} />} />;
-    const trainerChips = trainers.map((trainer) => <Chip key={trainer} size="small" variant="outlined" label={trainer} />);
+    const trainerNames = trainers.map((trainer) =>
+        <Chip key={trainer} size="small" variant="outlined" label={trainer} />);
+    const battleLabel = battleType === BATTLE_TYPES.BOTH
+        ? <span>{BATTLE_TYPE_LABELS[battleType]} <span className="battle-chip-suffix" style={{ color: (fields.modifyMovesDoubles ? MODIFIED_SUFFIX_COLORS : EXACT_SUFFIX_COLORS)[theme.palette.mode], fontWeight: BATTLE_SUFFIX_WEIGHT }}>{fields.modifyMovesDoubles ? BOTH_MODIFIED_SUFFIX : BOTH_EXACT_SUFFIX}</span></span>
+        : BATTLE_TYPE_LABELS[battleType];
     const battleChips =
         <div className="battle-chips">
             {entry.placeholder && <Tooltip title={PLACEHOLDER_REASON}><Chip size="small" label="Placeholder" color="warning" /></Tooltip>}
-            {trainerChips}
-            <Chip size="small" color={BATTLE_TYPE_COLORS[battleType]} label={BATTLE_TYPE_LABELS[battleType]} />
-            {battleType === BATTLE_TYPES.BOTH &&
-                <Chip size="small" color={fields.modifyMovesDoubles ? "warning" : "default"} label={fields.modifyMovesDoubles ? MODIFY_MOVES_LABEL : KEEP_MOVES_LABEL} />}
+            <Chip size="small" color={BATTLE_TYPE_COLORS[battleType]} label={battleLabel} />
             {showTeamType && teamType !== ANY_TEAM_TYPE && <Chip size="small" color="primary" label={`Doubles Team: ${teamTypeLabel}`} />}
             {set.littleCup && <Chip size="small" color="info" label={`Lv. ${LITTLE_CUP_LEVEL}`} />}
         </div>;
@@ -331,8 +366,9 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
             <div className="spread-card-side">
                 <GameImage src={sprites} alt={megaInfo?.name ?? name} width={SPRITE_SIZE} height={SPRITE_SIZE} className="spread-sprite" />
                 {editing
-                    ? <>
+                    ? <div className="spread-card-appearance">
                         <FieldAutocomplete label="Ball" value={ball} options={getBallOptions(catalog)}
+                                           onFieldCommit={onFieldCommit}
                                            onChange={(value) => update((current, saved) => setFieldSymbol(current, "ball", value, saved))} />
                         <div className="spread-side-checks">
                             <FormControlLabel control={<Checkbox size="small" checked={fields.shiny === true} onChange={(event) => update((current) => ({ ...current, shiny: event.target.checked }))} />}
@@ -341,7 +377,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                                 <FormControlLabel control={<Checkbox size="small" checked={fields.gigantamax === true} onChange={(event) => update((current) => ({ ...current, gigantamax: event.target.checked }))} />}
                                                   label="Gigantamax" slotProps={{ typography: { variant: "body2" } }} />}
                         </div>
-                    </>
+                    </div>
                     : <>
                         {ball != null && ball !== BALL_RANDOM &&
                             <span className="option-with-icon spread-side-value side-ball">
@@ -394,22 +430,42 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                                 <span role="img" aria-label={entry.placeholder ? "Placeholder" : LOCKED_REASON}><LockIcon fontSize="small" color="disabled" /></span>
                             </Tooltip>
                             : null}
-                        {changed && <Button size="small" variant="outlined" color="warning" onClick={() => actions.revertSpread(id)} aria-label={`Revert ${name}`}>Revert</Button>}
-                        {editing && entry.editable && <Tooltip title={`Delete ${name}`}>
-                            <IconButton size="small" color="error" aria-label={`Delete ${name}`} onClick={() => setConfirmDelete(true)}><DeleteOutlineIcon fontSize="small" /></IconButton>
+                        {!editing && entry.isNew && entry.movedFrom == null &&
+                            <Tooltip title={NEW_SPREAD_TIP}>
+                                <span role="img" aria-label={NEW_SPREAD_LABEL} className="type-symbol"><FiberNewIcon color="success" className="new-spread-icon" /></span>
+                            </Tooltip>}
+                        {editing && <Tooltip title="Spread Actions">
+                            <IconButton size="small" aria-label="Spread Actions" aria-haspopup="menu" aria-expanded={menuAnchor != null}
+                                        onClick={(event) => setMenuAnchor(event.currentTarget)}><MoreVertIcon fontSize="small" /></IconButton>
                         </Tooltip>}
                     </span>
+                    {editing && <Menu anchorEl={menuAnchor} open={menuAnchor != null} onClose={() => setMenuAnchor(null)}
+                                      anchorOrigin={{ vertical: "bottom", horizontal: "right" }} transformOrigin={{ vertical: "top", horizontal: "right" }}>
+                        <MenuItem onClick={() => { setMenuAnchor(null); setShowdownDialog(SHOWDOWN_EXPORT); }}>
+                            <ListItemIcon><IosShareIcon fontSize="small" /></ListItemIcon>
+                            <ListItemText>Export to Showdown</ListItemText>
+                        </MenuItem>
+                        {entry.editable && <MenuItem onClick={() => { setMenuAnchor(null); setShowdownDialog(SHOWDOWN_OVERWRITE); }}>
+                            <ListItemIcon><ContentPasteIcon fontSize="small" /></ListItemIcon>
+                            <ListItemText>Overwrite From Showdown</ListItemText>
+                        </MenuItem>}
+                        {entry.editable && <MenuItem onClick={() => { setMenuAnchor(null); actions.deleteSpread(id); }} sx={{ color: "error.main" }}>
+                            <ListItemIcon><DeleteOutlineIcon fontSize="small" color="error" /></ListItemIcon>
+                            <ListItemText>Delete</ListItemText>
+                        </MenuItem>}
+                    </Menu>}
                 </Stack>
+                {editing && trainers.length > 0 && <div className="trainer-chips">{trainerNames}</div>}
                 <div className="spread-card-subtitle">
-                    {!editing && battleChips}
-                    {editing &&
-                        <>
-                            <div className="spread-badges">
-                                {entry.placeholder && <Tooltip title={PLACEHOLDER_REASON}><Chip size="small" label="Placeholder" color="warning" /></Tooltip>}
-                                {trainerChips}
-                            </div>
-                            {megaToggle}
-                        </>}
+                    {!editing &&
+                        <div className="spread-card-chips">
+                            {trainers.length > 0 && <div className="trainer-chips">{trainerNames}</div>}
+                            {battleChips}
+                        </div>}
+                    {editing && entry.placeholder &&
+                        <div className="spread-badges">
+                            <Tooltip title={PLACEHOLDER_REASON}><Chip size="small" label="Placeholder" color="warning" /></Tooltip>
+                        </div>}
                 </div>
             </div>
 
@@ -423,25 +479,23 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                     onChange={update}
                     name={name}
                     catalog={catalog}
+                    footer={editing ? megaToggle : null}
                 />
             </div>
 
             {(editing || (fields.gigantamax && !canGigantamax)) &&
                 <div className="spread-card-details">
-                    {editing && <div className="spread-details-edit">
-                        <div className="spread-nature-field">
-                            <FieldAutocomplete label="Nature" value={nature} options={getNatureOptions(catalog)}
-                                               onChange={(value) => update((current, saved) => setFieldSymbol(current, "nature", value, saved))} />
-                        </div>
-                        <ItemPicker catalog={catalog} value={item} speciesName={name} onChange={(value) => update((current, saved) => setFieldSymbol(current, "item", value, saved))} />
-                        <FieldAutocomplete label="Ability" value={fields.ability} options={abilityOptions} onChange={(value) => update((current) => ({ ...current, ability: value }))} />
-                    </div>}
+                    {editing &&
+                        <FieldAutocomplete label="Nature" value={nature} options={getNatureOptions(catalog)}
+                                           onFieldCommit={onFieldCommit}
+                                           onChange={(value) => update((current, saved) => setFieldSymbol(current, "nature", value, saved))} />}
                     {fields.gigantamax && !canGigantamax && <Typography variant="caption" color="warning.main">{GIGANTAMAX_WARNING}</Typography>}
                 </div>}
 
             <div className="spread-card-moves">
                 {editing
-                    ? <MoveEditor catalog={catalog} fields={fields} onChange={(slot, move, type) => update((current) => setMove(current, slot, move, type))} />
+                    ? <MoveEditor catalog={catalog} fields={fields} onFieldCommit={onFieldCommit}
+                                  onChange={(slot, move, type) => update((current) => setMove(current, slot, move, type))} />
                     : Array.from({ length: MAX_MOVES }, (_, slot) =>
                     {
                         const option = getMoveOption(catalog, fields, fields.moves[slot]);
@@ -457,10 +511,19 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                     })}
             </div>
 
+            {editing &&
+                <div className="spread-card-held spread-details-edit">
+                    <ItemPicker catalog={catalog} value={item} speciesName={name} onFieldCommit={onFieldCommit}
+                                onChange={(value) => update((current, saved) => setFieldSymbol(current, "item", value, saved))} />
+                    <FieldAutocomplete label="Ability" value={fields.ability} options={abilityOptions} onFieldCommit={onFieldCommit}
+                                       onChange={(value) => update((current) => ({ ...current, ability: value }))} />
+                </div>}
+
             {(editing || teamTypeNeedsClearing || problems.length > 0) &&
                 <div className="spread-card-battle">
                     {editing && <div className="battle-controls">
                         <CompactSelect id={`${inputId}-battle`} label="Battle Type" value={battleType}
+                                       onFieldCommit={onFieldCommit}
                                        onChange={(type) => update((current, saved, memory) => changeBattleType(current, type,
                                        {
                                            saved,
@@ -477,6 +540,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                                               label="Modify Moves Doubles" />}
                         {showTeamType &&
                             <CompactSelect id={`${inputId}-team`} label="Doubles Team Type" value={teamType ?? ""}
+                                           onFieldCommit={onFieldCommit}
                                            onChange={(value) => update((current, saved) => setTeamType(current, value, teamTypes, saved))}>
                                 {teamType == null && <MenuItem value="">{String(fields.specificTeamType)}</MenuItem>}
                                 {teamTypes.map((option) => <MenuItem key={option.name} value={option.name}>{getTeamTypeLabel(option.name)}</MenuItem>)}
@@ -489,14 +553,16 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                         </Alert>}
                 </div>}
             </div>
-            {confirmDelete && <Dialog open onClose={() => setConfirmDelete(false)} aria-labelledby={`${inputId}-delete-title`}>
-                <DialogTitle id={`${inputId}-delete-title`}>Delete {name}?</DialogTitle>
-                <DialogContent>This spread will be removed from its file when you save your changes.</DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setConfirmDelete(false)}>Cancel</Button>
-                    <Button color="error" onClick={() => { actions.deleteSpread(id); setConfirmDelete(false); }}>Delete</Button>
-                </DialogActions>
-            </Dialog>}
+            {showdownDialog === SHOWDOWN_EXPORT &&
+                <ExportSpreadsDialog title={`Export ${name} to Showdown`} catalog={catalog} entries={[{ id, label: name, fields, level }]}
+                                     onClose={() => setShowdownDialog(null)} />}
+            {showdownDialog === SHOWDOWN_OVERWRITE &&
+                <OverwriteSpreadDialog name={name} catalog={catalog} fields={fields} saved={entry.fields} teamTypes={teamTypes} level={level}
+                                       onClose={() => setShowdownDialog(null)} onApply={(next) =>
+                                       {
+                                           update(() => next);
+                                           setShowdownDialog(null);
+                                       }} />}
         </Paper>
     );
 };

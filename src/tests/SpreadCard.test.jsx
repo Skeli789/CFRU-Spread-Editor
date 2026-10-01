@@ -1,14 +1,29 @@
-import React from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import React, { useState } from "react";
+import { readFileSync } from "node:fs";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ThemeProvider } from "@mui/material/styles";
+import { ThemeProvider, getContrastRatio } from "@mui/material/styles";
 import { vi } from "vitest";
 
 import SpreadCard from "../components/SpreadCard";
-import { APP_THEME } from "../Theme";
+import { EditSpreadDialog } from "../components/SpreadDialogs";
+import { APP_THEME, DARK_APP_THEME } from "../Theme";
 import { createCatalog, createFields, createSpreads } from "./EditorFixtures";
 
 const PREVIEW = { level: 50 };
+const HOLD_DURATION_MS = 1000;
+const INITIAL_REPEAT_DELAY_MS = 150;
+const REPEAT_INTERVAL_MS = 20;
+const MIN_FAST_EV_CHANGE = 128;
+const MIN_SUFFIX_CONTRAST = 3;
+const SUFFIX_COLORS =
+{
+    modified: { light: "rgb(255, 204, 128)", dark: "rgb(143, 56, 0)" },
+    exact: { light: "rgb(255, 255, 255)", dark: "rgb(0, 0, 0)" },
+};
+const EDIT_CARD_STACK_WIDTH = 595;
+const EDIT_CARD_SIDE_WIDTH = 200;
+const CARD_STYLES = readFileSync("src/styles/SpreadEditorPage.css", "utf8");
 
 
 /**
@@ -28,7 +43,7 @@ function renderCard(options = {})
         entry, fields, set: spreads.sets[0], catalog: createCatalog(), teamTypes: spreads.teamTypes, preview: PREVIEW,
         editing: false, changed: false, problems: [], actions, ...options,
     };
-    render(<ThemeProvider theme={APP_THEME}><SpreadCard {...cardProps} /></ThemeProvider>);
+    render(<ThemeProvider theme={options.theme ?? APP_THEME}><SpreadCard {...cardProps} /></ThemeProvider>);
     return { card: screen.getByRole("article", { name: "Charizard spread" }), actions, user: userEvent.setup() };
 }
 
@@ -44,8 +59,100 @@ function precedes(first, second)
     return Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
 }
 
+/**
+ * Applies held-button changes to real card state.
+ *
+ * @param {object} props The component props.
+ * @param {object} props.initialFields The starting fields.
+ * @returns {JSX.Element} The editable card.
+ */
+function HeldStatCard({ initialFields })
+{
+    const [fields, setFields] = useState(initialFields);
+    const spreads = createSpreads();
+    const actions =
+    {
+        updateSpread: (id, change) => setFields((current) => change(current, initialFields)),
+        setEditing: vi.fn(),
+    };
+
+    return (
+        <ThemeProvider theme={APP_THEME}>
+            <SpreadCard entry={spreads.entries[2]} fields={fields} set={spreads.sets[0]} catalog={createCatalog()}
+                        teamTypes={spreads.teamTypes} preview={PREVIEW} editing changed={false} problems={[]} actions={actions} />
+        </ThemeProvider>
+    );
+}
+
 describe("Spread card", () =>
 {
+    it.each([false, true])("advances portaled edit fields with doubles team shown: %s", async (doubles) =>
+    {
+        const spreads = createSpreads();
+        const entry = spreads.entries[2];
+        const fields = createFields({ forSingles: !doubles, forDoubles: true });
+        const actions = { updateSpread: vi.fn(), setEditing: vi.fn() };
+        const onSubmit = vi.fn();
+        const user = userEvent.setup();
+        render(<ThemeProvider theme={APP_THEME}>
+            <EditSpreadDialog name="Charizard" sets={spreads.sets} setId={entry.setId} getSetProblem={() => ""}
+                              onSetChange={vi.fn()} onClose={vi.fn()} onSubmit={onSubmit}>
+                <SpreadCard entry={entry} fields={fields} set={spreads.sets[0]} catalog={createCatalog()} teamTypes={spreads.teamTypes}
+                            preview={PREVIEW} editing changed={false} problems={[]} actions={actions} />
+            </EditSpreadDialog>
+        </ThemeProvider>);
+        const dialog = await screen.findByRole("dialog", { name: "Edit Charizard" });
+        /**
+         * Finds an inline field in the edit dialog.
+         *
+         * @param {string} name The field label.
+         * @returns {HTMLElement} The combobox.
+         */
+        const field = (name) => within(dialog).getByRole("combobox", { name });
+        expect(field("Spread Set").closest(".MuiInputBase-root")).toHaveClass("MuiInputBase-sizeSmall");
+
+        await user.clear(field("Nature"));
+        await user.type(field("Nature"), "Timid");
+        expect(field("Nature")).toHaveFocus();
+        await user.keyboard("{Escape}");
+        expect(field("Nature")).toHaveFocus();
+        await user.click(field("Ball"));
+        expect(field("Ball")).toHaveFocus();
+        expect(field("Move 1")).not.toHaveFocus();
+        await user.clear(field("Nature"));
+        await user.type(field("Nature"), "Timid{Enter}");
+        await waitFor(() => expect(field("Move 1")).toHaveFocus());
+        await user.clear(field("Move 1"));
+        await user.type(field("Move 1"), "Dragon Claw{Enter}");
+        await waitFor(() => expect(field("Move 2")).toHaveFocus());
+        await user.clear(field("Move 2"));
+        await user.type(field("Move 2"), "Earthquake");
+        await user.click(await screen.findByRole("option", { name: "Earthquake" }));
+        await waitFor(() => expect(field("Move 3")).toHaveFocus());
+        await user.clear(field("Move 3"));
+        await user.type(field("Move 3"), "Protect{Enter}");
+        await waitFor(() => expect(field("Move 4")).toHaveFocus());
+        await user.clear(field("Move 4"));
+        await user.type(field("Move 4"), "Dragon Claw{Enter}");
+        await waitFor(() => expect(field("Item")).toHaveFocus());
+        await user.clear(field("Item"));
+        await user.type(field("Item"), "Leftovers{Enter}");
+        await waitFor(() => expect(field("Ability")).toHaveFocus());
+        await user.clear(field("Ability"));
+        await user.type(field("Ability"), "Solar Power{Enter}");
+        await waitFor(() => expect(field("Battle Type")).toHaveFocus());
+        await user.click(field("Battle Type"));
+        await user.click(await screen.findByRole("option", { name: doubles ? "Doubles Only" : "Singles Only" }));
+        if (doubles)
+        {
+            await waitFor(() => expect(field("Doubles Team Type")).toHaveFocus());
+            await user.click(field("Doubles Team Type"));
+            await user.click(await screen.findByRole("option", { name: "Any" }));
+        }
+        await waitFor(() => expect(field("Spread Set")).toHaveFocus());
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
     it("shows view details in the requested order without random ball, nature, or final stats", async () =>
     {
         const { card, actions, user } = renderCard({ fields: createFields({ item: "ITEM_CHARIZARDITE_X", gigantamax: true }), changed: true });
@@ -55,15 +162,16 @@ describe("Spread card", () =>
 
         expect(precedes(within(card).getByRole("img", { name: "Gigantamax" }), name)).toBe(true);
         expect(within(header).queryByText("Doubles Only")).not.toBeInTheDocument();
-        expect(within(header).getByText("Singles & Doubles")).toBeInTheDocument();
+        expect(header.querySelector(".battle-chips .MuiChip-label")).toHaveTextContent(/^Singles & Doubles \(Modify\)$/);
         expect(within(header).queryByRole("switch", { name: "Mega Stats" })).not.toBeInTheDocument();
         expect(within(card).queryByRole("columnheader", { name: "Final" })).not.toBeInTheDocument();
+        expect(within(card).getByRole("table")).toHaveClass("spread-stats-view");
+        expect(within(card).getByRole("columnheader", { name: "Stat" }).closest("table")).toHaveClass("spread-stats-view");
         expect(card.querySelector(".side-nature")).toHaveTextContent(/^Modest$/);
         expect(within(side).queryByText("Random Ball")).not.toBeInTheDocument();
         expect(within(card).queryByRole("button", { name: "Edit Charizard" })).not.toBeInTheDocument();
 
-        await user.click(within(card).getByRole("button", { name: "Revert Charizard" }));
-        expect(actions.revertSpread).toHaveBeenCalledWith("e2");
+        expect(within(card).queryByRole("button", { name: "Revert Charizard" })).not.toBeInTheDocument();
         await user.click(name);
         expect(actions.setEditing).toHaveBeenCalledWith("e2", true);
 
@@ -73,14 +181,61 @@ describe("Spread card", () =>
         expect(actions.setEditing).toHaveBeenCalledWith("e2", true);
     });
 
-    it("puts trainer chips before the battle type and ability slots in the icon column", () =>
+    it.each([
+        [true, "light", APP_THEME],
+        [false, "light", APP_THEME],
+        [true, "dark", DARK_APP_THEME],
+        [false, "dark", DARK_APP_THEME],
+    ])("shows one readable Both chip with modified moves: %s in %s", (modifyMovesDoubles, mode, theme) =>
+    {
+        const { card } = renderCard({ fields: createFields({ modifyMovesDoubles }), theme });
+        const chips = card.querySelector(".battle-chips");
+        const chip = chips.querySelector(".MuiChip-root");
+        const suffix = chip.querySelector(".battle-chip-suffix");
+        const label = modifyMovesDoubles ? "Singles & Doubles (Modify)" : "Singles & Doubles (Exact)";
+        expect(chips.querySelectorAll(".MuiChip-root")).toHaveLength(1);
+        expect(chip).toHaveClass("MuiChip-colorSuccess");
+        expect(chip.querySelector(".MuiChip-label").textContent).toBe(label);
+        expect(suffix).toHaveTextContent(modifyMovesDoubles ? "(Modify)" : "(Exact)");
+        expect(suffix.style.color).toBe(SUFFIX_COLORS[modifyMovesDoubles ? "modified" : "exact"][mode]);
+        expect(suffix.style.fontWeight).toBe("600");
+        expect(getContrastRatio(suffix.style.color, theme.palette.success.main)).toBeGreaterThanOrEqual(MIN_SUFFIX_CONTRAST);
+        expect(within(card).queryByText("Modify Doubles")).not.toBeInTheDocument();
+        expect(within(card).queryByText("Keep Doubles")).not.toBeInTheDocument();
+    });
+
+    it("groups trainer chips before battle chips below the title in view mode", () =>
+    {
+        const spreads = createSpreads();
+        const set = { ...spreads.sets[0], usages: [{ trainerName: "Palmer", ranks: [1, 2] }] };
+        const { card } = renderCard({ set });
+        const chips = [...card.querySelectorAll(".battle-chips .MuiChip-root")].map((chip) => chip.textContent);
+        expect(chips[0]).toBe("Doubles Only");
+        const trainers = card.querySelector(".trainer-chips");
+        expect(trainers.querySelector(".MuiChip-root")).toHaveTextContent("Palmer (Rank 1-2)");
+        expect(trainers.querySelector(".MuiChip-root")).toHaveClass("MuiChip-outlined");
+        expect(trainers.parentElement).toHaveClass("spread-card-chips");
+        expect(trainers.parentElement).toContainElement(card.querySelector(".battle-chips"));
+        expect(trainers.parentElement.parentElement.previousElementSibling).toHaveClass("spread-card-title");
+        expect(precedes(trainers, card.querySelector(".battle-chips"))).toBe(true);
+        expect(card.querySelector(".spread-card-side")).not.toHaveTextContent("Palmer");
+        expect(card.querySelector(".side-ability .ability-slot")).toHaveTextContent("[1]");
+    });
+
+    it("puts trainer chips under the edit title and item and ability under the moves", () =>
     {
         const spreads = createSpreads();
         const set = { ...spreads.sets[0], usages: [{ trainerName: "Palmer", ranks: null }] };
-        const { card } = renderCard({ set });
-        const chips = [...card.querySelectorAll(".battle-chips .MuiChip-root")].map((chip) => chip.textContent);
-        expect(chips.slice(0, 2)).toEqual(["Palmer", "Doubles Only"]);
-        expect(card.querySelector(".side-ability .ability-slot")).toHaveTextContent("[1]");
+        const { card } = renderCard({ set, editing: true, fields: createFields({ item: "ITEM_CHARIZARDITE_X" }) });
+        const trainers = card.querySelector(".trainer-chips");
+        expect(trainers.querySelector(".MuiChip-root")).toHaveTextContent("Palmer");
+        expect(trainers.previousElementSibling).toHaveClass("spread-card-title");
+        expect(card.querySelector(".spread-side-checks").parentElement).not.toHaveTextContent("Palmer");
+        const held = card.querySelector(".spread-card-held");
+        expect(precedes(card.querySelector(".spread-card-moves"), held)).toBe(true);
+        expect(within(held).getByRole("combobox", { name: "Item" })).toBeInTheDocument();
+        expect(within(held).getByRole("combobox", { name: "Ability" })).toBeInTheDocument();
+        expect(within(card.querySelector(".spread-stats tfoot")).getByRole("switch", { name: "Mega Stats" })).toBeChecked();
     });
 
     it("shows the nature name under the abilities and a full-name tooltip only for cut-off text", async () =>
@@ -112,6 +267,17 @@ describe("Spread card", () =>
         expect(within(card).getByText("Attack", { selector: ".stat-label" }).closest("tr").querySelector("td")).toHaveTextContent("130");
     });
 
+    it("keeps Shiny and Gigantamax on one row beside the stats and stacks them only on narrow cards", () =>
+    {
+        const styles = CARD_STYLES.replace(/\s+/g, " ");
+        expect(styles).toContain(`.spread-card-editing .spread-card-content { grid-template-columns: ${EDIT_CARD_SIDE_WIDTH}px minmax(0, 1fr);`);
+        expect(styles).toContain(".spread-side-checks { display: flex; flex-wrap: wrap;");
+        expect(styles).toContain(".spread-card-editing .spread-stats th, .spread-card-editing .spread-stats td { padding: 3px 7px;");
+        expect(styles).toContain(`@container spread-edit-card (max-width: ${EDIT_CARD_STACK_WIDTH}px)`);
+        expect(styles).toContain('"side header" "side appearance" "stats stats"');
+        expect(styles).toContain(".spread-card-editing .spread-card-stats { justify-self: center; max-width: 100%; }");
+    });
+
     it("shows sprite options and stat steppers while editing without inline move clear buttons", () =>
     {
         const catalog = createCatalog();
@@ -120,7 +286,7 @@ describe("Spread card", () =>
         catalog.types.TYPE_FIRE.symbol = "/fire-symbol.png";
         const { card } = renderCard({ editing: true, fields: createFields({ ball: "BALL_TYPE_POKE_BALL", item: "ITEM_CHARIZARDITE_X" }), catalog });
         const side = card.querySelector(".spread-card-side");
-        const details = card.querySelector(".spread-details-edit");
+        const details = card.querySelector(".spread-card-held");
         const lower = within(card).getByRole("button", { name: "Lower Attack IV" });
         const raise = within(card).getByRole("button", { name: "Raise Attack IV" });
 
@@ -129,16 +295,21 @@ describe("Spread card", () =>
         expect(within(card).getByRole("switch", { name: "Mega Stats" })).toBeChecked();
         expect(within(side).getByRole("checkbox", { name: "Shiny" })).toBeInTheDocument();
         expect(within(side).getByRole("checkbox", { name: "Gigantamax" })).toBeInTheDocument();
+        const appearance = card.querySelector(".spread-card-appearance");
+        expect(within(appearance).getByRole("combobox", { name: "Ball" })).toBeInTheDocument();
+        expect(within(appearance).getAllByRole("checkbox")).toHaveLength(2);
+        expect(within(appearance).queryByRole("table")).not.toBeInTheDocument();
+        expect(card.querySelector(".spread-card-stats").parentElement).toHaveClass("spread-card-content");
         expect(within(details).getByRole("combobox", { name: "Ability" })).toBeInTheDocument();
         expect(within(details).getByRole("combobox", { name: "Item" })).toBeInTheDocument();
         expect(within(card).getByRole("columnheader", { name: "Final" })).toBeInTheDocument();
+        expect(within(card).getByRole("table")).toHaveClass("spread-stats-editing");
+        expect(within(card).getByRole("table")).not.toHaveClass("spread-stats-view");
         // Original types stay as symbols when the Mega's types follow as full banners
         const typeSources = [...card.querySelectorAll(".spread-card-title .type-symbol img")].map((image) => image.getAttribute("src"));
         expect(typeSources[0]).toContain("fire-symbol.png");
         expect(typeSources.slice(1).some((source) => source.includes("fire-banner.png"))).toBe(true);
-        const subtitle = card.querySelector(".spread-card-subtitle");
-        expect(subtitle.querySelector(".spread-badges")).toBeInTheDocument();
-        expect(within(subtitle).getByRole("switch", { name: "Mega Stats" })).toBeInTheDocument();
+        expect(within(card.querySelector(".spread-card-subtitle")).queryByRole("switch", { name: "Mega Stats" })).not.toBeInTheDocument();
         expect(within(card).getByLabelText("EV total 0 of 510")).toHaveTextContent("510 Left");
         expect(lower).toHaveClass("MuiIconButton-colorError");
         expect(raise).toHaveClass("MuiIconButton-colorSuccess");
@@ -160,16 +331,24 @@ describe("Spread card", () =>
         expect(card.querySelector(".spread-card-side strong")).toHaveTextContent("[M]");
     });
 
-    it("confirms deletion and restores the pending card without opening its fields", async () =>
+    it("deletes from the actions menu without asking", async () =>
     {
         const { card, actions, user } = renderCard({ editing: true, changed: true });
         const actionButtons = [...card.querySelectorAll(".spread-card-actions button")];
-        expect(actionButtons.at(-1)).toHaveAccessibleName("Delete Charizard");
-        expect(actionButtons.at(-1)).toHaveClass("MuiIconButton-colorError");
-        await user.click(within(card).getByRole("button", { name: "Delete Charizard" }));
-        expect(screen.getByRole("dialog", { name: "Delete Charizard?" })).toHaveTextContent("removed from its file");
-        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
+        expect(actionButtons.map((button) => button.getAttribute("aria-label"))).toEqual(["Spread Actions"]);
+        await user.click(within(card).getByRole("button", { name: "Spread Actions" }));
+        expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Export to Showdown", "Overwrite From Showdown", "Delete"]);
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
         expect(actions.deleteSpread).toHaveBeenCalledWith("e2");
+    });
+
+    it("marks a new spread with the NEW symbol instead of a chip", () =>
+    {
+        const spreads = createSpreads();
+        const { card } = renderCard({ entry: { ...spreads.entries[2], isNew: true }, changed: true });
+        expect(within(card).getByRole("img", { name: "New Spread" }).querySelector("[data-testid='FiberNewIcon']")).toHaveClass("MuiSvgIcon-colorSuccess");
+        expect(within(card).queryByText("New")).not.toBeInTheDocument();
     });
 
     it("shows a read-only source placeholder", async () =>
@@ -228,21 +407,61 @@ describe("Spread card", () =>
         expect(actions.restoreSpread).toHaveBeenCalledWith("e2");
     });
 
-    it("repeats a held stat button and stops when the pointer leaves", () =>
+    it.each([
+        ["Raise Attack EVs", "Charizard Attack EVs", { atkEv: 0 }, "4", "8", "pointerUp"],
+        ["Raise Attack EVs", "Charizard Attack EVs", { atkEv: 0 }, "4", "8", "pointerLeave"],
+        ["Raise Attack EVs", "Charizard Attack EVs", { atkEv: 0 }, "4", "8", "pointerCancel"],
+        ["Raise Attack IV", "Charizard Attack IV", { atkIv: 0 }, "1", "2", "pointerUp"],
+        ["Lower Attack IV", "Charizard Attack IV", { atkIv: 31 }, "30", "29", "pointerCancel"],
+    ])("repeats %s after 150ms at 20ms intervals until released", (label, inputLabel, overrides, initial, repeated, stopEvent) =>
     {
         vi.useFakeTimers();
         try
         {
-            const { card, actions } = renderCard({ editing: true });
-            const button = within(card).getByRole("button", { name: "Lower Attack IV" });
+            render(<HeldStatCard initialFields={createFields(overrides)} />);
+            const input = screen.getByRole("textbox", { name: inputLabel });
+            const button = screen.getByRole("button", { name: label });
             fireEvent.pointerDown(button);
-            expect(actions.updateSpread).toHaveBeenCalledTimes(1);
-            act(() => vi.advanceTimersByTime(500));
-            expect(actions.updateSpread.mock.calls.length).toBeGreaterThan(1);
-            fireEvent.pointerLeave(button);
-            const count = actions.updateSpread.mock.calls.length;
-            act(() => vi.advanceTimersByTime(500));
-            expect(actions.updateSpread).toHaveBeenCalledTimes(count);
+            expect(input).toHaveValue(initial);
+            act(() => vi.advanceTimersByTime(INITIAL_REPEAT_DELAY_MS));
+            expect(input).toHaveValue(initial);
+            act(() => vi.advanceTimersByTime(REPEAT_INTERVAL_MS - 1));
+            expect(input).toHaveValue(initial);
+            act(() => vi.advanceTimersByTime(1));
+            expect(input).toHaveValue(repeated);
+            act(() => vi.advanceTimersByTime(HOLD_DURATION_MS - INITIAL_REPEAT_DELAY_MS - REPEAT_INTERVAL_MS));
+            if (inputLabel.endsWith("EVs"))
+                expect(Number(input.value)).toBeGreaterThan(MIN_FAST_EV_CHANGE);
+            fireEvent[stopEvent](button);
+            const value = input.value;
+            act(() => vi.advanceTimersByTime(HOLD_DURATION_MS));
+            expect(input).toHaveValue(value);
+        }
+        finally
+        {
+            vi.useRealTimers();
+        }
+    });
+
+    it.each([
+        ["Raise Attack EVs", "Charizard Attack EVs", { atkEv: 248 }, "252"],
+        ["Raise Attack EVs", "Charizard Attack EVs", { hpEv: 252, defEv: 252 }, "4"],
+        ["Lower Attack EVs", "Charizard Attack EVs", { atkEv: 4 }, "0"],
+        ["Raise Attack IV", "Charizard Attack IV", { atkIv: 0 }, "31"],
+        ["Lower Attack IV", "Charizard Attack IV", { atkIv: 31 }, "0"],
+    ])("keeps held %s within its limits", (label, inputLabel, overrides, expected) =>
+    {
+        vi.useFakeTimers();
+        try
+        {
+            render(<HeldStatCard initialFields={createFields(overrides)} />);
+            const button = screen.getByRole("button", { name: label });
+            fireEvent.pointerDown(button);
+            act(() => vi.advanceTimersByTime(HOLD_DURATION_MS * 2));
+            expect(screen.getByRole("textbox", { name: inputLabel })).toHaveValue(expected);
+            expect(button).toBeDisabled();
+            act(() => vi.advanceTimersByTime(HOLD_DURATION_MS));
+            expect(screen.getByRole("textbox", { name: inputLabel })).toHaveValue(expected);
         }
         finally
         {

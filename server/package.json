@@ -13,6 +13,7 @@
   "dependencies": {
     "@ast-grep/lang-c": "^0.0.6",
     "@ast-grep/napi": "^0.45.3",
+    "@pkmn/sets": "5.2.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -21,6 +22,7 @@
   "devDependencies": {
     "chai": "^6.2.2",
     "mocha": "^11.8.0",
+    "pokemon-showdown": "0.11.11",
     "supertest": "^7.2.2"
   }
 }

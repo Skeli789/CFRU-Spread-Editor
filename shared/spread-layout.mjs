@@ -29,6 +29,9 @@ export const DEFAULT_FILTERS = Object.freeze(
 });
 
 export const PAGE_SIZES = [12, 24, 48];
+
+// Moves of whole species groups are remembered by species, next to the IDs of spreads moved within their species
+export const GROUP_MOVE_PREFIX = "group:";
 export const DEFAULT_PAGE_SIZE = PAGE_SIZES[0];
 
 const ITEM_TYPE_Z_CRYSTAL = "ITEM_TYPE_Z_CRYSTAL";
@@ -306,16 +309,17 @@ export function getBalancedRowSizes(count, capacity)
  *
  * @param {Array<{setId: string, species: string, ids: Array<string>}>} groups The groups.
  * @param {number} capacity The most cards in a row.
+ * @param {boolean} [shareRows] Whether small groups may share a row.
  * @returns {Array<{setId: string, species: Array<string>, ids: Array<string>, block: number}>} The rows. Rows with
  *          the same block hold whole groups and must stay on one page.
  */
-export function buildRows(groups, capacity)
+export function buildRows(groups, capacity, shareRows = true)
 {
     const rows = [];
     let sharedRow = null;
     for (const { setId, species, ids } of groups)
     {
-        if (ids.length <= capacity && sharedRow?.setId === setId && sharedRow.ids.length + ids.length <= capacity)
+        if (shareRows && ids.length <= capacity && sharedRow?.setId === setId && sharedRow.ids.length + ids.length <= capacity)
         {
             sharedRow.species.push(species);
             sharedRow.ids.push(...ids);
@@ -389,4 +393,265 @@ export function findPage(pages, id)
 
     const index = pages.findIndex((rows) => rows.some((row) => row.ids.includes(id)));
     return Math.max(0, index);
+}
+
+/**
+ * Inserts a new ID after the last source entry of its species, or at the end of the set.
+ *
+ * @param {Array<string>} order The current source order.
+ * @param {Map<string, object>} entries Entries by ID.
+ * @param {string} id The new ID.
+ * @returns {Array<string>} The new order.
+ */
+export function insertSpread(order, entries, id)
+{
+    const species = entries.get(id)?.fields.species;
+    const last = order.findLastIndex((entryId) => entries.get(entryId)?.fields.species === species);
+    const next = [...order];
+    next.splice(last < 0 ? next.length : last + 1, 0, id);
+    return next;
+}
+
+/**
+ * Returns saved source order with unsaved additions in their default species positions.
+ *
+ * @param {object} set The spread set.
+ * @param {Map<string, object>} entries Saved and new entries.
+ * @returns {Array<string>} The default order, preserving additions.
+ */
+export function getSavedOrder(set, entries)
+{
+    let order = set.entryIds;
+    for (const [id, entry] of entries)
+    {
+        if (entry.isNew && entry.setId === set.id)
+            order = insertSpread(order, entries, id);
+    }
+    return order;
+}
+
+/**
+ * Returns whether an order differs from saved slots plus default additions.
+ *
+ * @param {object|undefined} set The spread set.
+ * @param {Array<string>|undefined} order Its draft order.
+ * @param {Map<string, object>} entries Saved and new entries.
+ * @returns {boolean} Whether Revert Order can change the order.
+ */
+export function hasOrderChange(set, order, entries)
+{
+    if (set == null || order == null)
+        return false;
+    const saved = getSavedOrder(set, entries);
+    return saved.length !== order.length || order.some((id, index) => saved[index] !== id);
+}
+
+/**
+ * Validates a drop using the event source rather than React's drag highlight state.
+ *
+ * @param {object|null} source The dragged spread.
+ * @param {object|null} target The spread or heading target.
+ * @param {Function} canMove Whether a spread can reorder within its set.
+ * @param {Function|null} transferProblem Returns why a transfer is blocked.
+ * @returns {boolean} Whether the drop is allowed.
+ */
+export function canDropSpread(source, target, canMove, transferProblem = null)
+{
+    if (source == null || target == null || source.id === target.id)
+        return false;
+    if (source.setId !== target.setId)
+        return transferProblem != null && !transferProblem(source.id, target.setId);
+    return target.id != null && source.species === target.species && canMove(source.id);
+}
+
+/**
+ * Moves a spread within its species without moving another species out of its source slots.
+ *
+ * @param {Array<string>} order The source order.
+ * @param {Map<string, object>} entries Entries by ID.
+ * @param {string} id The spread to move.
+ * @param {string} targetId The destination spread.
+ * @returns {Array<string>} The new source order, or the original order for an invalid move.
+ */
+export function moveSpread(order, entries, id, targetId)
+{
+    const species = entries.get(id)?.fields.species;
+    if (id === targetId || species == null || species !== entries.get(targetId)?.fields.species
+        || entries.get(id)?.setId !== entries.get(targetId)?.setId)
+        return order;
+
+    const slots = order.map((entryId, index) => entries.get(entryId)?.fields.species === species ? index : -1).filter((index) => index >= 0);
+    const ids = slots.map((index) => order[index]);
+    const targetIndex = ids.indexOf(targetId);
+    ids.splice(ids.indexOf(id), 1);
+    ids.splice(targetIndex, 0, id);
+    const next = [...order];
+    slots.forEach((slot, index) => { next[slot] = ids[index]; });
+    return next;
+}
+
+/**
+ * Moves a complete species group to another position among the set's groups, coalescing interleaved source
+ * entries only when requested.
+ *
+ * @param {Array<string>} order The source order.
+ * @param {Map<string, object>} entries Entries by ID.
+ * @param {string} species The group to move.
+ * @param {number} targetIndex The group's new position among the set's groups.
+ * @returns {{order: Array<string>, coalesces: boolean}} The proposed order and whether source slots coalesce.
+ */
+export function moveSpeciesGroup(order, entries, species, targetIndex)
+{
+    const groups = groupSpreads(order.map((id) => ({ id, species: entries.get(id).fields.species, setId: entries.get(id).setId })));
+    const source = groups.findIndex((group) => group.species === species);
+    if (source < 0 || !Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= groups.length || source === targetIndex)
+        return { order, coalesces: false };
+
+    const coalesces = order.some((id, index) => index > 0 && entries.get(id).fields.species !== entries.get(order[index - 1]).fields.species)
+        && groups.some((group) => order.filter((id) => entries.get(id).fields.species === group.species).length > 1
+            && order.findLastIndex((id) => entries.get(id).fields.species === group.species) - order.findIndex((id) => entries.get(id).fields.species === group.species) + 1 !== group.ids.length);
+    const [moved] = groups.splice(source, 1);
+    groups.splice(targetIndex, 0, moved);
+    return { order: groups.flatMap((group) => group.ids), coalesces };
+}
+
+/**
+ * Converts a drop between two groups into the moving group's new position.
+ *
+ * @param {number} source The moving group's position.
+ * @param {number} gap The gap it was dropped in, where gap 0 is before the first group.
+ * @returns {number} The group's new position.
+ */
+export function getGapTarget(source, gap)
+{
+    return gap > source ? gap - 1 : gap;
+}
+
+/**
+ * Returns the existing entries the user moved: those outside the longest run still in saved relative order.
+ * Entries the user moved on purpose are marked in preference to the entries they were moved past.
+ *
+ * @param {Array<string>} saved The saved source order.
+ * @param {Array<string>} current The draft source order.
+ * @param {Set<string>} [preferred] The entries the user moved.
+ * @returns {Set<string>} The moved existing entries.
+ */
+export function getMovedIds(saved, current, preferred = new Set())
+{
+    const positions = new Map(saved.map((id, index) => [id, index + 1]));
+    const existing = current.filter((id) => positions.has(id));
+
+    // Spreads the user moved weigh least, and spreads still at their saved index break ties between the rest
+    const heavy = 2 * (existing.length + 1);
+    const getWeight = (id, index) => preferred.has(id) ? 1 : heavy + (positions.get(id) === index + 1 ? 1 : 0);
+
+    // A Fenwick tree of the best run ending at or before each saved position
+    const tree = Array.from({ length: saved.length + 1 }, () => ({ weight: 0, index: -1 }));
+    const previous = [];
+    let best = { weight: 0, index: -1 };
+    existing.forEach((id, index) =>
+    {
+        let before = { weight: 0, index: -1 };
+        for (let position = positions.get(id) - 1; position > 0; position -= position & -position)
+        {
+            if (tree[position].weight > before.weight)
+                before = tree[position];
+        }
+
+        const run = { weight: before.weight + getWeight(id, index), index };
+        previous[index] = before.index;
+        for (let position = positions.get(id); position <= saved.length; position += position & -position)
+        {
+            if (run.weight > tree[position].weight)
+                tree[position] = run;
+        }
+        if (run.weight > best.weight)
+            best = run;
+    });
+
+    const kept = new Set();
+    for (let index = best.index; index >= 0; index = previous[index])
+        kept.add(existing[index]);
+    return new Set(existing.filter((id) => !kept.has(id)));
+}
+
+/**
+ * Puts one moved entry back after the entry that preceded it in the saved order, leaving other moves in place.
+ *
+ * @param {Array<string>} saved The saved source order.
+ * @param {Array<string>} current The draft source order.
+ * @param {string} id The entry to put back.
+ * @returns {Array<string>} The new order.
+ */
+export function restoreSpreadPosition(saved, current, id)
+{
+    const next = current.filter((entryId) => entryId !== id);
+    const previous = saved.slice(0, saved.indexOf(id)).findLast((entryId) => next.includes(entryId));
+    next.splice(previous == null ? 0 : next.indexOf(previous) + 1, 0, id);
+    return next;
+}
+
+/**
+ * Puts one moved entry back in its saved place among its own species, keeping the species in its current slots.
+ *
+ * @param {Array<string>} saved The saved source order.
+ * @param {Array<string>} current The draft source order.
+ * @param {Array<string>} ids The entries of the entry's species.
+ * @param {string} id The entry to put back.
+ * @returns {Array<string>} The new order.
+ */
+export function restoreSpreadInGroup(saved, current, ids, id)
+{
+    const group = new Set(ids);
+    const slots = current.map((entryId, index) => (group.has(entryId) ? index : -1)).filter((index) => index >= 0);
+    const members = slots.map((index) => current[index]).filter((entryId) => entryId !== id);
+    const previous = saved.slice(0, saved.indexOf(id)).findLast((entryId) => members.includes(entryId));
+    members.splice(previous == null ? 0 : members.indexOf(previous) + 1, 0, id);
+    const next = [...current];
+    slots.forEach((slot, index) => { next[slot] = members[index]; });
+    return next;
+}
+
+/**
+ * Puts a moved species group back after the entry that preceded it in the saved order, keeping the order of the
+ * group's own entries.
+ *
+ * @param {Array<string>} saved The saved source order.
+ * @param {Array<string>} current The draft source order.
+ * @param {Array<string>} ids The group's entries.
+ * @returns {Array<string>} The new order, or the current order when the group has no saved entries.
+ */
+export function restoreGroupPosition(saved, current, ids)
+{
+    const group = new Set(ids);
+    const first = saved.findIndex((id) => group.has(id));
+    if (first < 0)
+        return current;
+
+    const next = current.filter((id) => !group.has(id));
+    const previous = saved.slice(0, first).findLast((id) => next.includes(id));
+    next.splice(previous == null ? 0 : next.indexOf(previous) + 1, 0, ...current.filter((id) => group.has(id)));
+    return next;
+}
+
+/**
+ * Returns the entries the user moved within their own species, leaving out moves of whole species groups.
+ *
+ * @param {Array<string>} saved The saved source order.
+ * @param {Array<string>} current The draft source order.
+ * @param {function(string): string} getSpecies Returns an entry's species.
+ * @param {Set<string>} [preferred] The entries the user moved.
+ * @returns {Set<string>} The moved entries.
+ */
+export function getMovedSpreadIds(saved, current, getSpecies, preferred = new Set())
+{
+    const moved = new Set();
+    for (const species of new Set(current.map(getSpecies)))
+    {
+        const isMember = (id) => getSpecies(id) === species;
+        for (const id of getMovedIds(saved.filter(isMember), current.filter(isMember), preferred))
+            moved.add(id);
+    }
+
+    return moved;
 }

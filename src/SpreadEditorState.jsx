@@ -10,7 +10,12 @@ import { StatusCode } from "status-code-enum";
 
 import { LEGALITY, getMoveLegality } from "../shared/catalog.mjs";
 import { DEFAULT_PREVIEW_LEVEL } from "../shared/pokemon-mechanics.mjs";
-import { BATTLE_TYPES, getBattleType, getChangedFields, isSpreadChanged, validateSpreadFields } from "../shared/spread-model.mjs";
+import
+{
+    GROUP_MOVE_PREFIX, getMovedIds, getMovedSpreadIds, getSavedOrder, hasOrderChange, insertSpread, restoreGroupPosition,
+    restoreSpreadInGroup,
+} from "../shared/spread-layout.mjs";
+import { BATTLE_TYPES, compactMoves, getBattleType, getChangedFields, isSpreadChanged, validateSpreadFields } from "../shared/spread-model.mjs";
 import { config } from "./components/ServerConfig";
 
 export const SETTINGS_STORAGE_KEY = "cfruSpreadEditor.settings";
@@ -48,6 +53,8 @@ const MISSING_GAME_NOTICE = "The previously selected game is no longer available
 const RESTART_CHANGED_MESSAGE = "The editor server restarted and the spread files changed since they were loaded, so these changes cannot be saved. Load the repositories again.";
 const OPERATION_UPDATE = "update";
 const OPERATION_DELETE = "delete";
+const OPERATION_ADD = "add";
+const OPERATION_REORDER = "reorder";
 const MOVES_FIELD = "moves";
 const EMPTY_INDEX = Object.freeze({ entries: new Map(), sets: new Map() });
 
@@ -68,6 +75,12 @@ const ACTION =
     CANCEL_CHANGE: "cancelChange",
     STORAGE_UNAVAILABLE: "storageUnavailable",
     UPDATE_SPREAD: "updateSpread",
+    ADD_SPREAD: "addSpread",
+    TRANSFER_SPREAD: "transferSpread",
+    ORDER_SET: "orderSet",
+    REVERT_ORDER: "revertOrder",
+    REVERT_GROUP: "revertGroup",
+    REVERT_SPREAD_ORDER: "revertSpreadOrder",
     APPLY_CHANGES: "applyChanges",
     REVERT_SPREAD: "revertSpread",
     DELETE_SPREAD: "deleteSpread",
@@ -85,6 +98,9 @@ const ACTION =
 const EMPTY_DRAFTS =
 {
     drafts: {},
+    newEntries: {},
+    orders: {},
+    orderMoves: {},
     deleted: new Set(),
     modifyMemory: {},
     editing: new Set(),
@@ -217,14 +233,14 @@ function writeStoredDrafts(state)
 {
     try
     {
-        const ids = new Set([...Object.keys(state.drafts), ...state.deleted]);
+        const ids = new Set([...Object.keys(state.drafts), ...state.deleted, ...Object.values(state.orders).flatMap((order) => order)]);
         if (ids.size === 0)
         {
             window.localStorage.removeItem(DRAFTS_STORAGE_KEY);
             return;
         }
 
-        const saved = Object.fromEntries([...ids].map((id) =>
+        const saved = Object.fromEntries([...ids].filter((id) => !state.newEntries[id]).map((id) =>
         {
             const entry = state.spreadIndex.entries.get(id);
             return [id, { setId: entry?.setId, fields: entry?.fields }];
@@ -234,6 +250,9 @@ function writeStoredDrafts(state)
             version: DRAFTS_VERSION,
             revision: state.workspace.spreads.revision,
             drafts: state.drafts,
+            newEntries: state.newEntries,
+            orders: state.orders,
+            orderMoves: state.orderMoves,
             deleted: [...state.deleted],
             modifyMemory: state.modifyMemory,
             saved,
@@ -265,16 +284,45 @@ function restoreDrafts(state, stored)
         return entry?.editable === true && saved?.setId === entry.setId && JSON.stringify(saved.fields) === JSON.stringify(entry.fields);
     };
 
+    const deleted = new Set((Array.isArray(stored.deleted) ? stored.deleted : []).filter(matches));
+
+    // A spread moved to another set needs its original to still be deleted
+    const newEntries = Object.fromEntries(Object.entries(stored.newEntries ?? {}).filter(([id, entry]) =>
+        /^new-[A-Za-z0-9_-]{1,59}$/.test(id) && entry?.id === id && state.spreadIndex.sets.get(entry.setId)?.canInsert
+        && state.catalog?.species?.[entry.fields?.species] && Array.isArray(stored.drafts?.[id]?.moves)
+        && (entry.movedFrom == null || deleted.has(entry.movedFrom))));
+    const spreadIndex = { ...state.spreadIndex, entries: new Map([...state.spreadIndex.entries, ...Object.entries(newEntries)]) };
     const drafts = {};
     for (const [id, fields] of Object.entries(stored.drafts ?? {}))
     {
-        if (matches(id) && Array.isArray(fields?.moves))
-            putDraft(state, drafts, id, fields);
+        if ((matches(id) || newEntries[id]) && Array.isArray(fields?.moves))
+            putDraft({ ...state, newEntries }, drafts, id, fields);
     }
 
-    const deleted = new Set((Array.isArray(stored.deleted) ? stored.deleted : []).filter(matches));
     const modifyMemory = Object.fromEntries(Object.entries(stored.modifyMemory ?? {}).filter(([id]) => matches(id)));
-    return { drafts, deleted, modifyMemory };
+    const orders = Object.fromEntries(Object.entries(stored.orders ?? {}).filter(([setId, order]) =>
+    {
+        const set = state.spreadIndex.sets.get(setId);
+        const expected = [...(set?.entryIds ?? []), ...Object.keys(newEntries).filter((id) => newEntries[id].setId === setId)];
+        if (set == null || !Array.isArray(order) || order.length !== expected.length || new Set(order).size !== expected.length
+            || !order.every((id) => expected.includes(id)) || !set.entryIds.every((id) => matches(id)))
+            return false;
+
+        // Sets that cannot be reordered only keep the positions of their new spreads
+        return set.canReorder || order.filter((id) => !newEntries[id]).every((id, index) => set.entryIds[index] === id);
+    }));
+    const orderMoves = Object.fromEntries(Object.entries(stored.orderMoves ?? {}).filter(([setId, moves]) => orders[setId] && Array.isArray(moves))
+        .map(([setId, moves]) => [setId, moves.filter((id) => typeof id === "string" && (id.startsWith(GROUP_MOVE_PREFIX) || orders[setId].includes(id)))]));
+
+    // New spreads whose order was not kept go back to their default place
+    for (const [id, entry] of Object.entries(newEntries))
+    {
+        if (!orders[entry.setId]?.includes(id))
+            orders[entry.setId] = insertSpread(orders[entry.setId] ?? state.spreadIndex.sets.get(entry.setId).entryIds, spreadIndex.entries, id);
+    }
+    for (const setId of Object.keys(orders))
+        dropUnchangedOrder(spreadIndex, orders, orderMoves, setId);
+    return { drafts, deleted, modifyMemory, newEntries, orders, orderMoves, spreadIndex };
 }
 
 /**
@@ -330,9 +378,15 @@ function withWorkspace(state, workspace)
  */
 function putDraft(state, drafts, id, fields)
 {
-    const entry = state.spreadIndex.entries.get(id);
+    const entry = state.newEntries[id] ?? state.spreadIndex.entries.get(id);
     if (entry == null || !entry.editable)
         return;
+
+    if (state.newEntries[id] != null)
+    {
+        drafts[id] = fields;
+        return;
+    }
 
     if (isSpreadChanged(fields, entry.fields))
         drafts[id] = fields;
@@ -369,6 +423,8 @@ export function findSaveProblems(drafts, entries, catalog)
     {
         const saved = entries.get(id)?.fields ?? {};
         problems.push(...validateSpreadFields(fields).map((problem) => ({ id, ...problem })));
+        if (entries.get(id)?.isNew && !fields.moves.some((move) => typeof move === "string" && move !== "MOVE_NONE"))
+            problems.push({ id, field: MOVES_FIELD, message: "A new spread needs at least one move." });
 
         // A changed move must exist in the game, or the source would not compile
         fields.moves.forEach((move, slot) =>
@@ -379,6 +435,173 @@ export function findSaveProblems(drafts, entries, catalog)
     }
 
     return problems;
+}
+
+/**
+ * Drops a set's order once it matches the saved spreads exactly, and its moves once it matches the default order.
+ * Orders that only place new spreads stay, since saving needs them to anchor the additions.
+ *
+ * @param {object} spreadIndex The spread index, including the new spreads.
+ * @param {Object<string, Array<string>>} orders The set orders, changed in place.
+ * @param {Object<string, Array<string>>} orderMoves The moved spreads by set, changed in place.
+ * @param {string} setId The set ID.
+ * @returns {void} Nothing.
+ */
+function dropUnchangedOrder(spreadIndex, orders, orderMoves, setId)
+{
+    const set = spreadIndex.sets.get(setId);
+    const order = orders[setId];
+    if (order.length === set.entryIds.length && order.every((id, index) => set.entryIds[index] === id))
+        delete orders[setId];
+    if (orders[setId] == null || !hasOrderChange(set, order, spreadIndex.entries))
+        delete orderMoves[setId];
+}
+
+/**
+ * Returns the orders after a set's order changes, dropping it once the set is back in its saved order.
+ *
+ * @param {object} state The current state, with the spread index the order belongs to.
+ * @param {string} setId The set ID.
+ * @param {Array<string>} order The set's new order.
+ * @param {Array<string>} moves The spreads the user moved in this set.
+ * @returns {{orders: object, orderMoves: object}} The new orders and moved spreads.
+ */
+function withOrder(state, setId, order, moves)
+{
+    const orders = { ...state.orders, [setId]: order };
+    const orderMoves = { ...state.orderMoves, [setId]: moves };
+    dropUnchangedOrder(state.spreadIndex, orders, orderMoves, setId);
+    return { orders, orderMoves };
+}
+
+/**
+ * Returns the saved spreads moved to another set, which stay deleted in their own set until saved.
+ *
+ * @param {Object<string, object>} newEntries The new spreads.
+ * @returns {Set<string>} The original spread IDs.
+ */
+export function findTransferredIds(newEntries)
+{
+    return new Set(Object.values(newEntries).map((entry) => entry.movedFrom).filter((id) => id != null));
+}
+
+/**
+ * Returns why a spread cannot be moved to another set, or nothing when it can.
+ *
+ * @param {object} state The editor state.
+ * @param {string} id The spread.
+ * @param {string} setId The destination set.
+ * @returns {string} The reason.
+ */
+export function getTransferProblem(state, id, setId)
+{
+    const entry = state.newEntries[id] ?? state.spreadIndex.entries.get(id);
+    const target = state.spreadIndex.sets.get(setId);
+    if (entry == null || target == null || entry.setId === setId)
+        return "The spread is already in this set.";
+    if (!entry.editable)
+        return "This spread's source cannot be changed safely.";
+
+    // Coming back to the set it was saved in needs no new spread
+    const original = state.spreadIndex.entries.get(entry.movedFrom);
+    if (original?.setId === setId)
+        return "";
+    if (!target.canInsert)
+        return target.insertBlockedReason ?? "Spreads cannot be added to this set.";
+    if (entry.isNew)
+        return "";
+
+    // Frontier pools pick from their spreads at random, so a set can never be emptied
+    const source = state.spreadIndex.sets.get(entry.setId);
+    const remaining = source.entryIds.filter((entryId) => entryId !== id && !state.deleted.has(entryId)).length
+        + Object.values(state.newEntries).filter((newEntry) => newEntry.setId === source.id).length;
+    return remaining === 0 ? `${source.name} must keep at least one spread.` : "";
+}
+
+/**
+ * Returns the saved spreads the user moved, across every reordered set.
+ *
+ * @param {object} state The editor state.
+ * @returns {Set<string>} The moved spread IDs.
+ */
+function findMovedIds(state)
+{
+    return new Set(Object.entries(state.orders).flatMap(([setId, order]) =>
+    {
+        const moves = state.orderMoves[setId] ?? [];
+        const groups = new Set(moves.filter((move) => move.startsWith(GROUP_MOVE_PREFIX)).map((move) => move.slice(GROUP_MOVE_PREFIX.length)));
+        const preferred = new Set([...moves, ...order.filter((id) => groups.has(state.spreadIndex.entries.get(id)?.fields.species))]);
+        return [...getMovedIds(state.spreadIndex.sets.get(setId).entryIds, order, preferred)];
+    }));
+}
+
+/**
+ * Returns what the user moved in one set: whole species groups, and spreads within their own species.
+ *
+ * @param {object} state The editor state.
+ * @param {string} setId The set.
+ * @param {Array<string>} [order] The order to check, the set's draft order by default.
+ * @param {Array<string>} [moves] The spreads the user moved, the set's by default.
+ * @returns {{groups: Set<string>, spreads: Set<string>, getSpecies: Function}} The moved species and spreads, and how
+ *          a spread's species is read.
+ */
+function findSetMoves(state, setId, order = state.orders[setId], moves = state.orderMoves[setId] ?? [])
+{
+    const saved = state.spreadIndex.sets.get(setId).entryIds;
+    const getSpecies = (id) => state.spreadIndex.entries.get(id)?.fields.species;
+    if (order == null)
+        return { groups: new Set(), spreads: new Set(), getSpecies };
+
+    // A group the user moved counts until putting it back would change nothing
+    const groups = new Set(moves.filter((move) => move.startsWith(GROUP_MOVE_PREFIX)).map((move) => move.slice(GROUP_MOVE_PREFIX.length))
+        .filter((species) => restoreGroupPosition(saved, order, order.filter((id) => getSpecies(id) === species)).some((id, index) => id !== order[index])));
+    return { groups, spreads: getMovedSpreadIds(saved, order, getSpecies, new Set(moves)), getSpecies };
+}
+
+/**
+ * Returns the moved species groups by set, and the spreads moved within their species, across every reordered set.
+ *
+ * @param {object} state The editor state.
+ * @returns {{groups: Map<string, Set<string>>, spreads: Set<string>}} The moves.
+ */
+function findOrderMoves(state)
+{
+    const groups = new Map();
+    const spreads = new Set();
+    for (const setId of Object.keys(state.orders))
+    {
+        const moves = findSetMoves(state, setId);
+        groups.set(setId, moves.groups);
+        moves.spreads.forEach((id) => spreads.add(id));
+    }
+
+    return { groups, spreads };
+}
+
+/**
+ * Returns the order the server gives a set when it only adds new spreads after their anchors.
+ *
+ * @param {object} set The set.
+ * @param {Array<{tempId: string, afterEntryId: string|null}>} additions The set's new spreads, in request order.
+ * @param {Set<string>} deleted The deleted spreads.
+ * @returns {Array<string>} The resulting order.
+ */
+function getDefaultOrder(set, additions, deleted)
+{
+    const order = [...set.entryIds];
+    const anchors = new Map();
+    const lastEntry = set.entryIds.findLast((id) => !deleted.has(id)) ?? null;
+    for (const { tempId, afterEntryId } of additions)
+    {
+        const anchor = afterEntryId ?? lastEntry;
+        let index = anchor == null ? order.length : order.indexOf(anchor) + 1;
+        while (index < order.length && anchors.get(order[index]) === anchor)
+            index++;
+        order.splice(index, 0, tempId);
+        anchors.set(tempId, anchor);
+    }
+
+    return order;
 }
 
 /**
@@ -473,9 +696,132 @@ function reducer(state, action)
             };
         case ACTION.STORAGE_UNAVAILABLE:
             return { ...state, storageUnavailable: true };
+        case ACTION.ADD_SPREAD:
+        {
+            const set = state.spreadIndex.sets.get(action.setId);
+            const spreads = action.spreads.filter(({ fields }) => state.catalog?.species?.[fields.species]);
+            if (!set?.canInsert || spreads.length === 0)
+                return state;
+
+            // Each new spread goes after the last spread of its species, or at the end of the set
+            const spreadIndex = { ...state.spreadIndex, entries: new Map(state.spreadIndex.entries) };
+            const newEntries = { ...state.newEntries };
+            const drafts = { ...state.drafts };
+            let order = state.orders[set.id] ?? set.entryIds;
+            for (const { id, fields } of spreads)
+            {
+                const entry = { id, setId: set.id, fields, line: set.line, editable: true, isNew: true, diagnostics: [] };
+                spreadIndex.entries.set(id, entry);
+                newEntries[id] = entry;
+                drafts[id] = fields;
+                order = insertSpread(order, spreadIndex.entries, id);
+            }
+
+            return { ...state, spreadIndex, newEntries, drafts, orders: { ...state.orders, [set.id]: order },
+                editing: action.edit && spreads.length === 1 ? new Set([spreads[0].id]) : state.editing };
+        }
+        case ACTION.TRANSFER_SPREAD:
+        {
+            if (getTransferProblem(state, action.id, action.setId))
+                return state;
+
+            const entry = state.newEntries[action.id] ?? state.spreadIndex.entries.get(action.id);
+            const fields = state.drafts[action.id] ?? entry.fields;
+            const spreadIndex = { ...state.spreadIndex, entries: new Map(state.spreadIndex.entries) };
+            const newEntries = { ...state.newEntries };
+            const drafts = { ...state.drafts };
+            const deleted = new Set(state.deleted);
+            let next = state;
+
+            // Leave the old set: a new spread is removed from its order, a saved one is deleted there
+            if (entry.isNew)
+            {
+                delete newEntries[action.id];
+                delete drafts[action.id];
+                spreadIndex.entries.delete(action.id);
+                next = { ...next, ...withOrder({ ...next, spreadIndex }, entry.setId, (next.orders[entry.setId] ?? []).filter((id) => id !== action.id),
+                    (next.orderMoves[entry.setId] ?? []).filter((id) => id !== action.id)) };
+            }
+            else
+            {
+                delete drafts[action.id];
+                deleted.add(action.id);
+            }
+
+            // Returning to the saved set restores the original spread, keeping any changed values
+            const originalId = entry.movedFrom ?? (entry.isNew ? null : action.id);
+            const original = state.spreadIndex.entries.get(originalId);
+            if (original?.setId === action.setId)
+            {
+                deleted.delete(originalId);
+                putDraft({ ...state, newEntries }, drafts, originalId, fields);
+                return { ...next, spreadIndex, newEntries, drafts, deleted, editing: state.editing.has(action.id) ? new Set([originalId]) : state.editing };
+            }
+
+            // Join the new set before a chosen spread, or after the last spread of its species
+            const moved = { id: action.newId, setId: action.setId, fields, line: spreadIndex.sets.get(action.setId).line, editable: true,
+                isNew: true, movedFrom: originalId, diagnostics: [] };
+            spreadIndex.entries.set(action.newId, moved);
+            newEntries[action.newId] = moved;
+            drafts[action.newId] = fields;
+            const current = next.orders[action.setId] ?? spreadIndex.sets.get(action.setId).entryIds;
+            let order = insertSpread(current, spreadIndex.entries, action.newId);
+            if (action.beforeId != null && current.includes(action.beforeId) && spreadIndex.sets.get(action.setId).canReorder)
+            {
+                order = [...current];
+                order.splice(order.indexOf(action.beforeId), 0, action.newId);
+            }
+
+            return { ...next, spreadIndex, newEntries, drafts, deleted, orders: { ...next.orders, [action.setId]: order },
+                editing: state.editing.has(action.id) ? new Set([action.newId]) : state.editing };
+        }
+        case ACTION.ORDER_SET:
+        {
+            const set = state.spreadIndex.sets.get(action.setId);
+            const ids = [...(set?.entryIds ?? []), ...Object.keys(state.newEntries).filter((id) => state.newEntries[id].setId === action.setId)];
+            if (!set?.canReorder || action.order.length !== ids.length || new Set(action.order).size !== ids.length
+                || !action.order.every((id) => ids.includes(id)))
+                return state;
+
+            const moves = [...new Set([...(state.orderMoves[action.setId] ?? []), ...action.moved])];
+            return { ...state, ...withOrder(state, action.setId, action.order, moves) };
+        }
+        case ACTION.REVERT_ORDER:
+        {
+            const set = state.spreadIndex.sets.get(action.setId);
+            if (set == null)
+                return state;
+            return { ...state, ...withOrder(state, action.setId, getSavedOrder(set, state.spreadIndex.entries), []) };
+        }
+        case ACTION.REVERT_GROUP:
+        {
+            const set = state.spreadIndex.sets.get(action.setId);
+            const current = state.orders[action.setId];
+            if (set == null || current == null)
+                return state;
+
+            // Moves within the group stay, so only the group's place is undone
+            const { getSpecies } = findSetMoves(state, action.setId);
+            const order = restoreGroupPosition(set.entryIds, current, current.filter((id) => getSpecies(id) === action.species));
+            const moves = (state.orderMoves[action.setId] ?? []).filter((move) => move !== `${GROUP_MOVE_PREFIX}${action.species}`);
+            return { ...state, ...withOrder(state, action.setId, order, moves) };
+        }
+        case ACTION.REVERT_SPREAD_ORDER:
+        {
+            const setId = state.spreadIndex.entries.get(action.id)?.setId;
+            const current = state.orders[setId];
+            if (current == null)
+                return state;
+
+            const { getSpecies } = findSetMoves(state, setId);
+            const ids = current.filter((id) => getSpecies(id) === getSpecies(action.id));
+            const order = restoreSpreadInGroup(state.spreadIndex.sets.get(setId).entryIds, current, ids, action.id);
+            const moves = (state.orderMoves[setId] ?? []).filter((id) => id !== action.id);
+            return { ...state, ...withOrder(state, setId, order, moves) };
+        }
         case ACTION.UPDATE_SPREAD:
         {
-            const entry = state.spreadIndex.entries.get(action.id);
+            const entry = state.newEntries[action.id] ?? state.spreadIndex.entries.get(action.id);
             if (entry == null || !entry.editable)
                 return state;
 
@@ -504,14 +850,41 @@ function reducer(state, action)
         }
         case ACTION.REVERT_SPREAD:
         {
+            if (state.newEntries[action.id])
+            {
+                const newEntries = { ...state.newEntries };
+                const { setId, movedFrom } = newEntries[action.id];
+                delete newEntries[action.id];
+
+                // Reverting a spread moved from another set puts it back there, while deleting it deletes the original
+                const deleted = new Set(state.deleted);
+                if (movedFrom != null && !action.keepOriginalDeleted)
+                    deleted.delete(movedFrom);
+                const drafts = { ...state.drafts };
+                delete drafts[action.id];
+                const spreadIndex = { ...state.spreadIndex, entries: new Map(state.spreadIndex.entries) };
+                spreadIndex.entries.delete(action.id);
+                const order = (state.orders[setId] ?? []).filter((id) => id !== action.id);
+                const moves = (state.orderMoves[setId] ?? []).filter((id) => id !== action.id);
+                return { ...state, newEntries, spreadIndex, drafts, deleted, ...withOrder({ ...state, spreadIndex }, setId, order, moves), editing: new Set() };
+            }
             const { [action.id]: removed, ...drafts } = state.drafts;
             const { [action.id]: forgotten, ...modifyMemory } = state.modifyMemory;
             const deleted = new Set(state.deleted);
             deleted.delete(action.id);
-            return { ...state, drafts, modifyMemory, deleted };
+
+            // A spread moved within its species goes back to its saved place there, leaving group moves alone
+            const setId = state.spreadIndex.entries.get(action.id)?.setId;
+            const reverted = { ...state, drafts, modifyMemory, deleted };
+            if (state.orders[setId] == null || !findSetMoves(state, setId).spreads.has(action.id))
+                return reverted;
+
+            return reducer(reverted, { type: ACTION.REVERT_SPREAD_ORDER, id: action.id });
         }
         case ACTION.DELETE_SPREAD:
         {
+            if (state.newEntries[action.id])
+                return reducer(state, { type: ACTION.REVERT_SPREAD, id: action.id, keepOriginalDeleted: true });
             if (!state.spreadIndex.entries.get(action.id)?.editable)
                 return state;
             const deleted = new Set(state.deleted);
@@ -525,12 +898,21 @@ function reducer(state, action)
             return { ...state, deleted };
         }
         case ACTION.DISCARD_CHANGES:
-            return { ...state, drafts: {}, deleted: new Set(), modifyMemory: {}, saveError: null };
+            return { ...state, drafts: {}, newEntries: {}, orders: {}, orderMoves: {}, spreadIndex: indexSpreads(state.workspace.spreads),
+                deleted: new Set(), modifyMemory: {}, editing: new Set(), saveError: null };
         case ACTION.SET_EDITING:
         {
             if (action.editing && state.spreadIndex.entries.get(action.id)?.editable)
                 return { ...state, editing: new Set([action.id]) };
-            return { ...state, editing: new Set() };
+
+            // Moves after a blank slot shift up once editing ends
+            const drafts = { ...state.drafts };
+            for (const id of state.editing)
+            {
+                if (drafts[id] != null)
+                    putDraft(state, drafts, id, compactMoves(drafts[id]));
+            }
+            return { ...state, drafts, editing: new Set() };
         }
         case ACTION.SET_PREVIEW:
             return { ...state, preview: { ...state.preview, ...action.preview } };
@@ -540,7 +922,24 @@ function reducer(state, action)
         {
             const workspace = { ...state.workspace, spreads: action.spreads };
             const spreadIndex = indexSpreads(action.spreads);
-            return { ...state, workspace, spreadIndex, drafts: getDraftsAfterSave(state.drafts, action.submitted, spreadIndex.entries),
+            const pending = Object.fromEntries(Object.entries(state.drafts).map(([id, fields]) => [action.createdIds?.[id] ?? id, fields]));
+            const submitted = Object.fromEntries(Object.entries(action.submitted).map(([id, fields]) => [action.createdIds?.[id] ?? id, fields]));
+            const newEntries = Object.fromEntries(Object.entries(state.newEntries).filter(([id]) => !action.submitted[id]));
+            for (const [id, entry] of Object.entries(newEntries))
+                spreadIndex.entries.set(id, entry);
+            const orders = {};
+            const orderMoves = {};
+            for (const [setId, order] of Object.entries(state.orders))
+            {
+                if (order !== action.submittedOrders[setId])
+                {
+                    orders[setId] = order.map((id) => action.createdIds?.[id] ?? id);
+                    orderMoves[setId] = (state.orderMoves[setId] ?? []).map((id) => action.createdIds?.[id] ?? id);
+                }
+            }
+            for (const setId of Object.keys(orders))
+                dropUnchangedOrder(spreadIndex, orders, orderMoves, setId);
+            return { ...state, workspace, spreadIndex, newEntries, orders, orderMoves, drafts: getDraftsAfterSave(pending, submitted, spreadIndex.entries),
                 deleted: new Set([...state.deleted].filter((id) => !action.submittedDeleted.has(id))), editing: new Set(), saving: false };
         }
         case ACTION.SAVE_FAILURE:
@@ -566,6 +965,7 @@ export const SpreadEditorProvider = ({ children }) =>
 {
     const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
     const tokenRef = useRef(null);
+    const newEntryCounter = useRef(0);
     const loadedPathsRef = useRef(null);
     const stateRef = useRef(state);
     stateRef.current = state;
@@ -731,7 +1131,7 @@ export const SpreadEditorProvider = ({ children }) =>
     {
         if (state.phase === EDITOR_PHASE.READY && state.workspace != null)
             writeStoredDrafts(stateRef.current);
-    }, [state.phase, state.workspace, state.spreadIndex, state.drafts, state.deleted, state.modifyMemory]);
+    }, [state.phase, state.workspace, state.spreadIndex, state.drafts, state.deleted, state.modifyMemory, state.orders, state.orderMoves]);
 
     /**
      * Saves every unsaved change. After a server restart the workspace is loaded again, and the save is only
@@ -741,14 +1141,25 @@ export const SpreadEditorProvider = ({ children }) =>
      */
     const saveChanges = useCallback(async () =>
     {
-        const { drafts, deleted, spreadIndex, catalog, gameId, saving } = stateRef.current;
+        const { drafts, deleted, spreadIndex, catalog, gameId, saving, newEntries, orders } = stateRef.current;
         let { workspace } = stateRef.current;
         if (saving || findSaveProblems(Object.fromEntries(Object.entries(drafts).filter(([id]) => !deleted.has(id))), spreadIndex.entries, catalog).length > 0)
             return false;
 
-        const operations = [...Object.entries(drafts).filter(([id]) => !deleted.has(id)).map(([entryId, fields]) =>
+        const additions = Object.entries(newEntries).map(([tempId, entry]) =>
+        {
+            const order = orders[entry.setId];
+            const preceding = order.slice(0, order.indexOf(tempId)).filter((id) => !newEntries[id] && !deleted.has(id));
+            return { type: OPERATION_ADD, tempId, setId: entry.setId, afterEntryId: preceding.at(-1) ?? null, fields: drafts[tempId] };
+        });
+
+        // Orders list deleted spreads too, and are only sent when adding after anchors would not give them
+        const reorders = Object.entries(orders).filter(([setId, order]) =>
+            getDefaultOrder(spreadIndex.sets.get(setId), additions.filter((addition) => addition.setId === setId), deleted).join() !== order.join())
+            .map(([setId, order]) => ({ type: OPERATION_REORDER, setId, order }));
+        const operations = [...Object.entries(drafts).filter(([id]) => !deleted.has(id) && !newEntries[id]).map(([entryId, fields]) =>
             ({ type: OPERATION_UPDATE, entryId, fields: getChangedFields(fields, spreadIndex.entries.get(entryId).fields) })),
-            ...[...deleted].map((entryId) => ({ type: OPERATION_DELETE, entryId }))];
+            ...[...deleted].map((entryId) => ({ type: OPERATION_DELETE, entryId })), ...additions, ...reorders];
         const request = () => post(`/workspaces/${workspace.workspaceId}/save`, { revision: workspace.spreads.revision, gameId, operations });
         dispatch({ type: ACTION.SAVE_START });
 
@@ -773,7 +1184,8 @@ export const SpreadEditorProvider = ({ children }) =>
                 result = await request();
             }
 
-            dispatch({ type: ACTION.SAVE_SUCCESS, spreads: result.spreads, submitted: drafts, submittedDeleted: deleted });
+            dispatch({ type: ACTION.SAVE_SUCCESS, spreads: result.spreads, createdIds: result.createdIds, submitted: drafts,
+                submittedOrders: orders, submittedDeleted: deleted });
             return true;
         }
         catch (error)
@@ -788,6 +1200,29 @@ export const SpreadEditorProvider = ({ children }) =>
 
     const actions = useMemo(() =>
     ({
+        addSpreads: (setId, fieldsList, { edit = false } = {}) =>
+        {
+            const spreads = fieldsList.map((fields) =>
+            {
+                do
+                    newEntryCounter.current++;
+                while (stateRef.current.spreadIndex.entries.has(`new-${newEntryCounter.current}`));
+                return { id: `new-${newEntryCounter.current}`, fields };
+            });
+            dispatch({ type: ACTION.ADD_SPREAD, setId, spreads, edit });
+            return spreads.map((spread) => spread.id);
+        },
+        transferSpread: (id, setId, beforeId = null) =>
+        {
+            do
+                newEntryCounter.current++;
+            while (stateRef.current.spreadIndex.entries.has(`new-${newEntryCounter.current}`));
+            dispatch({ type: ACTION.TRANSFER_SPREAD, id, setId, beforeId, newId: `new-${newEntryCounter.current}` });
+        },
+        orderSet: (setId, order, moved = []) => dispatch({ type: ACTION.ORDER_SET, setId, order, moved }),
+        revertOrder: (setId) => dispatch({ type: ACTION.REVERT_ORDER, setId }),
+        revertGroup: (setId, species) => dispatch({ type: ACTION.REVERT_GROUP, setId, species }),
+        revertSpreadOrder: (id) => dispatch({ type: ACTION.REVERT_SPREAD_ORDER, id }),
         updateSpread: (id, update) => dispatch({ type: ACTION.UPDATE_SPREAD, id, update }),
         applyChanges: (changes) => dispatch({ type: ACTION.APPLY_CHANGES, changes }),
         revertSpread: (id) => dispatch({ type: ACTION.REVERT_SPREAD, id }),
@@ -799,12 +1234,23 @@ export const SpreadEditorProvider = ({ children }) =>
         clearSaveError: () => dispatch({ type: ACTION.CLEAR_SAVE_ERROR }),
     }), []);
 
+    const movedIds = useMemo(() => findMovedIds({ orders: state.orders, orderMoves: state.orderMoves, spreadIndex: state.spreadIndex }),
+        [state.orders, state.orderMoves, state.spreadIndex]);
+    const orderMoves = useMemo(() => findOrderMoves({ orders: state.orders, orderMoves: state.orderMoves, spreadIndex: state.spreadIndex }),
+        [state.orders, state.orderMoves, state.spreadIndex]);
+    const transferredIds = useMemo(() => findTransferredIds(state.newEntries), [state.newEntries]);
+
     const value = useMemo(() =>
     ({
         state,
         ...actions,
         cardActions: actions,
-        dirtyCount: new Set([...Object.keys(state.drafts), ...state.deleted]).size,
+        movedIds,
+        movedGroups: orderMoves.groups,
+        movedSpreadIds: orderMoves.spreads,
+        transferredIds,
+        getTransferProblem: (id, setId) => getTransferProblem(state, id, setId),
+        dirtyCount: new Set([...Object.keys(state.drafts), ...[...state.deleted].filter((id) => !transferredIds.has(id)), ...movedIds]).size,
         saveProblems,
         saveChanges,
         setPath: (kind, pathValue) => dispatch({ type: ACTION.SET_PATH, kind, value: pathValue }),
@@ -814,7 +1260,7 @@ export const SpreadEditorProvider = ({ children }) =>
         changeRepositories: () => dispatch({ type: ACTION.CHANGE_REPOSITORIES }),
         changeGame: () => dispatch({ type: ACTION.CHANGE_GAME }),
         cancelChange: () => dispatch({ type: ACTION.CANCEL_CHANGE, paths: loadedPathsRef.current ?? state.paths }),
-    }), [state, actions, saveProblems, saveChanges, browse, loadRepositories, selectGame]);
+    }), [state, actions, movedIds, orderMoves, transferredIds, saveProblems, saveChanges, browse, loadRepositories, selectGame]);
 
     return (
         <SpreadEditorContext.Provider value={value}>

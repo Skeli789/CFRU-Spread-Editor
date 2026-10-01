@@ -6,6 +6,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { IconButton, InputBase, Tooltip } from "@mui/material";
+import { alpha, useTheme } from "@mui/material/styles";
 import AddIcon from "@mui/icons-material/Add";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
@@ -22,8 +23,12 @@ const DIGITS_PATTERN = /^\d{0,3}$/;
 const UNKNOWN_STAT = "?";
 const KEY_ARROW_UP = "ArrowUp";
 const KEY_ARROW_DOWN = "ArrowDown";
-const REPEAT_DELAY_MS = 350;
-const REPEAT_INTERVAL_MS = 70;
+const REPEAT_DELAY_MS = 150;
+const REPEAT_INTERVAL_MS = 20;
+// Each held tick takes one more step after this many ticks, up to the maximum
+const REPEAT_ACCELERATE_TICKS = 1;
+const REPEAT_MAX_STEPS = 8;
+const VIEW_DIVIDER_OPACITY = 0.08;
 const RAISED_LABEL = "Raised by nature";
 const LOWERED_LABEL = "Lowered by nature";
 const RESET_EVS_TIP = "Reset all EVs to 0";
@@ -114,7 +119,11 @@ const StepperInput = ({ label, canLower, canRaise, onStep, children }) =>
     const pointerStep = useRef(false);
     const heldDirection = useRef(null);
 
-    /** Stops a held button from changing the stat. */
+    /**
+     * Stops a held button from changing the stat.
+     *
+     * @returns {void} Nothing.
+     */
     const stop = () =>
     {
         clearTimeout(timer.current);
@@ -124,7 +133,12 @@ const StepperInput = ({ label, canLower, canRaise, onStep, children }) =>
         heldDirection.current = null;
     };
 
-    /** @param {number} direction The direction to repeat. */
+    /**
+     * Starts repeating a held stat button.
+     *
+     * @param {number} direction The direction to repeat.
+     * @returns {void} Nothing.
+     */
     const start = (direction) =>
     {
         stop();
@@ -133,18 +147,40 @@ const StepperInput = ({ label, canLower, canRaise, onStep, children }) =>
         onStep(direction);
         timer.current = setTimeout(() =>
         {
-            interval.current = setInterval(() => onStep(direction), REPEAT_INTERVAL_MS);
+            let ticks = 0;
+            interval.current = setInterval(() =>
+            {
+                const steps = Math.min(REPEAT_MAX_STEPS, 1 + Math.floor(ticks / REPEAT_ACCELERATE_TICKS));
+                ticks += 1;
+                for (let count = 0; count < steps; count++)
+                    onStep(direction);
+            }, REPEAT_INTERVAL_MS);
         }, REPEAT_DELAY_MS);
     };
 
+    /**
+     * Clears held-button timers when the stepper unmounts.
+     *
+     * @returns {Function} The timer cleanup.
+     */
     useEffect(() => stop, []);
+    /**
+     * Stops repeating when the held direction reaches its limit.
+     *
+     * @returns {void} Nothing.
+     */
     useEffect(() =>
     {
         if ((heldDirection.current === DIRECTION_DOWN && !canLower) || (heldDirection.current === DIRECTION_UP && !canRaise))
             stop();
     }, [canLower, canRaise]);
 
-    /** @param {number} direction The direction of a button activation. */
+    /**
+     * Handles keyboard clicks without duplicating a pointer step.
+     *
+     * @param {number} direction The direction of a button activation.
+     * @returns {void} Nothing.
+     */
     const click = (direction) =>
     {
         if (pointerStep.current)
@@ -185,20 +221,26 @@ const StepperInput = ({ label, canLower, canRaise, onStep, children }) =>
  * @param {Function} props.onChange - Called with a function from the current values to the new values.
  * @param {string} props.name - The spread's name, for input labels.
  * @param {object} [props.catalog] - The game catalog, for working out which IVs a reset keeps at 0.
+ * @param {React.ReactNode} [props.footer] - Controls shown at the right of the Total row.
  * @returns {JSX.Element} The stat table.
  */
-const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange, name, catalog = null }) =>
+const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange, name, catalog = null, footer = null }) =>
 {
+    const theme = useTheme();
     const nature = getNatureEffect(getFieldSymbol(fields, "nature"));
     const evTotal = getEvTotal(fields);
     const baseTotal = STATS.every((stat) => baseStats?.[stat] != null) ? STATS.reduce((sum, stat) => sum + baseStats[stat], 0) : null;
     const resetIvFields = editing && catalog != null ? getResetIvs(catalog, fields) : null;
     const ivsAreReset = resetIvFields == null || STATS.every((stat) => fields[IV_FIELDS[stat]] === resetIvFields[IV_FIELDS[stat]]);
 
-    /** Sets every EV to 0. */
+    /**
+     * Sets every EV to 0.
+     */
     const resetEvs = () => onChange((current) => STATS.reduce((next, stat) => setEv(next, stat, 0), current));
 
-    /** Sets every IV to 31, keeping unneeded attacking IVs at 0 and any Hidden Power's type. */
+    /**
+     * Sets every IV to 31, keeping unneeded attacking IVs at 0 and any Hidden Power's type.
+     */
     const resetIvs = () => onChange((current) =>
     {
         const ivs = getResetIvs(catalog, current);
@@ -236,7 +278,8 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
     };
 
     return (
-        <table className={`spread-stats${editing ? " spread-stats-editing" : ""}`}>
+        <table className={`spread-stats${editing ? " spread-stats-editing" : " spread-stats-view"}`}
+               style={editing ? undefined : { "--stat-grid-divider": alpha(theme.palette.divider, VIEW_DIVIDER_OPACITY) }}>
             <thead>
                 <tr>
                     <th scope="col">Stat</th>
@@ -314,8 +357,7 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
                     <td className={`stat-ev-total${evTotal > MAX_EV_TOTAL ? " ev-total-error" : ""}`} aria-label={`EV total ${evTotal} of ${MAX_EV_TOTAL}`}>
                         {!editing ? evTotal : evTotal > MAX_EV_TOTAL ? `${evTotal - MAX_EV_TOTAL} Over` : `${MAX_EV_TOTAL - evTotal} Left`}
                     </td>
-                    <td />
-                    {editing && <td />}
+                    <td colSpan={editing ? 2 : 1} className="stat-footer">{footer}</td>
                 </tr>
             </tfoot>
         </table>

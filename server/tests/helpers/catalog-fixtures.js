@@ -177,6 +177,11 @@ const LEARNSETS =
     "\t[SPECIES_PICHU] = sPichuLevelUpLearnset,",
     "\t[SPECIES_PIKACHU] = sPikachuLevelUpLearnset,",
     "\t[SPECIES_PIKACHU_SURFING] = sPikachuLevelUpLearnset,",
+    "    [SPECIES_PIKACHU_LIBRE] = sPikachuLevelUpLearnset,",
+    "    [SPECIES_PIKACHU_ROCK_STAR] = sPikachuLevelUpLearnset,",
+    "    [SPECIES_PIKACHU_BELLE] = sPikachuLevelUpLearnset,",
+    "    [SPECIES_PIKACHU_POP_STAR] = sPikachuLevelUpLearnset,",
+    "    [SPECIES_PIKACHU_PHD] = sPikachuLevelUpLearnset,",
     "\t[SPECIES_DRAGONITE] = sDragoniteLevelUpLearnset,",
     "\t[SPECIES_SMEARGLE] = sSmeargleLevelUpLearnset,",
     "\t[SPECIES_KYUREM] = sKyuremLevelUpLearnset,",
@@ -264,6 +269,16 @@ const DPE_FILES =
     "src/tutor_compatibility/9 - Beyond The Table.txt": "Tutor 9: Beyond The Table\nKYUREM\n",
 };
 module.exports.DPE_FILES = DPE_FILES;
+
+const COSPLAY_SIGNATURE_MOVES =
+{
+    SPECIES_PIKACHU_LIBRE: "MOVE_FLYINGPRESS",
+    SPECIES_PIKACHU_ROCK_STAR: "MOVE_METEORMASH",
+    SPECIES_PIKACHU_BELLE: "MOVE_ICICLECRASH",
+    SPECIES_PIKACHU_POP_STAR: "MOVE_DRAININGKISS",
+    SPECIES_PIKACHU_PHD: "MOVE_FLAMETHROWER",
+};
+module.exports.COSPLAY_SIGNATURE_MOVES = COSPLAY_SIGNATURE_MOVES;
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PNG_BIT_DEPTH = 4;

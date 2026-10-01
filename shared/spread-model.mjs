@@ -4,15 +4,32 @@
  * This module must stay free of browser and Node APIs.
  */
 
+import { LEGALITY, getMoveLegality } from "./catalog.mjs";
 import
 {
-    EV_FIELDS, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV, MOVE_HIDDEN_POWER, STATS, getEvTotal, getMaxEv, optimizeHiddenPowerIvs,
+    EV_FIELDS, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV, MOVE_HIDDEN_POWER, STATS, getAbilityOptions, getEvTotal, getIvAutoFix, getMaxEv,
+    optimizeHiddenPowerIvs,
 } from "./pokemon-mechanics.mjs";
 
 export const MAX_MOVES = 4;
 const EMPTY_MOVE = 0;
+const MOVE_NONE = "MOVE_NONE";
+
+export const MOVE_REMOVAL =
+{
+    ILLEGAL: "illegal",
+    UNDEFINED: "undefined",
+    DUPLICATE: "duplicate",
+};
 const MOVES_FIELD = "moves";
 const EV_TOTAL_FIELD = "evTotal";
+export const AUTO_FIX_CATEGORY =
+{
+    ALL: "all",
+    MOVES: "moves",
+    IVS: "ivs",
+    EVS: "evs",
+};
 
 export const BATTLE_TYPES =
 {
@@ -36,6 +53,8 @@ export const ANY_TEAM_TYPE = "DOUBLES_ANY_TEAM";
 
 // The constant an omitted field's 0 is shown as; an omitted ball counts as random (user decision)
 const ZERO_SYMBOLS = { nature: "NATURE_HARDY", item: "ITEM_NONE", ball: "BALL_TYPE_RANDOM" };
+const DEFAULT_ABILITY_SLOT = 1;
+const OMITTED_TEAM_TYPE = 0;
 
 
 /**
@@ -259,6 +278,145 @@ export function setMove(fields, slot, move, hiddenPowerType = null)
 }
 
 /**
+ * Returns whether a move slot is empty.
+ *
+ * @param {string|number|null} move The slot's value.
+ * @returns {boolean} Whether it holds no move.
+ */
+function isEmptyMove(move)
+{
+    return move == null || move === EMPTY_MOVE || move === MOVE_NONE;
+}
+
+/**
+ * Shifts moves up over blank slots, so the blanks are all at the end.
+ *
+ * @param {object} fields The spread's values.
+ * @returns {object} The new values, or the same values when no move follows a blank.
+ */
+export function compactMoves(fields)
+{
+    const moves = fields.moves.filter((move) => !isEmptyMove(move));
+    if (moves.every((move, slot) => move === fields.moves[slot]))
+        return fields;
+
+    return { ...fields, moves: [...moves, ...fields.moves.filter(isEmptyMove)] };
+}
+
+/**
+ * Caps individual EVs, then reduces the smallest non-maxed investments before touching maxed stats.
+ *
+ * @param {object} fields The spread's values.
+ * @returns {object} Only the EV fields that change, without rounding legal investments.
+ */
+function getEvAutoFix(fields)
+{
+    const next = { ...fields };
+    for (const stat of STATS)
+    {
+        const field = EV_FIELDS[stat];
+        if (Number.isInteger(next[field]) && next[field] > MAX_EV)
+            next[field] = MAX_EV;
+    }
+
+    let excess = getEvTotal(next) - MAX_EV_TOTAL;
+    const ordered = STATS.filter((stat) => Number.isInteger(next[EV_FIELDS[stat]]) && next[EV_FIELDS[stat]] > 0)
+        .sort((first, second) => next[EV_FIELDS[first]] - next[EV_FIELDS[second]] || STATS.indexOf(first) - STATS.indexOf(second));
+    for (const stat of ordered)
+    {
+        if (!(excess > 0))
+            break;
+
+        const field = EV_FIELDS[stat];
+        const reduction = Math.min(next[field], excess);
+        next[field] -= reduction;
+        excess -= reduction;
+    }
+
+    return getChangedFields(next, fields);
+}
+
+/**
+ * Works out everything the auto-fix changes in one spread: IVs over 31 come down to 31, moves the species cannot
+ * learn, the game does not have or that repeat an earlier move are removed, the rest shift up over blank slots,
+ * EVs are capped per stat and in total, and then the IVs are fixed for the remaining moves.
+ *
+ * @param {object} catalog The game catalog.
+ * @param {object} fields The spread's values.
+ * @returns {{fields: object, cappedIvs: Array<string>, removedMoves: Array<{move: string, reason: string}>,
+ *          compacted: boolean, ivFix: object, evFix: object, categoryFields: object, categoryIvFix: object}}
+ *          The combined changes and independent category changes, with IV-only fixes based on current moves.
+ */
+export function getSpreadAutoFix(catalog, fields)
+{
+    const cappedIvs = Object.values(IV_FIELDS).filter((key) => Number.isInteger(fields[key]) && fields[key] > MAX_IV);
+    const evFix = getEvAutoFix(fields);
+    const cappedFields = Object.fromEntries(cappedIvs.map((key) => [key, MAX_IV]));
+    const categoryIvFix = getIvAutoFix(catalog, { ...fields, ...cappedFields });
+    const categoryFields =
+    {
+        [AUTO_FIX_CATEGORY.IVS]: getChangedFields({ ...fields, ...cappedFields, ...categoryIvFix.changes }, fields),
+        [AUTO_FIX_CATEGORY.EVS]: evFix,
+    };
+    let next = { ...fields, ...evFix, ...cappedFields };
+
+    const removedMoves = [];
+    const moves = next.moves.map((move, slot) =>
+    {
+        if (isEmptyMove(move))
+            return move;
+        const status = getMoveLegality(catalog, next.species, move).status;
+        const reason = status === LEGALITY.ILLEGAL ? MOVE_REMOVAL.ILLEGAL : status === LEGALITY.UNDEFINED ? MOVE_REMOVAL.UNDEFINED
+            : next.moves.indexOf(move) < slot ? MOVE_REMOVAL.DUPLICATE : null;
+        if (reason == null)
+            return move;
+        removedMoves.push({ move, reason });
+        return EMPTY_MOVE;
+    });
+    next = compactMoves({ ...next, moves });
+    const compacted = next.moves !== moves;
+    categoryFields[AUTO_FIX_CATEGORY.MOVES] = getChangedFields({ ...fields, moves: next.moves }, fields);
+
+    const ivFix = getIvAutoFix(catalog, next);
+    next = { ...next, ...ivFix.changes };
+    return { fields: getChangedFields(next, fields), cappedIvs, removedMoves, compacted, ivFix, evFix, categoryFields, categoryIvFix };
+}
+
+/**
+ * Works out the auto-fix for many spreads, such as every filtered spread, so it can be previewed first.
+ *
+ * @param {object} catalog The game catalog.
+ * @param {Array<{id: string, fields: object, placeholder?: boolean}>} spreads The spreads.
+ * @param {string} [category] The category to apply, or all for the combined fix.
+ * @returns {{changes: Array<object>, skipped: Array<{id: string, stats: Array<string>}>}} The spreads that change,
+ *          each with its getSpreadAutoFix result and ID, and the spreads with stats left alone because a move's
+ *          details are unknown.
+ */
+export function planSpreadAutoFix(catalog, spreads, category = AUTO_FIX_CATEGORY.ALL)
+{
+    const changes = [];
+    const skipped = [];
+    for (const { id, fields, placeholder } of spreads)
+    {
+        if (placeholder)
+            continue;
+
+        const fix = getSpreadAutoFix(catalog, fields);
+        if (category !== AUTO_FIX_CATEGORY.ALL)
+        {
+            fix.fields = fix.categoryFields[category];
+            fix.ivFix = fix.categoryIvFix;
+        }
+        if (Object.keys(fix.fields).length > 0)
+            changes.push({ id, ...fix });
+        if ((category === AUTO_FIX_CATEGORY.ALL || category === AUTO_FIX_CATEGORY.IVS) && fix.ivFix.unknown.length > 0)
+            skipped.push({ id, stats: fix.ivFix.unknown });
+    }
+
+    return { changes, skipped };
+}
+
+/**
  * Returns whether two field values are the same.
  *
  * @param {*} a The first value.
@@ -295,4 +453,32 @@ export function getChangedFields(fields, saved)
 export function isSpreadChanged(fields, saved)
 {
     return Object.keys(getChangedFields(fields, saved)).length > 0;
+}
+
+/**
+ * Returns the values a newly created spread starts with: Hardy, the species' first regular ability, a random ball,
+ * no item, IVs of 31, no EVs or moves, both battle types with Modify Moves Doubles, and the Any doubles team type.
+ *
+ * @param {string} species The SPECIES_* constant.
+ * @param {object|null} speciesInfo The catalog species, used to choose the ability slot.
+ * @returns {object} The spread's values.
+ */
+export function createNewSpreadFields(species, speciesInfo)
+{
+    return {
+        species,
+        nature: ZERO_SYMBOLS.nature,
+        ...Object.fromEntries(STATS.map((stat) => [IV_FIELDS[stat], MAX_IV])),
+        ...Object.fromEntries(STATS.map((stat) => [EV_FIELDS[stat], 0])),
+        ability: getAbilityOptions(speciesInfo)[0]?.slot ?? DEFAULT_ABILITY_SLOT,
+        item: ZERO_SYMBOLS.item,
+        moves: Array(MAX_MOVES).fill(EMPTY_MOVE),
+        ball: ZERO_SYMBOLS.ball,
+        shiny: false,
+        forSingles: true,
+        forDoubles: true,
+        modifyMovesDoubles: true,
+        gigantamax: false,
+        specificTeamType: OMITTED_TEAM_TYPE,
+    };
 }

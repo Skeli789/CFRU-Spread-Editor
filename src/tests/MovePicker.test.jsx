@@ -7,15 +7,41 @@ import ItemPicker, { getChooserItems, getItemTypeLabel } from "../subcomponents/
 import { TypeIcon } from "../subcomponents/CatalogDisplay";
 import MoveEditor, { formatAccuracy, formatBoostedPower, formatPower, getChooserRows, getLearnableMoveOptions, getMoveOption } from "../subcomponents/MovePicker";
 import { createCatalog, createFields } from "./EditorFixtures";
+import { LEGALITY, getMoveLegality } from "../../shared/catalog.mjs";
 
 const CATALOG = createCatalog();
 const NAME_SORT = { key: "name", direction: "asc" };
 const NO_FILTERS = { search: "", type: null, split: null, target: null, sort: NAME_SORT };
 const EXTRA_MOVE_COUNT = 150;
+const COSPLAY_SIGNATURES =
+[
+    ["SPECIES_PIKACHU_LIBRE", "Pikachu Libre", "MOVE_FLYINGPRESS", "Flying Press"],
+    ["SPECIES_PIKACHU_ROCK_STAR", "Pikachu Rock Star", "MOVE_METEORMASH", "Meteor Mash"],
+    ["SPECIES_PIKACHU_BELLE", "Pikachu Belle", "MOVE_ICICLECRASH", "Icicle Crash"],
+    ["SPECIES_PIKACHU_POP_STAR", "Pikachu Pop Star", "MOVE_DRAININGKISS", "Draining Kiss"],
+    ["SPECIES_PIKACHU_PHD", "Pikachu PhD", "MOVE_FLAMETHROWER", "Flamethrower"],
+];
 
 // Rendering a few hundred table rows is slow when every test file runs at once
 const LONG_TEST_TIMEOUT = 30000;
 
+
+/**
+ * Creates a browser catalog with the server's form-local cosplay learnset shape.
+ *
+ * @returns {object} The synthetic Unbound catalog.
+ */
+function createCosplayCatalog()
+{
+    const catalog = { ...CATALOG, species: { ...CATALOG.species }, moves: { ...CATALOG.moves }, learnsets: { ...CATALOG.learnsets } };
+    for (const [species, name, move, moveName] of COSPLAY_SIGNATURES)
+    {
+        catalog.species[species] = { ...CATALOG.species.SPECIES_CHARIZARD, name };
+        catalog.moves[move] = { ...CATALOG.moves.MOVE_FLAMETHROWER, name: moveName };
+        catalog.learnsets[species] = { status: "complete", moves: { [move]: ["formChange"] }, unknown: {} };
+    }
+    return catalog;
+}
 
 /**
  * Renders the move editor for a Charizard.
@@ -141,6 +167,27 @@ describe("Move options", () =>
 
 describe("Move picker", () =>
 {
+    it.each(COSPLAY_SIGNATURES)("offers %s's signature in the inline picker and marks it legal in Choose Moves", async (species, name, move, moveName) =>
+    {
+        const catalog = createCosplayCatalog();
+        const learnable = getLearnableMoveOptions(catalog, species);
+        expect(learnable.complete).toBe(true);
+        expect(learnable.options.map((option) => option.move)).toContain(move);
+        expect(getChooserRows(catalog, learnable, NO_FILTERS).find((row) => row.option.move === move).learnable).toBe(true);
+        expect(getMoveLegality(catalog, species, move).status).toBe(LEGALITY.ALLOWED);
+
+        const { user } = renderEditor(createFields({ species, moves: [move, 0, 0, 0] }), catalog);
+        const field = screen.getByRole("combobox", { name: "Move 1" });
+        expect(field).toHaveValue(moveName);
+        expect(field.closest(".move-input")).toHaveClass("move-status-allowed");
+        await user.click(field);
+        expect(screen.getByRole("option", { name: moveName })).not.toHaveClass("move-illegal");
+        await user.keyboard("{Escape}");
+        await user.click(screen.getByRole("button", { name: "Advanced search for Move 1" }));
+        const dialog = await screen.findByRole("dialog", { name: `Choose Moves for ${name}` });
+        expect(within(dialog).getByRole("button", { name: moveName }).closest("tr")).not.toHaveClass("move-illegal");
+    });
+
     it("offers only learnable moves with type symbols and keeps an illegal current move highlighted", async () =>
     {
         const { user, onChange } = renderEditor(createFields({ moves: ["MOVE_FLY", 0, 0, 0] }));

@@ -1,11 +1,13 @@
 import React from "react";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axios from "axios";
 import { StatusCode } from "status-code-enum";
 import { vi } from "vitest";
 
 import App from "../App";
+import { AutoFixDialog } from "../components/SpreadDialogs";
+import { LIST_PAGE_SIZE } from "../subcomponents/CatalogDisplay";
 import { DRAFTS_STORAGE_KEY, SETTINGS_STORAGE_KEY, SETTINGS_VERSION } from "../SpreadEditorState";
 import { PATHS, SAVE_ROUTE, apiError, createFields, createSpreads, createWorkspace, mockServer } from "./EditorFixtures";
 
@@ -14,6 +16,9 @@ vi.mock("axios", () => ({ default: { post: vi.fn() } }));
 const SAVE_BUTTON = /^Save Changes/;
 const UNSAVED_TITLE = "Unsaved Changes";
 const GAME_TITLE = "Choose Game";
+const AUTO_FIX_BATCH_TOTAL = LIST_PAGE_SIZE * 2 + 1;
+const SCROLL_CLIENT_HEIGHT = 200;
+const SCROLL_HEIGHT = 1000;
 
 
 /**
@@ -132,6 +137,22 @@ function getBaseStat(card, stat)
     return within(card).getByText(stat, { selector: ".stat-label" }).closest("tr").querySelector("td").textContent;
 }
 
+/**
+ * Scrolls a list to its bottom using explicit dimensions because jsdom does not lay out CSS.
+ *
+ * @param {HTMLElement} list The scrolling list.
+ * @returns {void} Dispatches the scroll event.
+ */
+function scrollPreviewToBottom(list)
+{
+    Object.defineProperties(list,
+    {
+        clientHeight: { configurable: true, value: SCROLL_CLIENT_HEIGHT },
+        scrollHeight: { configurable: true, value: SCROLL_HEIGHT },
+    });
+    fireEvent.scroll(list, { target: { scrollTop: SCROLL_HEIGHT - SCROLL_CLIENT_HEIGHT } });
+}
+
 describe("Spread editor", () =>
 {
     beforeEach(() =>
@@ -175,7 +196,8 @@ describe("Spread editor", () =>
         await user.keyboard("{Escape}");
         expect(screen.queryByRole("dialog", { name: "Edit Charizard" })).not.toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Save Changes (1)" })).toBeInTheDocument();
-        await user.click(within(await editCard(user, "Charizard")).getByRole("button", { name: "Revert Charizard" }));
+        await editCard(user, "Charizard");
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Revert Charizard" }));
         await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Done" }));
         expect(screen.queryByRole("button", { name: SAVE_BUTTON })).not.toBeInTheDocument();
     });
@@ -193,7 +215,7 @@ describe("Spread editor", () =>
         expect(within(getCard("Charizard", 2)).getByRole("img", { name: /cannot be changed safely/ })).toBeInTheDocument();
 
         // Different species share a row when they fit
-        expect(getCard("Venusaur").parentElement).toBe(getCard("Charizard").parentElement);
+        expect(getCard("Venusaur").closest(".spread-row")).toBe(getCard("Charizard").closest(".spread-row"));
 
         await user.click(screen.getByRole("combobox", { name: "Trainer" }));
         await user.click(await screen.findByRole("option", { name: /^Palmer/ }));
@@ -215,8 +237,8 @@ describe("Spread editor", () =>
         const charizard = getCard("Charizard");
         expect(within(charizard).getByText("Sp. Atk")).toHaveClass("stat-label-raised");
         expect(within(charizard).getByText("Attack")).toHaveClass("stat-label-lowered");
-        expect(within(charizard).getByText("Singles & Doubles")).toBeInTheDocument();
-        expect(within(charizard).getByText("Modify Doubles")).toBeInTheDocument();
+        expect(charizard.querySelector(".battle-chips .MuiChip-label")).toHaveTextContent(/^Singles & Doubles \(Modify\)$/);
+        expect(within(charizard).queryByText("Modify Doubles")).not.toBeInTheDocument();
         expect(within(charizard).queryByText(/Not Shiny|Not Gigantamax/)).not.toBeInTheDocument();
         expect(within(charizard).queryByRole("img", { name: "Shiny" })).not.toBeInTheDocument();
 
@@ -282,16 +304,21 @@ describe("Spread editor", () =>
 
         await changeCharizard(user);
         expect(screen.getByRole("button", { name: "Save Changes (1)" })).toBeInTheDocument();
-        expect(within(getCard("Charizard")).getByText("Revert")).toBeInTheDocument();
+        expect(within(getCard("Charizard")).queryByText("Revert")).not.toBeInTheDocument();
 
-        await user.click(within(getCard("Charizard")).getByRole("button", { name: "Revert Charizard" }));
+        await editCard(user, "Charizard");
+        const revert = within(screen.getByRole("dialog")).getByRole("button", { name: "Revert Charizard" });
+        expect(revert.previousElementSibling).toHaveTextContent("Edit Charizard");
+        await user.click(revert);
+        expect(within(screen.getByRole("dialog")).queryByRole("button", { name: "Revert Charizard" })).not.toBeInTheDocument();
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Done" }));
         expect(screen.queryByRole("button", { name: SAVE_BUTTON })).not.toBeInTheDocument();
 
         // Changing a value back also removes the unsaved change
         const card = await editCard(user, "Charizard");
         await user.click(within(card).getByRole("button", { name: "Lower HP EVs" }));
         expect(within(card).getByLabelText("Charizard HP EVs")).toHaveValue("0");
-        expect(within(card).getByRole("button", { name: "Revert Charizard" })).toBeInTheDocument();
+        expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Revert Charizard" })).toBeInTheDocument();
         await user.click(within(card).getByRole("button", { name: "Raise HP EVs" }));
         await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Done" }));
         expect(screen.queryByRole("button", { name: SAVE_BUTTON })).not.toBeInTheDocument();
@@ -347,8 +374,9 @@ describe("Spread editor", () =>
         const { user, calls } = await openEditor();
         const card = getCard("Charizard");
         const editable = await editCard(user, "Charizard");
-        await user.click(within(editable).getByRole("button", { name: "Delete Charizard" }));
-        await user.click(within(screen.getByRole("dialog", { name: "Delete Charizard?" })).getByRole("button", { name: "Delete" }));
+        await user.click(within(editable).getByRole("button", { name: "Spread Actions" }));
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
         expect(card).toHaveClass("spread-card-deleted");
         expect(card.querySelector(".spread-card-content")).toHaveTextContent("Charizard");
         expect(card.querySelector(".spread-card-content")).toHaveAttribute("inert");
@@ -357,9 +385,9 @@ describe("Spread editor", () =>
         expect(card).not.toHaveClass("spread-card-deleted");
         expect(screen.queryByRole("button", { name: SAVE_BUTTON })).not.toBeInTheDocument();
 
-        await user.click(within(await editCard(user, "Charizard")).getByRole("button", { name: "Delete Charizard" }));
-        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
-        await user.click(screen.getByRole("button", { name: "Save Changes (1)" }));
+        await user.click(within(await editCard(user, "Charizard")).getByRole("button", { name: "Spread Actions" }));
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+        await user.click(await screen.findByRole("button", { name: "Save Changes (1)" }));
         await waitFor(() => expect(calls.some((call) => call.route.endsWith("/save"))).toBe(true));
         expect(calls.find((call) => call.route.endsWith("/save")).body.operations).toEqual([{ type: "delete", entryId: "e0" }]);
     });
@@ -469,19 +497,330 @@ describe("Spread editor", () =>
         expect(within(await editCard(user, "Charizard")).getByLabelText("Charizard Attack IV")).toHaveValue("0");
     });
 
+    test("auto-fixes illegal and repeated moves, blank slots and over-cap IVs and EVs with categorized previews", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: ["MOVE_FLAMETHROWER", "MOVE_MADEUP", "MOVE_THUNDERBOLT", "MOVE_FLAMETHROWER"], hpIv: 40, spAtkEv: 255 });
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+        const text = within(dialog).getByText("Charizard (gFrontierSpreads, line 10)").nextElementSibling;
+        expect(text).toHaveTextContent("Removing unlearnable move Thunderbolt");
+        expect(text).toHaveTextContent("Removing undefined move");
+        expect(text).toHaveTextContent("Removing repeated move Flamethrower");
+        expect(text).toHaveTextContent("Lowering HP IV 40 to 31");
+        expect(text).toHaveTextContent("Lowering Atk IV 31 to 0");
+        expect(text).toHaveTextContent("Lowering SpA EVs 255 to 252");
+        expect(within(text).getAllByRole("listitem")).toHaveLength(6);
+        await user.click(within(dialog).getByRole("tab", { name: "Moves (2)" }));
+        expect(within(dialog).getByRole("tabpanel")).toHaveTextContent("Removing unlearnable move Thunderbolt");
+        expect(within(dialog).getByRole("tabpanel")).not.toHaveTextContent("Lowering HP IV");
+        await user.click(within(dialog).getByRole("tab", { name: "EVs (1)" }));
+        const evPanel = within(dialog).getByRole("tabpanel");
+        expect(evPanel).toHaveTextContent("Lowering SpA EVs 255 to 252");
+        expect(evPanel).not.toHaveTextContent("Removing");
+        expect(evPanel).not.toHaveTextContent("Lowering Atk IV");
+        await user.click(within(dialog).getByRole("tab", { name: /^All/ }));
+        await user.click(within(dialog).getByRole("button", { name: "Apply All" }));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Auto-Fix Spreads" })).not.toBeInTheDocument());
+
+        const card = await editCard(user, "Charizard");
+        expect(within(card).getByRole("combobox", { name: "Move 1" })).toHaveValue("Flamethrower");
+        expect(within(card).getByRole("combobox", { name: "Move 2" })).toHaveValue("");
+        expect(within(card).getByLabelText("Charizard HP IV")).toHaveValue("31");
+        expect(within(card).getByLabelText("Charizard Sp. Atk EVs")).toHaveValue("252");
+    });
+
+    test("Apply EVs changes only EVs and closes with a category-specific toast", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: ["MOVE_FLAMETHROWER", "MOVE_PROTECT", "MOVE_THUNDERBOLT", "MOVE_FLAMETHROWER"], hpIv: 40,
+            hpEv: 8, atkEv: 252, defEv: 8, spAtkEv: 0, spDefEv: 0, spdEv: 252 });
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+        await user.click(within(dialog).getByRole("tab", { name: "EVs (1)" }));
+        await user.click(within(dialog).getByRole("button", { name: "Apply EVs" }));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Auto-Fix Spreads" })).not.toBeInTheDocument());
+        expect(await screen.findByText("Fixed EVs in 1 spread.")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save Changes (1)" })).toBeInTheDocument();
+
+        const card = await editCard(user, "Charizard");
+        expect(within(card).getByRole("combobox", { name: "Move 3" })).toHaveValue("Thunderbolt");
+        expect(within(card).getByRole("combobox", { name: "Move 4" })).toHaveValue("Flamethrower");
+        expect(within(card).getByLabelText("Charizard HP IV")).toHaveValue("40");
+        expect(within(card).getByLabelText("Charizard Attack IV")).toHaveValue("31");
+        expect(within(card).getByLabelText("Charizard HP EVs")).toHaveValue("0");
+        expect(within(card).getByLabelText("Charizard Defense EVs")).toHaveValue("6");
+        expect(within(card).getByLabelText("Charizard Attack EVs")).toHaveValue("252");
+        expect(within(card).getByLabelText("Charizard Speed EVs")).toHaveValue("252");
+    });
+
+    test("Apply Moves leaves IVs and EVs unchanged", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: ["MOVE_FLAMETHROWER", "MOVE_THUNDERBOLT", "MOVE_FLAMETHROWER", 0], hpIv: 40, spAtkEv: 255 });
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+        await user.click(within(dialog).getByRole("tab", { name: /^Moves/ }));
+        await user.click(within(dialog).getByRole("button", { name: "Apply Moves" }));
+        const card = await editCard(user, "Charizard");
+        expect(within(card).getByRole("combobox", { name: "Move 1" })).toHaveValue("Flamethrower");
+        expect(within(card).getByRole("combobox", { name: "Move 2" })).toHaveValue("");
+        expect(within(card).getByLabelText("Charizard HP IV")).toHaveValue("40");
+        expect(within(card).getByLabelText("Charizard Attack IV")).toHaveValue("31");
+        expect(within(card).getByLabelText("Charizard Sp. Atk EVs")).toHaveValue("255");
+    });
+
+    test("the IVs preview and Apply IVs use current moves instead of removed moves", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: ["MOVE_GYROBALL", "MOVE_FLAMETHROWER", 0, 0], atkIv: 0, spAtkEv: 255 });
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+        const allDescriptions = within(dialog).getByText("Charizard (gFrontierSpreads, line 10)").nextElementSibling;
+        expect(allDescriptions).not.toHaveTextContent("Raising Atk IV");
+        expect(allDescriptions).not.toHaveTextContent("Lowering Spe IV");
+        await user.click(within(dialog).getByRole("tab", { name: /^IVs/ }));
+        const descriptions = within(dialog).getByText("Charizard (gFrontierSpreads, line 10)").nextElementSibling;
+        expect(descriptions).toHaveTextContent("Raising Atk IV 0 to 31");
+        expect(descriptions).toHaveTextContent("Lowering Spe IV 31 to 0");
+        expect(descriptions).not.toHaveTextContent("Removing");
+        await user.click(within(dialog).getByRole("button", { name: "Apply IVs" }));
+        const card = await editCard(user, "Charizard");
+        expect(within(card).getByRole("combobox", { name: "Move 1" })).toHaveValue("Gyro Ball");
+        expect(within(card).getByLabelText("Charizard Attack IV")).toHaveValue("31");
+        expect(within(card).getByLabelText("Charizard Speed IV")).toHaveValue("0");
+        expect(within(card).getByLabelText("Charizard Sp. Atk EVs")).toHaveValue("255");
+    });
+
+    test("shifts moves up over a blank slot when editing ends", async () =>
+    {
+        const { user } = await openEditor();
+        const card = await editCard(user, "Charizard");
+        const second = within(card).getByRole("combobox", { name: "Move 2" }).value;
+        await user.clear(within(card).getByRole("combobox", { name: "Move 1" }));
+        await user.tab();
+        expect(within(card).getByRole("combobox", { name: "Move 1" })).toHaveValue("");
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Done" }));
+        expect(within(await editCard(user, "Charizard")).getByRole("combobox", { name: "Move 1" })).toHaveValue(second);
+    });
+
     test("previews the IV auto-fix for every matching spread before applying it", async () =>
     {
         const { user } = await openEditor();
 
-        await user.click(screen.getByRole("button", { name: "Auto-Fix IVs" }));
-        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix IVs" });
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
         const changes = within(dialog).getByRole("list", { name: "Spreads that will change" });
-        expect(within(changes).getAllByRole("listitem")).toHaveLength(3);
-        expect(within(changes).getByText("Charizard (gFrontierSpreads, line 10)").nextElementSibling).toHaveTextContent("Atk 31 to 0");
+        expect(changes.children).toHaveLength(3);
+        const descriptions = within(changes).getByText("Charizard (gFrontierSpreads, line 10)").nextElementSibling;
+        expect(within(descriptions).getAllByRole("listitem")).toHaveLength(1);
+        expect(descriptions).toHaveTextContent("Lowering Atk IV 31 to 0");
         expect(within(dialog).queryByText(/cannot be changed safely/)).not.toBeInTheDocument();
 
-        await user.click(within(dialog).getByRole("button", { name: "Apply" }));
-        expect(screen.getByRole("button", { name: "Save Changes (3)" })).toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: "Apply All" }));
+        expect(await screen.findByRole("button", { name: "Save Changes (3)" })).toBeInTheDocument();
+    });
+
+    test("lists only unsafe active spreads and excludes placeholders from every auto-fix count", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].editable = false;
+        spreads.entries[0].diagnostics = [{ message: "Line 10: unsupported source expression." }];
+        spreads.entries[1].editable = false;
+        spreads.entries[1].placeholder = true;
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+        const summary = within(dialog).getByRole("button", { name: "1 matching spread cannot be changed safely" });
+        expect(summary).toHaveAttribute("aria-expanded", "false");
+        expect(within(dialog).queryByRole("list", { name: "Spreads that cannot be changed" })).not.toBeInTheDocument();
+        expect(within(dialog).getByText("1 spreads will change")).toBeInTheDocument();
+        expect(within(dialog).queryByText("Venusaur (gFrontierSpreads, line 30)")).not.toBeInTheDocument();
+
+        await user.click(summary);
+        const locked = await within(dialog).findByRole("list", { name: "Spreads that cannot be changed" });
+        expect(summary).toHaveAttribute("aria-expanded", "true");
+        expect(within(dialog).getByRole("alert")).toHaveTextContent("Changing them could overwrite source the editor does not understand.");
+        expect(locked.children).toHaveLength(1);
+        expect(within(locked).getByText("Charizard (gFrontierSpreads, line 10)")).toBeInTheDocument();
+        expect(within(locked).getByText(/unsupported source expression/)).toHaveTextContent("This spread's source cannot be changed safely.");
+        expect(within(dialog).queryByText(/placeholder|unused spread/)).not.toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Auto-Fix Spreads" })).not.toBeInTheDocument());
+        expect(screen.queryByRole("button", { name: SAVE_BUTTON })).not.toBeInTheDocument();
+    });
+
+    test("describes move shifts and IV increases while keeping Hidden Power annotations", async () =>
+    {
+        const spreads = createSpreads();
+        spreads.entries[0].fields = createFields({ moves: [0, "MOVE_HIDDENPOWER", 0, 0], spAtkIv: 0 });
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+        const descriptions = within(dialog).getByText("Charizard (gFrontierSpreads, line 10)").nextElementSibling;
+        expect(descriptions).toHaveTextContent("Shifting moves up over a blank slot");
+        expect(descriptions).toHaveTextContent("Lowering Atk IV 31 to 1 (kept odd for Hidden Power)");
+        expect(descriptions).toHaveTextContent("Raising SpA IV 0 to 30 (kept even for Hidden Power)");
+    });
+
+    test("ignores placeholders even if marked editable", async () =>
+    {
+        const spreads = createSpreads();
+        for (const entry of spreads.entries)
+            entry.placeholder = true;
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+        expect(within(dialog).getByText("No matching spread needs fixing.")).toBeInTheDocument();
+        expect(within(dialog).queryByRole("list")).not.toBeInTheDocument();
+        expect(within(dialog).queryByText(/spreads will change|stats left alone|cannot be changed safely|placeholder/)).not.toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Apply All" })).toBeDisabled();
+    });
+
+    test.each(["hover", "focus", "click"])("shows detailed auto-fix rules through help %s", async (interaction) =>
+    {
+        const user = userEvent.setup();
+        render(<AutoFixDialog open changes={[]} skipped={[]} locked={[]} onApply={vi.fn()} onClose={vi.fn()} />);
+        const dialog = screen.getByRole("dialog", { name: "Auto-Fix Spreads" });
+        expect(within(dialog).getByText("Removes moves that can't be used and fixes IVs and EVs for every matching spread on every page.")).toBeInTheDocument();
+        expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+        const help = within(dialog).getByRole("button", { name: "How Auto-Fix Works" });
+        expect(help).not.toHaveAttribute("title");
+
+        if (interaction === "hover")
+            await user.hover(help);
+        else if (interaction === "focus")
+            await user.tab();
+        else
+            fireEvent.click(help);
+
+        if (interaction === "focus")
+            expect(help).toHaveFocus();
+        const tooltip = await screen.findByRole("tooltip");
+        expect(within(tooltip).getAllByRole("listitem")).toHaveLength(10);
+        expect(tooltip).toHaveTextContent("Caps EVs at 252 per stat and 510 in total.");
+        expect(tooltip).toHaveTextContent("Reduces smallest non-maxed EV investments before maxed stats.");
+        expect(tooltip).toHaveTextContent("Removes unlearnable, undefined and repeated moves.");
+        expect(tooltip).toHaveTextContent("Lowers Speed IV to 0 for Gyro Ball or Trick Room.");
+        expect(tooltip).toHaveTextContent("Uses 1 or 30 instead when needed to preserve Hidden Power.");
+        expect(tooltip).toHaveTextContent("Keeps attacking IVs unchanged when move details are unknown.");
+    });
+
+    test("counts affected spreads per category and filters both entries and bullets", async () =>
+    {
+        const changes =
+        [
+            { id: "mixed", label: "Mixed Spread", descriptions: { moves: ["Removing repeated move Protect"], ivs: ["Lowering Atk IV 31 to 0"], evs: ["Lowering SpA EVs 255 to 252"] } },
+            { id: "moves", label: "Move Spread", descriptions: { moves: ["Shifting moves up over a blank slot"], ivs: [], evs: [] } },
+            { id: "ivs", label: "IV Spread", descriptions: { moves: [], ivs: ["Raising SpA IV 0 to 31"], evs: [] } },
+        ];
+        const skipped = [{ id: "skip", label: "Unknown Spread", descriptions: ["Keeping SpA IV unchanged (unknown move details)"] }];
+        const user = userEvent.setup();
+        render(<AutoFixDialog open changes={changes} skipped={skipped} locked={[]} onApply={vi.fn()} onClose={vi.fn()} />);
+        const dialog = screen.getByRole("dialog", { name: "Auto-Fix Spreads" });
+        expect(within(dialog).getByRole("tab", { name: "All (3)" })).toHaveAttribute("aria-selected", "true");
+        expect(within(dialog).getByRole("tab", { name: "Moves (2)" })).toBeInTheDocument();
+        expect(within(dialog).getByRole("tab", { name: "IVs (2)" })).toBeInTheDocument();
+        expect(within(dialog).getByRole("tab", { name: "EVs (1)" })).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Apply All" })).toBeEnabled();
+
+        await user.click(within(dialog).getByRole("tab", { name: "Moves (2)" }));
+        expect(within(dialog).getByRole("button", { name: "Apply Moves" })).toBeEnabled();
+
+        await user.click(within(dialog).getByRole("tab", { name: "IVs (2)" }));
+        expect(within(dialog).getByRole("button", { name: "Apply IVs" })).toBeEnabled();
+        let panel = within(dialog).getByRole("tabpanel");
+        expect(panel).toHaveTextContent("Mixed Spread");
+        expect(panel).toHaveTextContent("IV Spread");
+        expect(panel).not.toHaveTextContent("Move Spread");
+        expect(panel).not.toHaveTextContent("Removing repeated move");
+        expect(panel).not.toHaveTextContent("EVs 255");
+        expect(within(panel).getByRole("list", { name: "Spreads that will change" }).children).toHaveLength(2);
+        expect(within(dialog).getByRole("list", { name: "Spreads left alone" })).toHaveTextContent("Unknown Spread");
+
+        await user.click(within(dialog).getByRole("tab", { name: "EVs (1)" }));
+        expect(within(dialog).getByRole("button", { name: "Apply EVs" })).toBeEnabled();
+        panel = within(dialog).getByRole("tabpanel");
+        expect(panel).toHaveTextContent("Mixed Spread");
+        expect(panel).toHaveTextContent("Lowering SpA EVs 255 to 252");
+        expect(panel).not.toHaveTextContent("IV Spread");
+        expect(panel).not.toHaveTextContent("Lowering Atk IV");
+
+        await user.click(within(dialog).getByRole("tab", { name: "All (3)" }));
+        expect(within(dialog).getByRole("button", { name: "Apply All" })).toBeEnabled();
+        panel = within(dialog).getByRole("tabpanel");
+        expect(panel).toHaveTextContent("Removing repeated move Protect");
+        expect(panel).toHaveTextContent("Lowering Atk IV 31 to 0");
+        expect(panel).toHaveTextContent("Lowering SpA EVs 255 to 252");
+        expect(within(panel).getByRole("list", { name: "Spreads that will change" }).children).toHaveLength(3);
+    });
+
+    test("disables Apply for the current category when its changes become empty", async () =>
+    {
+        const changes = [{ id: "evs", label: "EV Spread", descriptions: { moves: [], ivs: [], evs: ["Lowering SpA EVs 255 to 252"] } }];
+        const onApply = vi.fn();
+        const user = userEvent.setup();
+        const { rerender } = render(<AutoFixDialog open changes={changes} skipped={[]} locked={[]} onApply={onApply} onClose={vi.fn()} />);
+        const dialog = screen.getByRole("dialog", { name: "Auto-Fix Spreads" });
+        await user.click(within(dialog).getByRole("tab", { name: "EVs (1)" }));
+        await user.click(within(dialog).getByRole("button", { name: "Apply EVs" }));
+        expect(onApply).toHaveBeenCalledWith("evs");
+
+        rerender(<AutoFixDialog open changes={changes} categoryChanges={{ evs: [] }} skipped={[]} locked={[]} onApply={onApply} onClose={vi.fn()} />);
+        expect(within(dialog).getByRole("tab", { name: "EVs (0)" })).toHaveAttribute("aria-selected", "true");
+        expect(within(dialog).getByRole("button", { name: "Apply EVs" })).toBeDisabled();
+    });
+
+    test("loads every auto-fix list in scroll batches without a truncated remainder", async () =>
+    {
+        const changes = Array.from({ length: AUTO_FIX_BATCH_TOTAL }, (_, index) => (
+        {
+            id: `change-${index}`,
+            label: `Changed spread ${index}`,
+            descriptions: { moves: [], ivs: ["Lowering Atk IV 31 to 0"], evs: [] },
+        }));
+        const skipped = changes.map((item, index) => (
+        {
+            id: `skip-${index}`,
+            label: `Skipped spread ${index}`,
+            descriptions: ["Keeping SpA IV unchanged (unknown move details)"],
+        }));
+        const locked = changes.map((item, index) => ({ id: `locked-${index}`, label: `Locked spread ${index}`, reason: "Unsupported initializer." }));
+        const user = userEvent.setup();
+        render(<AutoFixDialog open changes={changes} skipped={skipped} locked={locked} onApply={vi.fn()} onClose={vi.fn()} />);
+        const dialog = screen.getByRole("dialog", { name: "Auto-Fix Spreads" });
+        expect(within(dialog).queryByRole("tab", { name: /^Moves/ })).not.toBeInTheDocument();
+        expect(within(dialog).queryByRole("tab", { name: /^EVs/ })).not.toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: `${AUTO_FIX_BATCH_TOTAL} matching spreads cannot be changed safely` }));
+
+        for (const name of ["Spreads that will change", "Spreads left alone", "Spreads that cannot be changed"])
+        {
+            const list = await within(dialog).findByRole("list", { name });
+            expect(list.children).toHaveLength(LIST_PAGE_SIZE);
+            expect(within(list.children[0]).getAllByRole("listitem")).toHaveLength(1);
+            scrollPreviewToBottom(list);
+            await waitFor(() => expect(list.children).toHaveLength(LIST_PAGE_SIZE * 2));
+            scrollPreviewToBottom(list);
+            await waitFor(() => expect(list.children).toHaveLength(AUTO_FIX_BATCH_TOTAL));
+        }
+
+        expect(within(dialog).queryByText(/And \d+ more/)).not.toBeInTheDocument();
+        await user.click(within(dialog).getByRole("tab", { name: `IVs (${AUTO_FIX_BATCH_TOTAL})` }));
+        const filtered = within(dialog).getByRole("list", { name: "Spreads that will change" });
+        expect(filtered.children).toHaveLength(LIST_PAGE_SIZE);
+        scrollPreviewToBottom(filtered);
+        await waitFor(() => expect(filtered.children).toHaveLength(LIST_PAGE_SIZE * 2));
     });
 
     test("asks before changing the game with unsaved changes", async () =>

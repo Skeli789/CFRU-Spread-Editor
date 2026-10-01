@@ -8,7 +8,7 @@ import { Navigate, Outlet, RouterProvider, createBrowserRouter, useBlocker } fro
 import { ToastContainer } from "react-toastify";
 import { ThemeProvider } from '@mui/material/styles';
 
-import DefaultPage from "./DefaultPage";
+import SpreadEditorPage from "./SpreadEditorPage";
 import { SpreadEditorProvider, useSpreadEditor } from "./SpreadEditorState";
 import { APP_THEME, DARK_APP_THEME } from "./Theme";
 import Footer from "./components/Footer";
@@ -108,8 +108,19 @@ const AppLayout = () =>
 {
     const { darkMode, toggleDarkMode, theme } = useContext(AppShellContext);
 
+    /**
+     * Puts the theme colors on the root element, so dialogs portaled outside the app share its scrollbar colors.
+     */
+    useEffect(() =>
+    {
+        const root = document.documentElement.style;
+        root.setProperty("--theme", theme.palette.primary.main);
+        root.setProperty("--focus", theme.palette.focus.main);
+        root.setProperty("--app-background", theme.palette.background.default);
+    }, [theme]);
+
     return (
-        <div className="app" style={{ "--theme": theme.palette.primary.main, "--focus": theme.palette.focus.main, "--app-background": theme.palette.background.default, color: theme.palette.text.primary }}>
+        <div className="app" style={{ color: theme.palette.text.primary }}>
             <Header
                 darkMode={darkMode}
                 toggleParentDarkMode={toggleDarkMode}
@@ -120,7 +131,7 @@ const AppLayout = () =>
             </div>
             <NavigationGuard />
             <ToastContainer 
-                position="bottom-right"
+                position="bottom-left"
                 autoClose={3000}
                 hideProgressBar={false}
                 newestOnTop={false}
@@ -144,7 +155,7 @@ const ROUTES =
             // Fill in more routes here
             { path: "/privacy", element: <PrivacyPolicy /> },
             { path: "/terms", element: <TermsOfService /> },
-            { path: "/", element: <DefaultPage /> },
+            { path: "/", element: <SpreadEditorPage /> },
             { path: "*", element: <Navigate to={"/"} replace /> },
         ],
     },
@@ -181,7 +192,9 @@ function App()
         return () => preference.removeEventListener("change", updateSystemTheme);
     }, []);
 
-    /** Switches theme and saves the explicit choice when storage is available. */
+    /**
+     * Switches theme and saves the explicit choice when storage is available.
+     */
     function toggleDarkMode()
     {
         const nextDarkMode = !darkMode;

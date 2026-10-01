@@ -22,31 +22,48 @@
 }
 
 /* Custom scrollbar styling */
-::-webkit-scrollbar {
+::-webkit-scrollbar
+{
     width: 8px;
     height: 8px;
 }
 
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track
+{
     background: transparent;
     border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb
+{
     background: var(--theme);
     border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover
+{
     background: var(--theme);
 }
 
-::-webkit-scrollbar-corner {
+::-webkit-scrollbar-corner
+{
     background: transparent;
 }
 
-/* Firefox scrollbar styling */
-.app, .app * {
+/* Chromium prefers scrollbar-color over WebKit thumb styles, and html covers dialogs portaled outside the app */
+html, html *
+{
     scrollbar-width: thin;
     scrollbar-color: var(--theme) transparent;
+}
+
+html textarea
+{
+    scrollbar-color: var(--focus) transparent;
+}
+
+html textarea::-webkit-scrollbar-thumb,
+html textarea::-webkit-scrollbar-thumb:hover
+{
+    background: var(--focus);
 }

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { vi } from "vitest";
 
-import ItemPicker, { getChooserItems, getItemOptions, getItemTypeLabel } from "../subcomponents/ItemPicker";
+import ItemPicker, { getChooserItems, getItemListStyles, getItemOptions, getItemTypeLabel } from "../subcomponents/ItemPicker";
 import { createCatalog } from "./EditorFixtures";
 
 const BASE_CATALOG = createCatalog();
@@ -29,6 +29,35 @@ const CATALOG = { ...BASE_CATALOG, items: { ...BASE_CATALOG.items, ...Object.fro
 
 describe("Item picker", () =>
 {
+    it("reveals fallback Load More only at the list bottom and preserves auto-loading", async () =>
+    {
+        const items = Object.fromEntries(Array.from({ length: 350 }, (_, index) =>
+            [`ITEM_TEST_${index}`, { name: `Test Item ${String(index).padStart(3, "0")}`, icon: null, itemType: "ITEM_TYPE_HELD_ITEM" }]));
+        const catalog = { ...CATALOG, items: { ...CATALOG.items, ...items } };
+        const user = userEvent.setup();
+        render(<ItemPicker catalog={catalog} value="ITEM_NONE" onChange={vi.fn()} />);
+        await user.click(screen.getByRole("button", { name: "Advanced search for Item" }));
+        const dialog = await screen.findByRole("dialog", { name: "Choose Item" });
+        const list = within(dialog).getByRole("list", { name: "Items" });
+        expect(list).toHaveClass("item-list");
+        expect(list.parentElement).toHaveClass("item-list-viewport");
+        Object.defineProperty(list, "scrollHeight", { configurable: true, value: 1000 });
+        Object.defineProperty(list, "clientHeight", { configurable: true, value: 200 });
+        expect(within(dialog).queryByRole("button", { name: "Load More" })).not.toBeInTheDocument();
+        list.scrollTop = 100;
+        fireEvent.scroll(list);
+        expect(within(dialog).queryByRole("button", { name: "Load More" })).not.toBeInTheDocument();
+        expect(list.querySelectorAll("[data-item]")).toHaveLength(100);
+        list.scrollTop = 800;
+        fireEvent.scroll(list);
+        expect(list.querySelectorAll("[data-item]")).toHaveLength(200);
+        const loadMore = within(dialog).getByRole("button", { name: "Load More" });
+        expect(loadMore.closest("li").parentElement).toBe(list);
+        await user.click(loadMore);
+        expect(list.querySelectorAll("[data-item]")).toHaveLength(300);
+        expect(within(dialog).queryByRole("button", { name: "Load More" })).not.toBeInTheDocument();
+    });
+
     it("groups only requested item types in order and keeps evolution-item exceptions held", () =>
     {
         expect(getItemTypeLabel("ITEM_TYPE_FIELD_USE")).toBe("Other");
@@ -44,6 +73,7 @@ describe("Item picker", () =>
     it.each(["light", "dark"])("keeps sticky headings opaque in %s mode", async (mode) =>
     {
         const theme = createTheme({ palette: { mode } });
+        expect(getItemListStyles(theme)).toMatchObject({ minHeight: 0, overflowY: "auto", overflowX: "hidden", scrollbarGutter: "stable" });
         const user = userEvent.setup();
         render(<ThemeProvider theme={theme}><ItemPicker catalog={CATALOG} value="ITEM_METAL_COAT" speciesName="Charizard" onChange={vi.fn()} /></ThemeProvider>);
         await user.click(screen.getByRole("combobox", { name: "Item" }));

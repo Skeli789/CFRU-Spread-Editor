@@ -1,0 +1,67 @@
+---
+name: repository-setup
+description: "Use when changing first launch, Connect Repositories, Browse, Choose Game, Change Game, Change Repositories, Load Warnings, RepositorySetup.jsx, Header.jsx, repositories.js, session tokens, workspace loading, saved settings, or local-only API security."
+---
+
+# Repository Setup
+
+The browser selects three local checkout roots, while the server validates and owns all filesystem access. A successful load creates an in-memory workspace and returns available games and a spreads snapshot. Only CFRU spread files are written; DPE and Unbound Cloud supply reference data.
+
+## Files
+
+- [RepositorySetup.jsx](../../../src/components/RepositorySetup.jsx): `RepositoryDialog`, `GameDialog`, and `DiagnosticList` render paths, Browse, game selection, validation feedback, and load warnings during setup.
+- [Header.jsx](../../../src/components/Header.jsx): `Header` owns the game-name hamburger menu, `groupDiagnostics`, the Load Warnings dialog, and the unsaved-changes guard for switching game or repositories.
+- [SpreadEditorState.jsx](../../../src/SpreadEditorState.jsx): `SpreadEditorProvider`, `readStoredSettings`, `writeStoredSettings`, `hasAllPaths`, and `useSpreadEditor` own settings, API sessions, picker requests, workspace and catalog transitions, and restart retries.
+- [repositories.js](../../../server/services/repositories.js): `createFolderPicker`, `pickRepository`, `loadWorkspace`, `getWorkspace`, `resolveOwnedFile`, `readOwnedBuffer`, `readOwnedFile`, `listOwnedFiles`, and `getRootKey` validate paths, pick folders, own allowlists and workspaces, and guard reads.
+- [source-parser.js](../../../server/services/source-parser.js): `parseCloudGameConfig` reads Cloud's literal game declarations and JSON imports without executing checkout code.
+- [repositories.js endpoint](../../../server/endpoints/repositories.js): `POST /api/repositories/pick` opens a cancellable folder picker.
+- [session.js endpoint](../../../server/endpoints/session.js): `POST /api/session` issues a token only to a request with Origin.
+- [workspaces.js](../../../server/endpoints/workspaces.js): `POST /api/workspaces/load`, `/:id/catalog`, and `/:id/save` use server-owned workspace IDs; load attaches the spreads snapshot and diagnostics.
+- [session.js service](../../../server/services/session.js): `SESSION_HEADER`, `getSessionToken`, and `isValidSessionToken` manage the process-lifetime token.
+- [security.js](../../../server/middleware/security.js): host and origin checks, CORS, JSON body limits, and `requireSession`.
+- [errors.js](../../../server/middleware/errors.js): `ApiError`, `handleErrors`, and `handleUnknownApiRoute` produce structured `{ error: { code, message, details? } }` responses.
+- [server.js](../../../server/server.js): loads `.env` before security middleware, applies guards before routes, and binds port 3001 to `127.0.0.1` when started directly.
+- [parse-cache.js](../../../server/services/parse-cache.js): `getDataDirectory` selects the external cache, backup, and journal root.
+- [spread-store.js](../../../server/services/spread-store.js): `loadSpreads` attaches the spread snapshot and parsing/recovery diagnostics during workspace load.
+
+## Data flow
+
+1. On mount, `readStoredSettings` reads `cfruSpreadEditor.settings` from localStorage. If all three paths are nonblank, the client requests a new session and reloads the repositories; otherwise it shows Connect Repositories with any usable saved fields.
+2. Browse sends `{ repository, startPath? }` to `/api/repositories/pick`. The server starts the Windows Explorer folder dialog in PowerShell STA and returns `{ status: "selected", path }` or `{ status: "cancelled" }`. The client updates only the selected path.
+3. Load trims all three paths, sends `{ paths: { cfru, dpe, cloud } }` to `/api/workspaces/load`, and displays server field errors beside their inputs. The server canonicalizes roots, validates sentinels, discovers usable Cloud games, creates a workspace ID, and loads CFRU spreads.
+4. The load response contains `workspaceId`, canonical `repositories` with labels, `games` with IDs and display names, `spreads`, and combined workspace/spread diagnostics. A saved game still in the returned list loads its catalog automatically; otherwise Choose Game stays open.
+5. Selecting a game posts `{ gameId }` to `/api/workspaces/:id/catalog`, saves paths plus the returned game ID locally, and enters ready state. The header displays the catalog name and combines workspace and catalog diagnostics.
+6. Later API requests carry `X-Session-Token`. After `SESSION_INVALID`, the client fetches a new token and retries once. If catalog loading receives `WORKSPACE_NOT_FOUND`, it reloads the validated paths once and retries the catalog; saves reload and retry only when the spreads revision, set IDs, and entry IDs still match.
+
+## Behavior and user decisions
+
+- The Connect Repositories dialog requires CFRU, DPE, and Cloud paths before enabling Load. Text input remains available if Browse fails or is unsupported. Loading or picking disables inputs and actions; changing repositories from an existing catalog offers Cancel. A failed load retains entered paths and maps `details.fields` to inputs; editing a path clears its field error.
+- The picker accepts only `cfru`, `dpe`, or `cloud`. On Windows it runs one fixed `powershell.exe -STA -EncodedCommand` script with title and optional start path passed via environment, not interpolated into the script. It uses the Explorer `IFileOpenDialog` with filesystem folder and existing-path options, presents a foreground owner, preserves Unicode JSON output, permits one picker at a time, and aborts when the client connection closes. The start path must be an absolute local path under 4096 characters without NUL; invalid start values are ignored. Timeout is five minutes. Cancellation does not erase the input; picker errors advise typing the path. Other platforms return `PICKER_UNSUPPORTED`.
+- Validation rejects missing/non-string/blank, too-long or NUL, relative, network/device, nonexistent, non-directory, inaccessible, and duplicate canonical roots. A selected root can itself be a symlink, but sentinels must resolve to readable files/directories inside that canonical root. CFRU requires `src/config.h`, `include/new/frontier.h`, `src/Tables/battle_frontier_trainers.c`, `src/Tables/battle_moves.c`, and all four spread headers (`battle_tower_spreads.h`, `frontier_special_trainer_spreads.h`, `frontier_multi_spreads.h`, `raid_partners.h` under `src/Tables/`). DPE requires `src/Learnsets.c`, `src/Egg_Moves.c`, `src/Evolution Table.c`, `src/TM_Tutor_Tables.c`, and both `src/tm_compatibility` and `src/tutor_compatibility` directories. Cloud requires `src/PokemonUtil.jsx`, `src/Util.jsx`, and `src/data/SpeciesNames.json`. Validation reports all field problems together and hints when repositories were swapped.
+- Cloud games come from `GAME_DISPLAY_NAMES` and `GAME_IDS_TO_DATA` in `src/PokemonUtil.jsx`; available games must list `baseStats`, `moves`, `items`, and `ballTypes` JSON imports that resolve to regular files inside `src/data/`. Missing game data produces `GAME_UNAVAILABLE` warnings; no available games yields `NO_GAMES_AVAILABLE`. The `cfru` game sorts first, followed by display name. Blank display names fall back to prettified IDs. CFRU spread files that cannot be written produce `FILE_READ_ONLY` warnings without writing to them.
+- Settings use `{ version: 1, paths, gameId }` under `cfruSpreadEditor.settings`. Missing, malformed, outdated, or blocked reads start with empty defaults; individual fields with the wrong type are ignored. Paths are revalidated on every launch, never trusted just because they were stored. Successful repository loads save trimmed paths and clear an unavailable saved game ID, showing a notice before the user chooses another. Blocked writes leave editing functional and show a warning that settings cannot be saved.
+- Choose Game lists the available games and marks the previously selected one. From an open editor, game and repository dialogs can be cancelled without changing the loaded catalog or workspace. On first launch no Cancel is offered. The game dialog also offers Change Repositories and shows workspace warnings; an invalid game/catalog error remains visible in the dialog.
+- The ready header's button shows the selected game's name, a menu icon, and a warning icon with the count when diagnostics exist. Change Game and Change Repositories first open the unsaved-changes dialog when there are dirty spreads. Cancel stays in the editor, Discard drops changes before switching, and Save switches only after a successful save; invalid drafts block Save. View Load Warnings does not require discarding changes. The dialog groups diagnostics into accordions by `repository / file / CODE WITH SPACES` when details exist; warnings without details group under repository/category and use their message. Each detail gets its own list item; missing repository falls back to `Game catalog`. Accordion headings show the number of displayed lines, not the number of diagnostic objects.
+- Workspaces are UUIDs held only in server memory, with at most eight retained; older IDs and IDs lost after restart return `WORKSPACE_NOT_FOUND`. A new 32-byte random hex session token is generated for each server process and compared in constant time. Do not persist a workspace ID or token in localStorage.
+- The server binds only to IPv4 loopback when started directly. `Host` must be `localhost`, `127.0.0.1`, or `[::1]` (optionally with port); an Origin, when present, must be allowed. Default allowed origins are `http://localhost:3000` and `http://127.0.0.1:3000`, overridable with comma-separated `CLIENT_ORIGINS` in the server environment. The session endpoint specifically requires an Origin. CORS permits `Content-Type` and `X-Session-Token`; `/api/images` is token-free, while later `/api` filesystem routes require the token. Contentful requests must be JSON; bodies are limited to 4 MB and top-level JSON bodies must be objects.
+- Owned paths are server-selected, not arbitrary client filenames. `resolveOwnedFile` rechecks realpath containment, regular-file type, and a 32 MiB size limit at read time; `listOwnedFiles` sorts and caps results at 4096 and omits symlinks. If an owned file is moved, a repository file error asks for a reload. The data root is `SPREAD_EDITOR_DATA_DIR` when set, otherwise `%LOCALAPPDATA%/CFRU Spread Editor` when available, otherwise `~/.cfru-spread-editor`; cache, backups, and save journals live there outside the repositories.
+
+## Invariants and pitfalls
+
+- Never evaluate source from a checkout or pass a user-entered path into PowerShell script text. Canonical containment must be checked again for each owned file; a valid setup cannot guarantee later paths remain safe.
+- Keep root validation errors field-specific and retain the user's entered paths. A token retry does not restore a lost workspace by itself; the catalog/save `WORKSPACE_NOT_FOUND` paths must explicitly reload it.
+- Workspace diagnostics and catalog diagnostics are separate. Keep every individual diagnostic detail when rendering the header dialog; do not replace a detail list with only its summary message.
+- Do not write DPE or Cloud. Keep browser storage optional, and do not use it as authorization. Changes to setup security affect the token-free image endpoint and the JSON middleware order as well as workspace routes.
+
+## Tests
+
+- [RepositorySetup.test.jsx](../../../src/tests/RepositorySetup.test.jsx): first and returning launches, path revalidation, malformed/blocked storage, picker selection/cancellation/errors, missing games, menu warnings and detail grouping, switching/cancel, and restart recovery. Run `$env:DEBUG_PRINT_LIMIT=0; yarn test src/tests/RepositorySetup.test.jsx --run`.
+- [repositories.test.js](../../../server/tests/services/repositories.test.js): fake Windows picker invocation, single-dialog and abort behavior, errors, and owned-folder symlink containment. Run `cd server; yarn test tests/services/repositories.test.js`.
+- [workspaces.test.js](../../../server/tests/endpoints/workspaces.test.js): token/Origin/Host/JSON guards, repository validation and sentinels, catalog and spreads loading, restarts, images, and save routes. Run `cd server; yarn test tests/endpoints/workspaces.test.js`.
+- [fixture-repositories.js](../../../server/tests/helpers/fixture-repositories.js), [catalog-fixtures.js](../../../server/tests/helpers/catalog-fixtures.js), and [EditorFixtures.js](../../../src/tests/EditorFixtures.js): disposable checkout trees, catalog responses, and frontend API mocks. Server tests must set `SPREAD_EDITOR_DATA_DIR` to a temporary fixture directory and use temporary copies; never write real CFRU, DPE, or Cloud checkouts.
+
+## Change checklist
+
+1. Verify input labels, loading/error/cancel states, saved settings version, auto-selection, menu warnings, and unsaved-change transitions in the relevant UI tests.
+2. Verify sentinel paths, canonical/linked containment, server-owned file allowlists, picker process isolation, token and origin guards, restart retries, and data-directory isolation with targeted server tests.
+3. Update this skill if its files or behavior change. Run the narrowest relevant test command; for larger changes also run both full test suites and `yarn build`. After server code changes, remind the user to restart the API server on port 3001.

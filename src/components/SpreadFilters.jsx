@@ -11,6 +11,8 @@ import
 } from "@mui/material";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import FilterListIcon from "@mui/icons-material/FilterList";
+import AddIcon from "@mui/icons-material/Add";
+import IosShareIcon from "@mui/icons-material/IosShare";
 
 import { PREVIEW_LEVELS } from "../../shared/pokemon-mechanics.mjs";
 import { DEFAULT_FILTERS, FLAG_FILTER, countActiveFilters, getSetLabel, getSpreadAbility } from "../../shared/spread-layout.mjs";
@@ -58,7 +60,7 @@ function getFileName(file)
  * @param {string} file The repository-relative file path.
  * @returns {string} The readable title.
  */
-function getFileLabel(file)
+export function getFileLabel(file)
 {
     return getFileName(file).replace(FILE_EXTENSION, "").replace(FILE_WORD_SEPARATOR, " ")
         .replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -228,10 +230,12 @@ const FilterAutocomplete = ({ label, value, options, onChange, multiple = false,
  * @param {number} props.resultCount - How many spreads match.
  * @param {{level: number}} props.preview - The preview settings.
  * @param {Function} props.onPreviewChange - Called with changed preview settings.
- * @param {Function} props.onAutoFix - Opens the IV auto-fix preview.
+ * @param {Function} props.onAutoFix - Opens the auto-fix preview.
+ * @param {Function} props.onAddSpread - Opens the add dialog.
+ * @param {Function} props.onExport - Opens the Showdown export of every matching spread.
  * @returns {JSX.Element} The toolbar.
  */
-const SpreadFilters = ({ spreads, catalog, filters, onFiltersChange, resultCount, preview, onPreviewChange, onAutoFix }) =>
+const SpreadFilters = ({ spreads, catalog, filters, onFiltersChange, resultCount, preview, onPreviewChange, onAutoFix, onAddSpread, onExport }) =>
 {
     const [expanded, setExpanded] = useState(false);
     const options = useMemo(() => buildOptions(spreads, catalog), [spreads, catalog]);
@@ -280,8 +284,10 @@ const SpreadFilters = ({ spreads, catalog, filters, onFiltersChange, resultCount
                                    onChange={(event, level) => level != null && onPreviewChange({ level })}>
                     {PREVIEW_LEVELS.map((level) => <ToggleButton key={level} value={level}>Lv. {level}</ToggleButton>)}
                 </ToggleButtonGroup>
+                <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={onAddSpread}>Add Spread</Button>
+                <Button variant="outlined" size="small" startIcon={<IosShareIcon />} onClick={onExport} disabled={resultCount === 0}>Export</Button>
                 <Button variant="outlined" size="small" startIcon={<AutoFixHighIcon />} onClick={onAutoFix} disabled={resultCount === 0}>
-                    Auto-Fix IVs
+                    Auto-Fix
                 </Button>
             </Stack>
             <Collapse in={expanded} id="spread-filters">

@@ -16,7 +16,7 @@ import Update from "@mui/icons-material/Update";
 import Warning from "@mui/icons-material/Warning";
 import { Box, Chip, Container, Divider, List, ListItem, ListItemText, Paper, Typography } from "@mui/material";
 
-import "../styles/DefaultPage.css";
+import "../styles/SpreadEditorPage.css";
 
 const LAST_UPDATED = "January 1, 2026";
 
@@ -29,7 +29,7 @@ const LAST_UPDATED = "January 1, 2026";
 const TermsOfService = () =>
 {
     return (
-        <Container className="default-page" maxWidth="md" sx={{ py: 6 }}>
+        <Container className="page-content" maxWidth="md" sx={{ py: 6 }}>
             <Box sx={{ 
                 textAlign: 'center', 
                 mb: 5,

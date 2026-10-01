@@ -79,6 +79,18 @@ const FORM_CHANGE_MOVES =
     SPECIES_MELOETTA_PIROUETTE: ["MOVE_RELICSONG"],
 };
 
+const UNBOUND_MACRO = "UNBOUND";
+
+// CFRU's gPikachuSpreads confirms the standard signatures; PhD's Flamethrower is Unbound-specific.
+const COSPLAY_FORM_CHANGE_MOVES =
+[
+    { species: "SPECIES_PIKACHU_LIBRE", move: "MOVE_FLYINGPRESS" },
+    { species: "SPECIES_PIKACHU_ROCK_STAR", move: "MOVE_METEORMASH" },
+    { species: "SPECIES_PIKACHU_BELLE", move: "MOVE_ICICLECRASH" },
+    { species: "SPECIES_PIKACHU_POP_STAR", move: "MOVE_DRAININGKISS" },
+    { species: "SPECIES_PIKACHU_PHD", move: "MOVE_FLAMETHROWER", macro: UNBOUND_MACRO },
+];
+
 // Fusions and item forms keep the moves of the form they came from
 const FORM_CHANGE_EDGES =
 [
@@ -378,6 +390,10 @@ function buildLearnsets({ dpe, species, moveNames, gameMoves, cfruMacros })
         if (universe.has(target))
             for (const move of moves)
                 add(target, move, LEARN_SOURCES.FORM_CHANGE);
+
+    for (const { species: target, move, macro } of COSPLAY_FORM_CHANGE_MOVES)
+        if (universe.has(target) && gameMoves.includes(move) && (macro == null || cfruMacros.has(macro)))
+            add(target, move, LEARN_SOURCES.FORM_CHANGE);
 
     // Only the game's species are sent, with their sources in a fixed order
     const learnsets = {};

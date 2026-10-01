@@ -9,7 +9,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { BATTLE_MOVES, CLOUD_FILES, DPE_FILES, DPE_SPRITE_FILES, ITEM_TABLES, NORMAL_PALETTE, SHINY_PALETTE, createIndexedPng, createPokeApiFetch } = require("../helpers/catalog-fixtures");
+const { BATTLE_MOVES, CLOUD_FILES, COSPLAY_SIGNATURE_MOVES, DPE_FILES, DPE_SPRITE_FILES, ITEM_TABLES, NORMAL_PALETTE, SHINY_PALETTE, createIndexedPng, createPokeApiFetch } = require("../helpers/catalog-fixtures");
 const { CFRU_SOURCE_FILES } = require("../helpers/spread-fixtures");
 const { getBallIcon, getItemIcon, getSpeciesIcon, getSpeciesSprites, getTypeIcon, getTypeSymbol } = require("../../services/assets");
 const
@@ -34,6 +34,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const CLOUD_IMAGES = "/api/images/workspace-1/";
 const EMPTY_IMAGES = { baseUrl: CLOUD_IMAGES, root: new Set(), items: new Set(), gen9: new Set(), gen9Shiny: new Set(), unboundShinies: new Set() };
 const POKEAPI_SPRITES = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/";
+const UNBOUND_CONFIG = "#define UNBOUND\n";
+const COSPLAY_PHD = "SPECIES_PIKACHU_PHD";
+const COSPLAY_GAME_MOVES = [...GAME_MOVES, ...Object.values(COSPLAY_SIGNATURE_MOVES)];
 
 
 /**
@@ -74,6 +77,24 @@ function getSpeciesInfo()
 function buildFixtureLearnsets(cfruMacros = CFRU_MACROS)
 {
     return buildLearnsets({ dpe: parseDpeSources(getDpeSources()), species: getSpeciesInfo(), moveNames: { MOVE_MEGAPUNCH: "Mega Punch" }, gameMoves: GAME_MOVES, cfruMacros });
+}
+
+/**
+ * Builds cosplay learnsets from synthetic DPE sources and an evaluated CFRU config.
+ *
+ * @param {string} configText The CFRU configuration.
+ * @param {Array<string>} [gameMoves] The selected game's available moves.
+ * @param {object} [dpe] The parsed fixture DPE sources.
+ * @returns {object} The catalog values used by shared legality checks.
+ */
+function buildCosplayCatalog(configText, gameMoves = COSPLAY_GAME_MOVES, dpe = parseDpeSources(getDpeSources()))
+{
+    const species = getSpeciesInfo();
+    for (const target of Object.keys(COSPLAY_SIGNATURE_MOVES))
+        species[target] = species.SPECIES_PIKACHU;
+
+    const { learnsets } = buildLearnsets({ dpe, species, moveNames: {}, gameMoves, cfruMacros: evaluatePreprocessor(configText).macros });
+    return { name: "Cosplay Fixture", learnsets, moves: Object.fromEntries(gameMoves.map((move) => [move, {}])) };
 }
 
 describe("Game data parser", () =>
@@ -202,6 +223,54 @@ describe("Game data parser", () =>
 
 describe("Learnsets", () =>
 {
+    it("should allow every cosplay signature in an Unbound build without sharing it with other forms", () =>
+    {
+        const catalog = buildCosplayCatalog(UNBOUND_CONFIG);
+        for (const [target, move] of Object.entries(COSPLAY_SIGNATURE_MOVES))
+        {
+            expect(catalog.learnsets[target].status).to.equal("complete");
+            expect(catalog.learnsets[target].moves[move]).to.deep.equal(["formChange"]);
+            expect(catalog.learnsets[target].moves.MOVE_THUNDERBOLT).to.deep.equal(["level"]);
+            expect(getMoveLegality(catalog, target, move)).to.deep.equal({ status: LEGALITY.ALLOWED, sources: ["formChange"], reason: null });
+
+            for (const other of ["SPECIES_PIKACHU", "SPECIES_PIKACHU_SURFING", ...Object.keys(COSPLAY_SIGNATURE_MOVES)])
+                if (other !== target)
+                    expect(getMoveLegality(catalog, other, move).status).to.equal(LEGALITY.ILLEGAL);
+        }
+    });
+
+    it("should allow standard cosplay signatures but not PhD Flamethrower outside active Unbound builds", () =>
+    {
+        for (const configText of ["", "// #define UNBOUND\n", "#if 0\n#define UNBOUND\n#endif\n", "#define UNBOUND\n#undef UNBOUND\n"])
+        {
+            const catalog = buildCosplayCatalog(configText);
+            for (const [target, move] of Object.entries(COSPLAY_SIGNATURE_MOVES))
+                expect(getMoveLegality(catalog, target, move).status).to.equal(target === COSPLAY_PHD ? LEGALITY.ILLEGAL : LEGALITY.ALLOWED);
+            expect(catalog.learnsets[COSPLAY_PHD].moves).to.not.have.property(COSPLAY_SIGNATURE_MOVES[COSPLAY_PHD]);
+        }
+    });
+
+    it("should not add cosplay signature moves absent from the selected game", () =>
+    {
+        const catalog = buildCosplayCatalog(UNBOUND_CONFIG, []);
+        for (const [target, move] of Object.entries(COSPLAY_SIGNATURE_MOVES))
+        {
+            expect(catalog.learnsets[target].moves).to.not.have.property(move);
+            expect(getMoveLegality(catalog, target, move).status).to.equal(LEGALITY.UNDEFINED);
+        }
+    });
+
+    it("should keep cosplay legality unknown when DPE learnsets are unavailable", () =>
+    {
+        const dpe = parseDpeSources({ ...getDpeSources(), configText: "" });
+        const catalog = buildCosplayCatalog(UNBOUND_CONFIG, COSPLAY_GAME_MOVES, dpe);
+        for (const [target, move] of Object.entries(COSPLAY_SIGNATURE_MOVES))
+        {
+            expect(catalog.learnsets[target].status).to.equal("missing");
+            expect(getMoveLegality(catalog, target, move).status).to.equal(LEGALITY.UNKNOWN);
+        }
+    });
+
     it("should combine level-up, evolution, egg, TM and tutor moves", () =>
     {
         const { learnsets } = buildFixtureLearnsets();

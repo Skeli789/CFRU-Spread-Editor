@@ -41,6 +41,7 @@ const KEY_UP = "ArrowUp";
 const KEY_HOME = "Home";
 const KEY_END = "End";
 const NAVIGATION_KEYS = [KEY_DOWN, KEY_UP, KEY_HOME, KEY_END];
+const SCROLL_END_TOLERANCE = 1;
 
 const itemOptionCache = new WeakMap();
 
@@ -119,13 +120,18 @@ const ItemLabel = ({ option }) =>
  * @param {object} theme The theme.
  * @returns {object} The styles.
  */
-function getItemListStyles(theme)
+export function getItemListStyles(theme)
 {
-    return {
+    const styles =
+    {
         flex: 1,
         minHeight: 0,
+        overflowY: "auto",
+        overflowX: "hidden",
+        scrollbarGutter: "stable",
         "& .item-row-highlighted": { outline: `2px solid ${theme.palette.focus?.main ?? theme.palette.primary.main}`, outlineOffset: -2 },
     };
+    return styles;
 }
 
 /**
@@ -172,6 +178,7 @@ const ItemChooserContent = ({ catalog, value, onSelect, onClose }) =>
     const shown = items.slice(0, list.count);
     const [scrollPending, setScrollPending] = useState(true);
     const [scrolled, setScrolled] = useState(false);
+    const [atBottom, setAtBottom] = useState(false);
     const [highlight, setHighlight] = useState({ key: "", index: 0 });
     const navKey = JSON.stringify([search, typeLabel]);
     // Until the user types or moves, the highlight rests on the chosen item
@@ -181,7 +188,9 @@ const ItemChooserContent = ({ catalog, value, onSelect, onClose }) =>
     selectRef.current = onSelect;
     const selectItem = useCallback((item) => selectRef.current(item), []);
 
-    /** Keeps the keyboard highlight visible without moving the dialog itself. */
+    /**
+     * Keeps the keyboard highlight visible without moving the dialog itself.
+     */
     useEffect(() =>
     {
         if (highlight.key !== navKey || highlightedIndex >= list.count)
@@ -235,22 +244,34 @@ const ItemChooserContent = ({ catalog, value, onSelect, onClose }) =>
         setScrollPending(false);
     }, [scrollPending, items, value, list]);
 
-    /** Tracks scrolling for both incremental loading and the return-to-top control. */
+    /**
+     * Tracks loading and the bottom-only fallback control.
+     *
+     * @param {React.UIEvent} event The list scroll.
+     * @returns {void} Nothing.
+     */
     const handleScroll = (event) =>
     {
         list.onScroll(event);
-        setScrolled(event.currentTarget.scrollTop > 0);
+        const element = event.currentTarget;
+        setScrolled(element.scrollTop > 0);
+        setAtBottom(element.scrollTop > 0 && element.scrollTop + element.clientHeight >= element.scrollHeight - SCROLL_END_TOLERANCE);
     };
 
-    /** Returns the item list to its first entry. */
+    /**
+     * Returns the item list to its first entry.
+     */
     const scrollToTop = () =>
     {
         if (listRef.current != null)
             listRef.current.scrollTop = 0;
         setScrolled(false);
+        setAtBottom(false);
     };
 
-    /** Starts each new search or type filter at the top of the list, after the opening scroll to the chosen item. */
+    /**
+     * Starts each new search or type filter at the top of the list, after the opening scroll to the chosen item.
+     */
     const filtersRef = useRef(null);
     useEffect(() =>
     {
@@ -269,6 +290,7 @@ const ItemChooserContent = ({ catalog, value, onSelect, onClose }) =>
                                    inputRef={searchRef} autoFocus sx={{ flex: "1 1 200px" }} />
                         <Autocomplete
                             size="small"
+                            autoHighlight
                             sx={{ flex: "0 1 220px" }}
                             options={typeLabels}
                             value={typeLabel}
@@ -283,7 +305,7 @@ const ItemChooserContent = ({ catalog, value, onSelect, onClose }) =>
                     <Typography variant="body2" color="text.secondary" role="status">
                         {items.length === 1 ? "1 item" : `${items.length} items`}
                     </Typography>
-                    <Box sx={{ display: "flex", flex: "1 1 auto", minHeight: 120, position: "relative" }}>
+                    <Box className="item-list-viewport">
                         <List dense disablePadding className="item-list" ref={listRef} onScroll={handleScroll} aria-label="Items" sx={getItemListStyles}>
                             {shown.map((option, index) =>
                             {
@@ -295,6 +317,14 @@ const ItemChooserContent = ({ catalog, value, onSelect, onClose }) =>
                                     </React.Fragment>
                                 );
                             })}
+                            {atBottom && list.count < items.length &&
+                                <li className="load-more">
+                                    <Button size="small" onClick={() =>
+                                    {
+                                        list.loadMore();
+                                        setAtBottom(false);
+                                    }}>Load More</Button>
+                                </li>}
                         </List>
                         {scrolled &&
                             <Tooltip title="Scroll to top">
@@ -304,10 +334,6 @@ const ItemChooserContent = ({ catalog, value, onSelect, onClose }) =>
                                 </IconButton>
                             </Tooltip>}
                     </Box>
-                    {list.count < items.length &&
-                        <div className="load-more">
-                            <Button size="small" onClick={list.loadMore}>Load More</Button>
-                        </div>}
                 </Stack>
             </DialogContent>
             <DialogActions sx={{ justifyContent: "flex-start" }}>
@@ -326,9 +352,10 @@ const ItemChooserContent = ({ catalog, value, onSelect, onClose }) =>
  * @param {string|number} props.value - The held item's ITEM_* constant, or a raw value the game does not name.
  * @param {Function} props.onChange - Called with the chosen ITEM_* constant.
  * @param {string} [props.speciesName] - The species display name for the dialog title.
+ * @param {Function} [props.onFieldCommit] Advances focus after an inline option selection.
  * @returns {JSX.Element} The picker.
  */
-const ItemPicker = ({ catalog, value, onChange, speciesName }) =>
+const ItemPicker = ({ catalog, value, onChange, speciesName, onFieldCommit }) =>
 {
     const [open, setOpen] = useState(false);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -347,7 +374,7 @@ const ItemPicker = ({ catalog, value, onChange, speciesName }) =>
     };
 
     return (
-        <div ref={rootRef} className="item-picker">
+        <div ref={rootRef} className="item-picker" data-advance-field="Item">
             <Autocomplete
                 size="small"
                 autoHighlight
@@ -357,7 +384,12 @@ const ItemPicker = ({ catalog, value, onChange, speciesName }) =>
                 onOpen={() => setOpen(true)}
                 onClose={() => setOpen(false)}
                 disableClearable
-                onChange={(event, option) => onChange(option.value)}
+                onChange={(event, option, reason) =>
+                {
+                    onChange(option.value);
+                    if (reason === "selectOption")
+                        onFieldCommit?.(event, "Item");
+                }}
                 filterOptions={(choices, state) => filterBySearch(choices, state.inputValue, (option) => option.name)}
                 getOptionLabel={(option) => option.name}
                 isOptionEqualToValue={(option, choice) => option.value === choice.value}

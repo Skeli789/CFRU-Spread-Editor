@@ -485,7 +485,9 @@ const MoveChooserContent = ({ catalog, fields, initialSlot, onChange, onClose })
         : (column.key !== Z_MOVE_POWER && column.key !== MAX_MOVE_POWER) || showOtherPowers)), [statusOnly, showOtherPowers]);
     const speciesName = getLabel(catalog.species, fields.species);
 
-    /** Starts a changed search or filter at the first result. */
+    /**
+     * Starts a changed search or filter at the first result.
+     */
     useEffect(() =>
     {
         if (tableRef.current != null)
@@ -512,7 +514,9 @@ const MoveChooserContent = ({ catalog, fields, initialSlot, onChange, onClose })
         setScrollTarget(null);
     }, [scrollTarget, rows, list]);
 
-    /** Keeps the keyboard highlight visible without moving the dialog itself. */
+    /**
+     * Keeps the keyboard highlight visible without moving the dialog itself.
+     */
     useEffect(() =>
     {
         if (highlight.key !== navKey || highlightedIndex >= list.count)
@@ -563,7 +567,9 @@ const MoveChooserContent = ({ catalog, fields, initialSlot, onChange, onClose })
     chooseRef.current = choose;
     const chooseOption = useCallback((option) => chooseRef.current(option), []);
 
-    /** Selects the active slot's text after React updates the controlled input. */
+    /**
+     * Selects the active slot's text after React updates the controlled input.
+     */
     useEffect(() =>
     {
         slotRefs.current[activeSlot]?.focus();
@@ -595,7 +601,9 @@ const MoveChooserContent = ({ catalog, fields, initialSlot, onChange, onClose })
         }
     };
 
-    /** Resets every chooser filter and the optional columns. */
+    /**
+     * Resets every chooser filter and the optional columns.
+     */
     const clearFilters = () =>
     {
         setTyped(null);
@@ -781,9 +789,10 @@ export const MoveChooserDialog = ({ open, catalog, fields, initialSlot, onChange
  * @param {number} props.slot - The move slot, 0 to 3.
  * @param {Function} props.onChange - Called with the slot, the MOVE_* constant or null, and the Hidden Power type.
  * @param {Function} props.onAdvanced - Opens the Choose Moves dialog at this slot.
+ * @param {Function} [props.onFieldCommit] Advances focus after an inline option selection.
  * @returns {JSX.Element} The picker.
  */
-const MovePicker = ({ catalog, fields, slot, onChange, onAdvanced }) =>
+const MovePicker = ({ catalog, fields, slot, onChange, onAdvanced, onFieldCommit }) =>
 {
     const [open, setOpen] = useState(false);
     const label = `Move ${slot + 1}`;
@@ -804,7 +813,7 @@ const MovePicker = ({ catalog, fields, slot, onChange, onAdvanced }) =>
     };
 
     return (
-        <div className="move-picker">
+        <div className="move-picker" data-advance-field={label}>
             <Autocomplete
                 size="small"
                 options={options}
@@ -814,7 +823,12 @@ const MovePicker = ({ catalog, fields, slot, onChange, onAdvanced }) =>
                 open={open}
                 onOpen={() => setOpen(true)}
                 onClose={() => setOpen(false)}
-                onChange={(event, option) => onChange(slot, option?.move ?? null, option?.hiddenPowerType ?? null)}
+                onChange={(event, option, reason) =>
+                {
+                    onChange(slot, option?.move ?? null, option?.hiddenPowerType ?? null);
+                    if (reason === "selectOption" && option != null)
+                        onFieldCommit?.(event, label);
+                }}
                 filterOptions={(choices, state) => filterBySearch(choices, state.inputValue, (option) => option.name)}
                 getOptionLabel={(option) => option.name}
                 isOptionEqualToValue={(option, selected) => option.key === selected.key}
@@ -870,9 +884,10 @@ const MovePicker = ({ catalog, fields, slot, onChange, onAdvanced }) =>
  * @param {object} props.catalog - The game catalog.
  * @param {object} props.fields - The spread's values.
  * @param {Function} props.onChange - Called with the slot, the MOVE_* constant or null, and the Hidden Power type.
+ * @param {Function} [props.onFieldCommit] Advances focus after an inline option selection.
  * @returns {JSX.Element} The move slots.
  */
-const MoveEditor = ({ catalog, fields, onChange }) =>
+const MoveEditor = ({ catalog, fields, onChange, onFieldCommit }) =>
 {
     const [dialog, setDialog] = useState({ open: false, slot: 0 });
     const rootRef = useRef(null);
@@ -899,7 +914,8 @@ const MoveEditor = ({ catalog, fields, onChange }) =>
                     <div className={duplicate ? "move-status-illegal" : undefined}
                          onBlurCapture={(event) => clearEmpty(event, slot)}
                          onKeyDownCapture={(event) => { if (event.key === KEY_ENTER) clearEmpty(event, slot); }}>
-                        <MovePicker catalog={catalog} fields={fields} slot={slot} onChange={onChange} onAdvanced={() => setDialog({ open: true, slot })} />
+                        <MovePicker catalog={catalog} fields={fields} slot={slot} onChange={onChange} onFieldCommit={onFieldCommit}
+                                    onAdvanced={() => setDialog({ open: true, slot })} />
                     </div>;
                 return duplicate ? <Tooltip key={slot} title={DUPLICATE_MOVE_LABEL}>{field}</Tooltip> : <React.Fragment key={slot}>{field}</React.Fragment>;
             })}
