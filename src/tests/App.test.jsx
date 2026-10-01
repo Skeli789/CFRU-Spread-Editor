@@ -1,9 +1,11 @@
 import React from "react";
 import { readFileSync } from "node:fs";
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import App from "../App";
+import PrivacyPolicy from "../components/PrivacyPolicy";
+import TermsOfService from "../components/TermsOfService";
 
 beforeEach(() =>
 {
@@ -19,6 +21,63 @@ test("renders app", () =>
 {
     const { getByTestId } = render(<App />);
     expect(getByTestId("spread-editor-page")).toBeInTheDocument();
+});
+
+test("privacy policy explains local hosting, stored data, and removal", () =>
+{
+    render(<PrivacyPolicy />);
+
+    expect(screen.getByRole("heading", { level: 1, name: "Privacy Policy" })).toBeInTheDocument();
+    expect(screen.getByText("Last updated: October 1, 2026")).toBeInTheDocument();
+    expect(screen.getByText(/CFRU Spread Editor is a locally hosted web app/)).toHaveTextContent("There are no user accounts, analytics, tracking cookies");
+    expect(screen.getByText(/Browser localStorage remembers repository paths/)).toHaveTextContent("unsaved spread changes");
+    expect(screen.getByText(/The local API reads the CFRU/)).toHaveTextContent("DPE and Unbound Cloud remain read-only");
+    expect(screen.getByText(/The API stores parsed source caches/)).toHaveTextContent("SPREAD_EDITOR_DATA_DIR");
+    expect(screen.getByText(/Upload ZIP sends your chosen archive to your local API/)).toHaveTextContent("not the original ZIP");
+    expect(screen.getByText(/To remove browser preferences and cached drafts/)).toHaveTextContent("Clearing browser storage does not remove API data");
+    expect(screen.queryByText(/does not collect, store, or process any personal data/)).not.toBeInTheDocument();
+});
+
+test("privacy policy discloses external requests and local security limitations", () =>
+{
+    render(<PrivacyPolicy />);
+
+    const requests = screen.getByText(/Local hosting does not mean every feature is offline/);
+    expect(requests).toHaveTextContent("pokeapi.co");
+    expect(requests).toHaveTextContent("raw.githubusercontent.com");
+    expect(requests).toHaveTextContent("play.pokemonshowdown.com");
+    expect(screen.getByText(/These providers receive normal network request information/)).toHaveTextContent("public IP address");
+    expect(screen.getByText(/These providers receive normal network request information/)).toHaveTextContent("does not send repository files, local paths, or spread edits");
+    expect(screen.getByText(/The API binds to the loopback address/)).toHaveTextContent("Local data is not encrypted by the app");
+    expect(screen.getByText(/Raise questions with the maintainers/)).toHaveTextContent("Issues and attachments may be public");
+});
+
+test("terms describe repository editing responsibilities instead of hosted accounts", () =>
+{
+    render(<TermsOfService />);
+
+    expect(screen.getByRole("heading", { level: 1, name: "Terms of Service" })).toBeInTheDocument();
+    expect(screen.getByText("Last updated: October 1, 2026")).toBeInTheDocument();
+    expect(screen.getByText(/These terms describe use of CFRU Spread Editor/)).toHaveTextContent("There is no hosted account");
+    expect(screen.getByText(/CFRU Spread Editor loads regular battle facility/)).toHaveTextContent("four supported CFRU spread headers, not a compiled game or ROM");
+    expect(screen.getByText(/CFRU Spread Editor loads regular battle facility/)).toHaveTextContent("local extracted copy");
+    expect(screen.getByText(/Choose the game that matches your CFRU build/)).toHaveTextContent("review Load Warnings");
+    expect(screen.getByText(/Inspect source diffs/)).toHaveTextContent("compile your project");
+    expect(screen.getByText(/Saving changes modifies source files/)).toHaveTextContent("not a substitute for Git commits or independent backups");
+    expect(screen.queryByRole("heading", { name: "Account Termination" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/account suspension or ban|reverse engineer or hack/i)).not.toBeInTheDocument();
+});
+
+test("terms explain local-only use, license rights, and qualified disclaimers", () =>
+{
+    render(<TermsOfService />);
+
+    expect(screen.getByText(/Keep the browser app and API local/)).toHaveTextContent("public tunnel, port forwarding, or a LAN service");
+    expect(screen.getByText(/Availability depends on your local browser/)).toHaveTextContent("There is no hosted uptime commitment");
+    expect(screen.getByText(/The editor's package metadata/)).toHaveTextContent("MIT");
+    expect(screen.getByText(/The editor's package metadata/)).toHaveTextContent("do not replace or restrict rights");
+    expect(screen.getByText(/To the extent permitted by applicable law/)).toHaveTextContent("Nothing in these terms excludes rights or liabilities");
+    expect(screen.getByText(/Terms may be updated with future app versions/)).toHaveTextContent("there is no account to close");
 });
 
 test("uses the red light theme and persists a dark mode toggle", () =>

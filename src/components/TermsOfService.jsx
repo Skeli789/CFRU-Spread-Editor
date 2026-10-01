@@ -18,7 +18,7 @@ import { Box, Chip, Container, Divider, List, ListItem, ListItemText, Paper, Typ
 
 import "../styles/SpreadEditorPage.css";
 
-const LAST_UPDATED = "January 1, 2026";
+const LAST_UPDATED = "October 1, 2026";
 
 
 /**
@@ -58,8 +58,9 @@ const TermsOfService = () =>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    By using this application, you agree to be bound by these Terms of Service. 
-                    If you do not agree to these terms, please do not use the application.
+                    These terms describe use of CFRU Spread Editor as a locally hosted tool on your own
+                    computer. By using the app, you accept these terms. If you do not accept them, stop
+                    using it. There is no hosted account, subscription, or developer-operated storage service.
                 </Typography>
             </Paper>
 
@@ -72,8 +73,13 @@ const TermsOfService = () =>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    This is a web application that provides various features and services. 
-                    The service is provided "as is" without warranties of any kind.
+                    CFRU Spread Editor loads regular battle facility, special trainer, multi partner, and
+                    raid partner spreads from Complete Fire Red Upgrade (CFRU). It uses Dynamic Pokemon
+                    Expansion (DPE) and Unbound Cloud as read-only sources for game data, learnsets, and artwork.
+                    It supports editing, adding, deleting, reordering, Showdown text exchange, and repository
+                    input ZIP exchange. Save Changes writes the four supported CFRU spread headers, not a
+                    compiled game or ROM. Imported ZIP workspaces save to a local extracted copy; export a
+                    new ZIP to carry those edits elsewhere.
                 </Typography>
             </Paper>
 
@@ -81,39 +87,40 @@ const TermsOfService = () =>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <CheckCircle sx={{ fontSize: 32, mr: 2, color: '#43e97b' }} />
                     <Typography variant="h5" component="h2" sx={{ fontWeight: 600 }}>
-                        Acceptable Use Policy
+                        Your Repositories and Responsibilities
                     </Typography>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    You agree to use this application responsibly and in accordance with the following guidelines:
+                    You control the repositories, imported files, and edits processed by your local instance.
+                    Before saving or sharing data:
                 </Typography>
                 <List>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="No Abuse" 
-                            secondary="Do not flood the server with excessive requests or automated queries" 
+                            primary="Use Authorized Sources"
+                            secondary="Select or import only repositories and files you are entitled to access, modify, and use. Follow applicable laws and the licenses of the source projects and assets."
                             slotProps={{ primary: { fontWeight: 600 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Fair Usage" 
-                            secondary="Do not make an unreasonable number of requests that could impact service availability for other users" 
+                            primary="Match Your Game Configuration"
+                            secondary="Choose the game that matches your CFRU build and review Load Warnings. Catalog checks, move legality, and stat previews are aids, not a guarantee of compatibility with your particular checkout."
                             slotProps={{ primary: { fontWeight: 600 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Legal Compliance" 
-                            secondary="Use the service only for lawful purposes and in compliance with applicable laws" 
+                            primary="Review and Test Changes"
+                            secondary="Inspect source diffs, compile your project, and test the resulting game. Avoid concurrent external edits while saving and resolve conflicts before retrying. The editor does not compile or test your game for you."
                             slotProps={{ primary: { fontWeight: 600 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Respect Resources" 
-                            secondary="Be mindful of server resources and use the application efficiently" 
+                            primary="Share Deliberately"
+                            secondary="Inspect exported ZIPs, Showdown text, screenshots, and logs before sharing them. You are responsible for any source code, assets, or private information you distribute."
                             slotProps={{ primary: { fontWeight: 600 } }}
                         />
                     </ListItem>
@@ -124,41 +131,42 @@ const TermsOfService = () =>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <Block sx={{ fontSize: 32, mr: 2, color: '#ff6b6b' }} />
                     <Typography variant="h5" component="h2" sx={{ fontWeight: 600, color: '#ff6b6b' }}>
-                        Prohibited Activities
+                        Local Hosting and Safe Use
                     </Typography>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    The following activities are strictly prohibited and may result in immediate account suspension or ban:
+                    This app is intended for a trusted user on their own computer. Its local session token
+                    is a request safeguard, not a multi-user login or a public-hosting security system.
                 </Typography>
                 <List>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'rgba(255,107,107,0.1)' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Attempting to overload or crash the server" 
+                            primary="Keep the browser app and API local; do not expose them through a public tunnel, port forwarding, or a LAN service."
                             slotProps={{ primary: { fontWeight: 500 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'rgba(255,107,107,0.1)' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Making excessive API calls or requests" 
+                            primary="Do not bypass path validation, origin checks, or session safeguards to access another person's files or computer."
                             slotProps={{ primary: { fontWeight: 500 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'rgba(255,107,107,0.1)' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Using automated tools to abuse the service" 
+                            primary="Import ZIPs only from sources you trust and keep your runtime and dependencies up to date."
                             slotProps={{ primary: { fontWeight: 500 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'rgba(255,107,107,0.1)' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Attempting to reverse engineer or hack the application" 
+                            primary="Respect third-party artwork and data providers; do not use the app to abuse their services."
                             slotProps={{ primary: { fontWeight: 500 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'rgba(255,107,107,0.1)' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Using the service for illegal activities" 
+                            primary="If you modify or host a different version, you are responsible for its security and for accurately describing its data practices."
                             slotProps={{ primary: { fontWeight: 500 } }}
                         />
                     </ListItem>
@@ -169,13 +177,17 @@ const TermsOfService = () =>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <Warning sx={{ fontSize: 32, mr: 2, color: '#ffa502' }} />
                     <Typography variant="h5" component="h2" sx={{ fontWeight: 600 }}>
-                        Account Termination
+                        Backups and Data Loss
                     </Typography>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    We reserve the right to suspend or ban users who violate these terms. 
-                    Violations will be monitored and may result in immediate termination without warning.
+                    Saving changes modifies source files on your computer. The app creates original-file
+                    backups and save journals and attempts recovery from interrupted saves, but these are
+                    not a substitute for Git commits or independent backups. Preserve your own copies before
+                    editing. Unsaved browser drafts and imported workspaces can be lost if local storage is
+                    cleared or the app's data folder is removed. Stopping or uninstalling the app does not
+                    automatically undo repository edits or delete exported files.
                 </Typography>
             </Paper>
 
@@ -183,14 +195,16 @@ const TermsOfService = () =>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <Cloud sx={{ fontSize: 32, mr: 2, color: '#4facfe' }} />
                     <Typography variant="h5" component="h2" sx={{ fontWeight: 600 }}>
-                        Service Availability
+                        Availability and External Resources
                     </Typography>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    We strive to maintain high service availability but do not guarantee uninterrupted 
-                    access. The service may be temporarily unavailable due to maintenance, updates, 
-                    or technical issues.
+                    Availability depends on your local browser, API process, filesystem permissions,
+                    repository contents, and installed dependencies. There is no hosted uptime commitment
+                    or guaranteed support. Some indexes and artwork are requested from PokeAPI, GitHub-hosted
+                    sprite projects, and Pokemon Showdown; those resources may be unavailable or change
+                    independently. See the Privacy Policy for local storage and external request details.
                 </Typography>
             </Paper>
 
@@ -198,14 +212,35 @@ const TermsOfService = () =>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <Info sx={{ fontSize: 32, mr: 2, color: '#a29bfe' }} />
                     <Typography variant="h5" component="h2" sx={{ fontWeight: 600 }}>
-                        Limitation of Liability
+                        Disclaimer and Limitation of Liability
                     </Typography>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    This application is provided "as is" without warranties. We are not liable for any damages 
-                    arising from the use or inability to use the service, including data loss or 
-                    service interruptions.
+                    To the extent permitted by applicable law, the app is provided "as is" and "as available",
+                    without warranties of accuracy, fitness for a particular purpose, or uninterrupted operation.
+                    The maintainers and contributors are not liable for losses arising from use of the app,
+                    including lost edits, damaged source files, failed builds, or incorrect game behavior.
+                    Nothing in these terms excludes rights or liabilities that applicable law does not allow
+                    to be excluded.
+                </Typography>
+            </Paper>
+
+            <Paper elevation={3} sx={{ p: 4, mb: 3, borderLeft: '4px solid #43e97b' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                    <Description sx={{ fontSize: 32, mr: 2, color: '#43e97b' }} />
+                    <Typography variant="h5" component="h2" sx={{ fontWeight: 600 }}>
+                        Software License and Third-Party Rights
+                    </Typography>
+                </Box>
+                <Divider sx={{ mb: 2 }} />
+                <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
+                    The editor's package metadata identifies its software license as MIT. These terms do
+                    not replace or restrict rights granted by the applicable software license. Dependencies,
+                    connected repositories, game data, and artwork remain subject to their own licenses
+                    and owners' rights. Using or exporting them through this app grants no additional rights.
+                    Pokemon names and related assets belong to their respective owners; this editor is not
+                    an official Nintendo, Game Freak, or The Pokemon Company product.
                 </Typography>
             </Paper>
 
@@ -218,8 +253,9 @@ const TermsOfService = () =>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    We may modify these terms at any time. Continued use of the service after 
-                    changes constitutes acceptance of the updated terms.
+                    Terms may be updated with future app versions, with the revision date shown above.
+                    Review them when updating. You can stop using the app at any time by stopping its
+                    local processes; there is no account to close.
                 </Typography>
             </Paper>
 
@@ -232,8 +268,9 @@ const TermsOfService = () =>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    If you have questions about these terms or need to report violations, 
-                    please contact us through the application's support channels.
+                    Direct questions and bug reports to the maintainers through the source repository's
+                    issue tracker. Do not include private repository contents, personal paths, or session
+                    tokens in public reports. Support and response times are not guaranteed.
                 </Typography>
             </Paper>
         </Container>

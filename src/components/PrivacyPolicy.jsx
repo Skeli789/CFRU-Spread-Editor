@@ -16,7 +16,7 @@ import { Box, Chip, Container, Divider, List, ListItem, ListItemText, Paper, Typ
 
 import "../styles/SpreadEditorPage.css";
 
-const LAST_UPDATED = "January 1, 2026";
+const LAST_UPDATED = "October 1, 2026";
 
 
 /**
@@ -51,14 +51,16 @@ const PrivacyPolicy = () =>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <Policy sx={{ fontSize: 32, mr: 2, color: '#667eea' }} />
                     <Typography variant="h5" component="h2" sx={{ fontWeight: 600 }}>
-                        Data Collection
+                        Local App and Scope
                     </Typography>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    This application does not collect, store, or process any personal data from its users. 
-                    We are committed to protecting your privacy and ensuring that your information 
-                    remains completely private.
+                    CFRU Spread Editor is a locally hosted web app for editing CFRU battle facility spreads.
+                    In the standard local setup, your browser connects to an API running on your own computer,
+                    not a developer-operated cloud service. There are no user accounts, analytics, tracking
+                    cookies, or automatic uploads of your repositories or spread edits to the developers.
+                    This policy describes the unmodified app in that setup, not a publicly hosted or modified version.
                 </Typography>
             </Paper>
 
@@ -66,38 +68,43 @@ const PrivacyPolicy = () =>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <Lock sx={{ fontSize: 32, mr: 2, color: '#f093fb' }} />
                     <Typography variant="h5" component="h2" sx={{ fontWeight: 600 }}>
-                        Information We Don't Collect
+                        Data Used and Stored Locally
                     </Typography>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <List>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Personal identification information" 
+                            primary="Browser preferences and unsaved edits"
+                            secondary="Browser localStorage remembers repository paths, the selected game, your theme preference, and unsaved spread changes. Paths may contain your operating system username."
                             sx={{ '& .MuiListItemText-primary': { fontWeight: 500 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Usage data or analytics" 
+                            primary="Repository data"
+                            secondary="The local API reads the CFRU, Dynamic Pokemon Expansion, and Unbound Cloud folders you select to load spreads, configuration, catalogs, learnsets, and artwork. Save Changes writes only the four supported CFRU spread headers; DPE and Unbound Cloud remain read-only references."
                             sx={{ '& .MuiListItemText-primary': { fontWeight: 500 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Cookies or tracking data" 
+                            primary="Caches, backups, and recovery records"
+                            secondary="The API stores parsed source caches, downloaded PokeAPI indexes, original-file backups, and save journals on your computer. The default data folder is %LOCALAPPDATA%/CFRU Spread Editor on Windows or ~/.cfru-spread-editor on macOS and Linux, unless SPREAD_EDITOR_DATA_DIR overrides it."
                             sx={{ '& .MuiListItemText-primary': { fontWeight: 500 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Device information" 
+                            primary="ZIP imports and exports"
+                            secondary="Upload ZIP sends your chosen archive to your local API, which keeps extracted repository inputs in its local data folder. Edits are saved to that imported copy, not the original ZIP. Download ZIP creates a file containing repository inputs for you to keep or share; inspect it before sharing source data."
                             sx={{ '& .MuiListItemText-primary': { fontWeight: 500 } }}
                         />
                     </ListItem>
-                    <ListItem sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}>
+                    <ListItem>
                         <ListItemText 
-                            primary="Location data" 
+                            primary="Showdown text and session access"
+                            secondary="Pasted Showdown text is processed locally. Copy and download actions place exported text on your clipboard or in a file you choose to share. Local API session tokens are held in memory and are not account credentials."
                             sx={{ '& .MuiListItemText-primary': { fontWeight: 500 } }}
                         />
                     </ListItem>
@@ -113,9 +120,17 @@ const PrivacyPolicy = () =>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    While this application itself does not collect data, it may integrate with 
-                    third-party services which have their own privacy policies. 
-                    Please review their respective privacy policies for information about their data practices.
+                    Local hosting does not mean every feature is offline. The API may request public
+                    Pokemon and type indexes from pokeapi.co. Your browser may load artwork from
+                    raw.githubusercontent.com (PokeAPI sprites and PokeSprite) and move category icons
+                    from play.pokemonshowdown.com. Local repository artwork is also used when available.
+                </Typography>
+                <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
+                    These providers receive normal network request information, such as your public IP
+                    address and the requested resource; browser requests may also include browser or referrer
+                    information according to your browser settings. Artwork URLs can identify the species,
+                    item, or icon requested. The app does not send repository files, local paths, or spread
+                    edits to these providers. Their own privacy policies apply to those requests.
                 </Typography>
             </Paper>
 
@@ -128,9 +143,18 @@ const PrivacyPolicy = () =>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    Since we do not collect any data, there is no personal information at risk. 
-                    All interactions with the application are handled locally or through secure 
-                    third-party services.
+                    The API binds to the loopback address and checks local hosts, allowed browser origins,
+                    and session tokens for protected requests. These safeguards are intended for use on
+                    your own computer, not public hosting or shared-user access. Do not expose the app through
+                    port forwarding, public tunnels, or a LAN server. Local data is not encrypted by the app;
+                    protect it with operating system permissions and your own backup practices.
+                </Typography>
+                <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
+                    To remove browser preferences and cached drafts, clear this site's browser storage after
+                    saving any work you need. To remove API caches, imported copies, backups, and journals,
+                    stop the app and remove the relevant data from its local data folder. Preserve needed
+                    backups and resolve interrupted saves first. Clearing browser storage does not remove
+                    API data, repository edits, downloaded ZIPs, or exported text files; manage those separately.
                 </Typography>
             </Paper>
 
@@ -143,8 +167,8 @@ const PrivacyPolicy = () =>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    We may update this privacy policy from time to time. Any changes will be 
-                    reflected on this page with an updated "Last updated" date.
+                    This policy may change as the app's storage or network behavior changes. Updates are
+                    included with the app version you install and are reflected in the date above.
                 </Typography>
             </Paper>
 
@@ -157,8 +181,9 @@ const PrivacyPolicy = () =>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    If you have any questions about this privacy policy, please contact us through 
-                    the application's support channels.
+                    Raise questions with the maintainers through the source repository's issue tracker.
+                    Issues and attachments may be public. Remove personal paths, private source data, and
+                    local session tokens before sharing screenshots, logs, or archives.
                 </Typography>
             </Paper>
         </Container>
