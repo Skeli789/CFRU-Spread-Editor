@@ -18,6 +18,7 @@ const POKESPRITE_REGULAR = "regular/";
 const POKESPRITE_ITEMS = `${POKESPRITE}items/`;
 const POKESPRITE_BALLS = `${POKESPRITE}items/ball/`;
 const POKESPRITE_TYPES = `${POKESPRITE}misc/types/gen8/`;
+const SCARLET_VIOLET_ICONS = "https://img.pokemondb.net/sprites/scarlet-violet/icon/";
 const CLOUD_IMAGE_ROUTE = "/api/images/";
 const IMAGE_EXTENSION = ".png";
 const IMAGE_NAME_PATTERN = /^[A-Za-z0-9_-]+\.png$/;
@@ -41,6 +42,13 @@ const SPECIES_PREFIX = "SPECIES_";
 const DEX_PREFIX = "NATIONAL_DEX_";
 const ITEM_NONE = "ITEM_NONE";
 const FEMALE_ICON_PREFIX = "female/";
+const SQUAWKABILLY_ICON_NAMES =
+{
+    SPECIES_SQUAWKABILLY: "squawkabilly-green",
+    SPECIES_SQUAWKABILLY_BLUE: "squawkabilly-blue",
+    SPECIES_SQUAWKABILLY_YELLOW: "squawkabilly-yellow",
+    SPECIES_SQUAWKABILLY_WHITE: "squawkabilly-white",
+};
 
 // Cloud's icon rule for regional forms, plus the names PokeAPI and PokeSprite use for Gigantamax and Paldean forms
 const FORM_SUFFIXES =
@@ -68,6 +76,10 @@ const POKEAPI_NAMES =
     SPECIES_URSHIFU_SINGLE_GIGA: "urshifu-single-strike-gmax",
     SPECIES_TOXTRICITY_GIGA: "toxtricity-amped-gmax",
     SPECIES_TOXTRICITY_LOW_KEY_GIGA: "toxtricity-low-key-gmax",
+    SPECIES_SQUAWKABILLY: "squawkabilly-green-plumage",
+    SPECIES_SQUAWKABILLY_BLUE: "squawkabilly-blue-plumage",
+    SPECIES_SQUAWKABILLY_YELLOW: "squawkabilly-yellow-plumage",
+    SPECIES_SQUAWKABILLY_WHITE: "squawkabilly-white-plumage",
 };
 
 const SPRITE_POKEAPI = "pokeapi";
@@ -152,10 +164,15 @@ function toIconName(species)
  *
  * @param {string} species The species constant.
  * @param {string|undefined} iconName Cloud's form-specific icon name.
+ * @param {object} [images] Cloud's discovered image files.
  * @returns {string} The icon URL.
  */
-function getSpeciesIcon(species, iconName)
+function getSpeciesIcon(species, iconName, images)
 {
+    if (Object.hasOwn(SQUAWKABILLY_ICON_NAMES, species))
+        return (images != null ? getCloudImage(images, "gen9", species) : null)
+            ?? `${SCARLET_VIOLET_ICONS}${SQUAWKABILLY_ICON_NAMES[species]}${IMAGE_EXTENSION}`;
+
     const path = (iconName ?? toIconName(species)).split("/").map(encodeURIComponent).join("/");
     return `${POKESPRITE_POKEMON}${POKESPRITE_REGULAR}${path}${IMAGE_EXTENSION}`;
 }

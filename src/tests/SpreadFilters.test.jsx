@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { getDefaultFilters } from "../../shared/spread-layout.mjs";
+import { DEFAULT_FILTERS, getDefaultFilters } from "../../shared/spread-layout.mjs";
 import SpreadFilters from "../components/SpreadFilters";
 import { createCatalog, createSpreads } from "./EditorFixtures";
 
@@ -12,16 +12,49 @@ import { createCatalog, createSpreads } from "./EditorFixtures";
  * @param {object} props Component props.
  * @returns {JSX.Element} The filter toolbar.
  */
-function FiltersHarness({ spreads, catalog })
+function FiltersHarness({ spreads, catalog, onFiltersChange })
 {
     const defaults = getDefaultFilters(spreads);
     const [filters, setFilters] = useState(defaults);
-    return <SpreadFilters spreads={spreads} catalog={catalog} filters={filters} onFiltersChange={setFilters}
+    return <SpreadFilters spreads={spreads} catalog={catalog} filters={filters} onFiltersChange={(next) =>
+                          {
+                              onFiltersChange?.(next);
+                              setFilters(next);
+                          }}
                           resultCount={spreads.entries.length} preview={{ level: 50 }} onPreviewChange={() => {}} onAutoFix={() => {}} />;
 }
 
 describe("Spread filters", () =>
 {
+    test("toggles incomplete EVs through onChange and resets it with Clear Filters", async () =>
+    {
+        const user = userEvent.setup();
+        const spreads = createSpreads();
+        const defaults = getDefaultFilters(spreads);
+        const onFiltersChange = vi.fn();
+        render(<FiltersHarness spreads={spreads} catalog={createCatalog()} onFiltersChange={onFiltersChange} />);
+
+        await user.click(screen.getByRole("button", { name: "More Filters" }));
+        const incompleteEvs = screen.getByRole("switch", { name: "Incomplete EVs" });
+        expect(incompleteEvs).not.toBeChecked();
+        await user.click(incompleteEvs);
+        expect(onFiltersChange).toHaveBeenLastCalledWith({ ...defaults, incompleteEvs: true });
+        expect(incompleteEvs).toBeChecked();
+        expect(document.querySelector(".MuiBadge-badge")).toHaveTextContent("2");
+
+        await user.click(incompleteEvs);
+        expect(onFiltersChange).toHaveBeenLastCalledWith({ ...defaults, incompleteEvs: false });
+        expect(incompleteEvs).not.toBeChecked();
+        expect(document.querySelector(".MuiBadge-badge")).toHaveTextContent("1");
+
+        await user.click(incompleteEvs);
+        await user.click(screen.getByRole("button", { name: "Clear Filters" }));
+        expect(onFiltersChange).toHaveBeenLastCalledWith(DEFAULT_FILTERS);
+        expect(incompleteEvs).not.toBeChecked();
+        expect(screen.getByRole("combobox", { name: "Spread Set" })).toHaveValue("");
+        expect(screen.getByRole("button", { name: "Clear Filters" })).toBeDisabled();
+    });
+
     test("lists alternate forms in the species filter by their form names", async () =>
     {
         const user = userEvent.setup();
@@ -68,7 +101,7 @@ describe("Spread filters", () =>
         expect(rows).toEqual([
             ["Species", "Ability", "Item", "Moves"],
             ["Shiny", "Mega Stone", "Z-Crystal", "Gigantamax", "Battle Type", "Doubles Team Type"],
-            ["File", "Spread Set", "Trainer", "Unsaved Changes", "Illegal Moves"],
+            ["File", "Spread Set", "Trainer", "Unsaved Changes", "Illegal Moves", "Incomplete EVs"],
         ]);
         await user.click(screen.getByRole("combobox", { name: "File" }));
         expect(screen.getByRole("option", { name: "Battle Tower Spreads" })).toBeInTheDocument();

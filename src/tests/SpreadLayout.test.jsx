@@ -4,8 +4,9 @@ import
 {
     DEFAULT_FILTERS, FLAG_FILTER, buildRows, countActiveFilters, createFilterContext, findPage, getBalancedRowSizes, getDefaultFilters, getGapTarget,
     getRowCapacity, getMovedIds, getSetLabel, groupSpreads, holdsMegaStone, holdsZCrystal, insertSpread, matchesFilters, moveSpeciesGroup, moveSpread,
-    canDropSpread, getSavedOrder, hasOrderChange, getMovedSpreadIds, paginateRows, restoreGroupPosition, restoreSpreadInGroup, restoreSpreadPosition,
+    canDropSpread, getSavedOrder, hasIncompleteEvs, hasOrderChange, getMovedSpreadIds, paginateRows, restoreGroupPosition, restoreSpreadInGroup, restoreSpreadPosition,
 } from "../../shared/spread-layout.mjs";
+import { EV_FIELDS, STATS } from "../../shared/pokemon-mechanics.mjs";
 import { AUTO_FIX_CATEGORY, BATTLE_TYPES, MOVE_REMOVAL, compactMoves, getSpreadAutoFix, planSpreadAutoFix } from "../../shared/spread-model.mjs";
 import { FRONTIER_SET, LITTLE_CUP_SET, PALMER_SET, PALMER_TRAINER, createCatalog, createFields, createSpreads } from "./EditorFixtures";
 
@@ -134,6 +135,58 @@ describe("Spread filters", () =>
 
         expect(filterIds({ unsaved: true }, drafts)).toEqual(["e0"]);
         expect(filterIds({ item: "ITEM_LIFEORB" }, drafts)).toEqual(["e0", "e3"]);
+    });
+
+    it.each(
+    [
+        ["zero investment", [0, 0, 0, 0, 0, 0], true],
+        ["low unaligned investment", [1, 2, 3, 0, 0, 0], true],
+        ["504 with two capped stats", [252, 252, 0, 0, 0, 0], true],
+        ["508 with no useful point remaining", [252, 252, 4, 0, 0, 0], false],
+        ["508 with an affordable unaligned point", [251, 251, 6, 0, 0, 0], true],
+        ["509 with a one-EV point remaining", [252, 250, 7, 0, 0, 0], true],
+        ["509 with a capped first stat and an affordable second stat", [252, 251, 6, 0, 0, 0], true],
+        ["509 without an affordable point", [252, 252, 5, 0, 0, 0], false],
+        ["510 even with unaligned investment", [252, 251, 7, 0, 0, 0], false],
+        ["over budget", [252, 252, 7, 0, 0, 0], false],
+        ["all stats capped", [252, 252, 252, 252, 252, 252], false],
+        ["a stat over the cap", [253, 0, 0, 0, 0, 0], false],
+        ["negative investment", [-1, 0, 0, 0, 0, 0], false],
+        ["fractional investment", [0.5, 0, 0, 0, 0, 0], false],
+        ["missing investment", [undefined, 0, 0, 0, 0, 0], false],
+        ["null investment", [null, 0, 0, 0, 0, 0], false],
+        ["string investment", ["0", 0, 0, 0, 0, 0], false],
+        ["nonfinite investment", [Infinity, 0, 0, 0, 0, 0], false],
+        ["NaN investment", [NaN, 0, 0, 0, 0, 0], false],
+    ])("detect incomplete EVs for %s", (name, evs, expected) =>
+    {
+        const fields = createFields(Object.fromEntries(STATS.map((stat, index) => [EV_FIELDS[stat], evs[index]])));
+        expect(hasIncompleteEvs(fields)).toBe(expected);
+        expect(filterIds({ incompleteEvs: true }, Object.fromEntries(ALL_IDS.map((id) => [id, fields])))).toEqual(expected ? ALL_IDS : []);
+        expect(filterIds({}, Object.fromEntries(ALL_IDS.map((id) => [id, fields])))).toEqual(ALL_IDS);
+    });
+
+    it("counts incomplete EVs and combines it with other filters using current EV investment", () =>
+    {
+        const fields = createFields({ hpEv: 0, atkEv: 0, defEv: 0, spAtkEv: 0, spDefEv: 0, spdEv: 0 });
+        const drafts = { e0: fields };
+
+        expect(DEFAULT_FILTERS.incompleteEvs).toBe(false);
+        expect(countActiveFilters({ ...DEFAULT_FILTERS, incompleteEvs: true })).toBe(1);
+        expect(filterIds({ incompleteEvs: true, unsaved: true }, drafts)).toEqual(["e0"]);
+        expect(filterIds({ incompleteEvs: true, unsaved: true, species: ["SPECIES_PICHU"] }, drafts)).toEqual([]);
+        expect(hasIncompleteEvs({ ...fields, species: "SPECIES_PICHU", level: 5 })).toBe(true);
+        expect(hasIncompleteEvs({ ...fields, species: "SPECIES_SHEDINJA", level: 100 })).toBe(true);
+    });
+
+    it("excludes placeholders only when filtering incomplete EVs", () =>
+    {
+        const entry = { ...SPREADS.entries[0], placeholder: true };
+        const fields = createFields();
+        const context = { ...createFilterContext(SPREADS), catalog: CATALOG, teamTypes: SPREADS.teamTypes, isChanged: () => false };
+        expect(matchesFilters(entry, fields, { ...DEFAULT_FILTERS, incompleteEvs: true }, context)).toBe(false);
+        expect(matchesFilters(entry, fields, DEFAULT_FILTERS, context)).toBe(true);
+        expect(matchesFilters({ ...entry, placeholder: false }, fields, { ...DEFAULT_FILTERS, incompleteEvs: true }, context)).toBe(true);
     });
 
     it("combine filters with AND", () =>

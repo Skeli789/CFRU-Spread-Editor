@@ -7,7 +7,7 @@
 import { LEGALITY, getMoveLegality } from "./catalog.mjs";
 import
 {
-    EV_FIELDS, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV, MOVE_HIDDEN_POWER, STATS, getAbilityOptions, getEvTotal, getIvAutoFix, getMaxEv,
+    EV_FIELDS, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV, MOVE_HIDDEN_POWER, STATS, getAbilityOptions, getEvTotal, getIvAutoFix,
     optimizeHiddenPowerIvs,
 } from "./pokemon-mechanics.mjs";
 
@@ -228,7 +228,7 @@ export function validateSpreadFields(fields)
 }
 
 /**
- * Sets one EV, limited to 0 to 252 and to what the 510 total leaves. Values need not be multiples of 4.
+ * Sets one EV to a nonnegative integer, leaving per-stat and total limits to validation.
  *
  * @param {object} fields The spread's values.
  * @param {string} stat The stat key.
@@ -240,7 +240,7 @@ export function setEv(fields, stat, value)
     if (!Number.isInteger(value))
         return fields;
 
-    return { ...fields, [EV_FIELDS[stat]]: Math.min(Math.max(value, 0), getMaxEv(fields, stat)) };
+    return { ...fields, [EV_FIELDS[stat]]: Math.max(value, 0) };
 }
 
 /**
@@ -343,16 +343,17 @@ function getEvAutoFix(fields)
  *
  * @param {object} catalog The game catalog.
  * @param {object} fields The spread's values.
+ * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
  * @returns {{fields: object, cappedIvs: Array<string>, removedMoves: Array<{move: string, reason: string}>,
  *          compacted: boolean, ivFix: object, evFix: object, categoryFields: object, categoryIvFix: object}}
  *          The combined changes and independent category changes, with IV-only fixes based on current moves.
  */
-export function getSpreadAutoFix(catalog, fields)
+export function getSpreadAutoFix(catalog, fields, teamTypes = [])
 {
     const cappedIvs = Object.values(IV_FIELDS).filter((key) => Number.isInteger(fields[key]) && fields[key] > MAX_IV);
     const evFix = getEvAutoFix(fields);
     const cappedFields = Object.fromEntries(cappedIvs.map((key) => [key, MAX_IV]));
-    const categoryIvFix = getIvAutoFix(catalog, { ...fields, ...cappedFields });
+    const categoryIvFix = getIvAutoFix(catalog, { ...fields, ...cappedFields }, teamTypes);
     const categoryFields =
     {
         [AUTO_FIX_CATEGORY.IVS]: getChangedFields({ ...fields, ...cappedFields, ...categoryIvFix.changes }, fields),
@@ -377,7 +378,7 @@ export function getSpreadAutoFix(catalog, fields)
     const compacted = next.moves !== moves;
     categoryFields[AUTO_FIX_CATEGORY.MOVES] = getChangedFields({ ...fields, moves: next.moves }, fields);
 
-    const ivFix = getIvAutoFix(catalog, next);
+    const ivFix = getIvAutoFix(catalog, next, teamTypes);
     next = { ...next, ...ivFix.changes };
     return { fields: getChangedFields(next, fields), cappedIvs, removedMoves, compacted, ivFix, evFix, categoryFields, categoryIvFix };
 }
@@ -388,11 +389,12 @@ export function getSpreadAutoFix(catalog, fields)
  * @param {object} catalog The game catalog.
  * @param {Array<{id: string, fields: object, placeholder?: boolean}>} spreads The spreads.
  * @param {string} [category] The category to apply, or all for the combined fix.
+ * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
  * @returns {{changes: Array<object>, skipped: Array<{id: string, stats: Array<string>}>}} The spreads that change,
  *          each with its getSpreadAutoFix result and ID, and the spreads with stats left alone because a move's
  *          details are unknown.
  */
-export function planSpreadAutoFix(catalog, spreads, category = AUTO_FIX_CATEGORY.ALL)
+export function planSpreadAutoFix(catalog, spreads, category = AUTO_FIX_CATEGORY.ALL, teamTypes = [])
 {
     const changes = [];
     const skipped = [];
@@ -401,7 +403,7 @@ export function planSpreadAutoFix(catalog, spreads, category = AUTO_FIX_CATEGORY
         if (placeholder)
             continue;
 
-        const fix = getSpreadAutoFix(catalog, fields);
+        const fix = getSpreadAutoFix(catalog, fields, teamTypes);
         if (category !== AUTO_FIX_CATEGORY.ALL)
         {
             fix.fields = fix.categoryFields[category];

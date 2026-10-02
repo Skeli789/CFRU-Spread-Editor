@@ -270,6 +270,51 @@ const DPE_FILES =
 };
 module.exports.DPE_FILES = DPE_FILES;
 
+const MINIOR_FORMS = ["SHIELD", "RED", "BLUE", "ORANGE", "YELLOW", "INDIGO", "GREEN", "VIOLET"].map((form) => `SPECIES_MINIOR_${form}`);
+module.exports.MINIOR_FORMS = MINIOR_FORMS;
+
+const MINIOR_TEACHABLE_MOVES =
+{
+    tm: { 10: "MOVE_HIDDENPOWER", 26: "MOVE_EARTHQUAKE", 29: "MOVE_PSYCHIC", 80: "MOVE_ROCKSLIDE" },
+    tutor: { 20: "MOVE_GRAVITY", 23: "MOVE_MAGNETRISE", 132: "MOVE_METEORBEAM" },
+};
+module.exports.MINIOR_TEACHABLE_MOVES = MINIOR_TEACHABLE_MOVES;
+
+const MINIOR_TEACHABLE_NAMES =
+{
+    MOVE_HIDDENPOWER: "Hidden Power", MOVE_EARTHQUAKE: "Earthquake", MOVE_PSYCHIC: "Psychic", MOVE_ROCKSLIDE: "Rock Slide",
+    MOVE_GRAVITY: "Gravity", MOVE_MAGNETRISE: "Magnet Rise", MOVE_METEORBEAM: "Meteor Beam",
+};
+
+/**
+ * Returns synthetic sources matching Minior's shared table and core-only compatibility lists.
+ *
+ * @returns {Object<string, string>} DPE source files.
+ */
+function createMiniorDpeFiles()
+{
+    const files = { ...DPE_FILES };
+    const learnset = ["static const struct LevelUpMove sMiniorShieldLevelUpLearnset[] = {",
+        "    LEVEL_UP_MOVE(1, MOVE_TACKLE),", "    LEVEL_UP_MOVE(45, MOVE_SHELLSMASH),", "    LEVEL_UP_END", "};", ""].join(LF);
+    files["src/Learnsets.c"] = LEARNSETS.replace("const struct LevelUpMove* const gLevelUpLearnsets", learnset + "const struct LevelUpMove* const gLevelUpLearnsets")
+        .replace("\t[SPECIES_NONE] = sEmptyMoveset,", "\t[SPECIES_NONE] = sEmptyMoveset," + LF + MINIOR_FORMS.map((species) => `    [${species}] = sMiniorShieldLevelUpLearnset,`).join(LF));
+    const tables = [];
+    for (const [kind, moves] of Object.entries(MINIOR_TEACHABLE_MOVES))
+    {
+        const table = Array(Math.max(...Object.keys(moves).map(Number))).fill("MOVE_NONE");
+        for (const [number, move] of Object.entries(moves))
+        {
+            table[Number(number) - 1] = move;
+            const name = MINIOR_TEACHABLE_NAMES[move];
+            files[`src/${kind}_compatibility/${number} - ${name}.txt`] = `${kind === "tm" ? "TM" : "Tutor"} ${number}: ${name}\n` + MINIOR_FORMS.slice(1).map((species) => species.slice("SPECIES_".length)).join(LF) + LF;
+        }
+        tables.push(`const u16 ${kind === "tm" ? "gTMHMMoves" : "gMoveTutorMoves"}[] = {`, ...table.map((move) => `    ${move},`), "};");
+    }
+    files["src/TM_Tutor_Tables.c"] = tables.join(LF);
+    return files;
+}
+module.exports.createMiniorDpeFiles = createMiniorDpeFiles;
+
 const COSPLAY_SIGNATURE_MOVES =
 {
     SPECIES_PIKACHU_LIBRE: "MOVE_FLYINGPRESS",
@@ -302,21 +347,23 @@ function pngChunk(type, data)
 }
 
 /**
- * Creates a 2x1 16 color indexed PNG like DPE's sprites, drawing palette colors 0 and 1.
+ * Creates a 16 color indexed PNG like DPE's sprites, drawing palette colors 0 and 1.
  *
  * @param {Array<[number, number, number]>} colors The palette.
+ * @param {number} [width] The even image width.
+ * @param {number} [height] The image height.
  * @returns {Buffer} The PNG.
  */
-function createIndexedPng(colors)
+function createIndexedPng(colors, width = 2, height = 1)
 {
     const header = Buffer.alloc(13);
-    header.writeUInt32BE(2, 0);
-    header.writeUInt32BE(1, 4);
+    header.writeUInt32BE(width, 0);
+    header.writeUInt32BE(height, 4);
     header[8] = PNG_BIT_DEPTH;
     header[9] = PNG_COLOR_TYPE_INDEXED;
 
-    // One row with no filter, then pixels 0 and 1 packed into a byte
-    const pixels = zlib.deflateSync(Buffer.from([0, 0x01]));
+    const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width / 2, 0x01)]);
+    const pixels = zlib.deflateSync(Buffer.concat(Array.from({ length: height }, () => row)));
     return Buffer.concat([PNG_SIGNATURE, pngChunk("IHDR", header), pngChunk("gAMA", Buffer.alloc(4)), pngChunk("PLTE", Buffer.from(colors.flat())),
         pngChunk("IDAT", pixels), pngChunk("IEND", Buffer.alloc(0))]);
 }
@@ -365,6 +412,43 @@ const DPE_SPRITE_FILES =
     "graphics/backspr/gBackShinySprite001Bulbasaur.png": createIndexedPng(SHINY_PALETTE),
 };
 module.exports.DPE_SPRITE_FILES = DPE_SPRITE_FILES;
+
+const SQUAWKABILLY_FORMS = ["SPECIES_SQUAWKABILLY", "SPECIES_SQUAWKABILLY_BLUE", "SPECIES_SQUAWKABILLY_YELLOW", "SPECIES_SQUAWKABILLY_WHITE"];
+module.exports.SQUAWKABILLY_FORMS = SQUAWKABILLY_FORMS;
+
+/**
+ * Returns Cloud compact icons and DPE's shared full-size tiles with nested form palettes.
+ *
+ * @returns {{cloud: object, dpe: object}} Synthetic image and sprite table files.
+ */
+function createSquawkabillyArtworkFiles()
+{
+    const cloud = {};
+    for (const species of SQUAWKABILLY_FORMS)
+    {
+        cloud[`public/images/gen_9/${species}.png`] = createIndexedPng(NORMAL_PALETTE, 68, 56);
+        cloud[`public/images/gen_9/shiny/${species}.png`] = createIndexedPng(SHINY_PALETTE, 68, 56);
+    }
+    const names = ["1287Squawkabilly", "1288SquawkabillyBlue", "1289SquawkabillyYellow", "1290SquawkabillyWhite"];
+    const dpe = { ...DPE_SPRITE_FILES };
+    for (const [file, entries] of Object.entries(
+    {
+        "src/Front_Pic_Table.c": SQUAWKABILLY_FORMS.map((species) => `[${species}] = {gFrontSprite1287SquawkabillyTiles, (64 * 64) / 2, ${species}}`),
+        "src/Palette_Table.c": SQUAWKABILLY_FORMS.map((species, index) => `[${species}] = {gFrontSprite${names[index]}Pal, ${species}, 0x0}`),
+        "src/Shiny_Palette_Table.c": SQUAWKABILLY_FORMS.map((species, index) => `[${species}] = {gBackShinySprite${names[index]}Pal, ${species} + NUM_SPECIES, 0x0}`),
+    }))
+        dpe[file] = dpe[file].replace("};", entries.map((entry) => `    ${entry},`).join(LF) + LF + "};");
+    dpe["graphics/frontspr/gFrontSprite1287Squawkabilly.png"] = createIndexedPng(NORMAL_PALETTE, 64, 64);
+    dpe["graphics/backspr/gBackShinySprite1287Squawkabilly.png"] = createIndexedPng(SHINY_PALETTE);
+    for (const [index, name] of names.entries())
+        if (index > 0)
+        {
+            dpe[`graphics/frontspr/palette_only/gFrontSprite${name}.png`] = createIndexedPng([[0, 255, 0], [index, 40, 80]]);
+            dpe[`graphics/backspr/palette_only/gBackShinySprite${name}.png`] = createIndexedPng([[0, 255, 0], [index, 80, 40]]);
+        }
+    return { cloud, dpe };
+}
+module.exports.createSquawkabillyArtworkFiles = createSquawkabillyArtworkFiles;
 
 /**
  * Returns a complete Cloud base stats entry.

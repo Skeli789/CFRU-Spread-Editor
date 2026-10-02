@@ -2,15 +2,16 @@ import React, { useState } from "react";
 import { readFileSync } from "node:fs";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ThemeProvider, getContrastRatio } from "@mui/material/styles";
+import { ThemeProvider, alpha, getContrastRatio } from "@mui/material/styles";
 import { vi } from "vitest";
 
-import { calculateSpreadStats, stepEv } from "../../shared/pokemon-mechanics.mjs";
+import { calculateSpreadStats, getHiddenPowerType, getResetIvs, stepEv } from "../../shared/pokemon-mechanics.mjs";
 import { getSuggestedSpread } from "../../shared/spread-suggestions.mjs";
+import { hasIllegalMove } from "../../shared/spread-layout.mjs";
 import SpreadCard from "../components/SpreadCard";
 import { EditSpreadDialog } from "../components/SpreadDialogs";
 import { APP_THEME, DARK_APP_THEME } from "../Theme";
-import { createCatalog, createFields, createSpreads } from "./EditorFixtures";
+import { createCatalog, createFields, createSpreads, createZygardeCatalog } from "./EditorFixtures";
 
 const PREVIEW = { level: 50 };
 const HOLD_DURATION_MS = 1000;
@@ -46,7 +47,7 @@ function renderCard(options = {})
         editing: false, changed: false, problems: [], actions, ...options,
     };
     render(<ThemeProvider theme={options.theme ?? APP_THEME}><SpreadCard {...cardProps} /></ThemeProvider>);
-    return { card: screen.getByRole("article", { name: "Charizard spread" }), actions, user: userEvent.setup() };
+    return { card: screen.getByRole("article", { name: `${cardProps.catalog.species[fields.species].name} spread` }), actions, user: userEvent.setup() };
 }
 
 /**
@@ -88,6 +89,90 @@ function HeldStatCard({ initialFields })
 
 describe("Spread card", () =>
 {
+    it.each(
+    [
+        { fields: {}, value: "300", total: 300, budget: "210 Left" },
+        { fields: {}, value: "1000", total: 1000, budget: "490 Over" },
+        { fields: { hpEv: 252, defEv: 248 }, value: "20", total: 520, budget: "10 Over" },
+    ])("retains typed illegal Attack EVs $value in card state with red invalid feedback", async ({ fields, value, total, budget }) =>
+    {
+        const user = userEvent.setup();
+        render(<HeldStatCard initialFields={createFields(fields)} />);
+        const input = screen.getByRole("textbox", { name: "Charizard Attack EVs" });
+        expect(screen.getByText(fields.hpEv == null ? "510 Left" : "10 Left")).toBeInTheDocument();
+        await user.click(input);
+        await user.keyboard(value);
+        await user.tab();
+        expect(input).toHaveValue(value);
+        expect(input).toHaveAttribute("aria-invalid", "true");
+        expect(input.closest(".stat-input")).toHaveStyle({ backgroundColor: alpha(APP_THEME.palette.error.main, 0.12), color: APP_THEME.palette.error.main });
+        expect(screen.getByLabelText(`EV total ${total} of 510`)).toHaveTextContent(budget);
+        expect(screen.getByRole("textbox", { name: "Charizard Speed EVs" })).toHaveAttribute("aria-invalid", "false");
+        expect(screen.getByRole("button", { name: "Raise Attack EVs" })).toBeDisabled();
+        await user.click(input);
+        await user.keyboard("0");
+        await user.tab();
+        expect(input).toHaveValue("0");
+        expect(input).toHaveAttribute("aria-invalid", "false");
+        expect(input.closest(".stat-input")).not.toHaveStyle({ backgroundColor: alpha(APP_THEME.palette.error.main, 0.12) });
+    });
+
+    it.each([APP_THEME, DARK_APP_THEME])("colors illegal EV view cells red using the active theme", (theme) =>
+    {
+        const { card } = renderCard({ theme, fields: createFields({ hpEv: 252, atkEv: 253, defEv: 8, spAtkEv: -1, spDefEv: 1.5 }) });
+        for (const label of ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def"])
+        {
+            const cell = within(card).getByText(label, { selector: ".stat-label" }).closest("tr").querySelectorAll("td")[1];
+            expect(cell).toHaveStyle({ color: theme.palette.error.main });
+        }
+        const zeroCell = within(card).getByText("Speed", { selector: ".stat-label" }).closest("tr").querySelectorAll("td")[1];
+        expect(zeroCell.style.color).toBe("");
+    });
+
+    it.each([-1, 253, 1.5])("marks an existing invalid EV %s in editing without marking legal zero allocations", (atkEv) =>
+    {
+        renderCard({ editing: true, fields: createFields({ atkEv }) });
+        const input = screen.getByRole("textbox", { name: "Charizard Attack EVs" });
+        expect(input).toHaveAttribute("aria-invalid", "true");
+        expect(input.closest(".stat-input")).toHaveStyle({ backgroundColor: alpha(APP_THEME.palette.error.main, 0.12) });
+        expect(screen.getByRole("textbox", { name: "Charizard HP EVs" })).toHaveAttribute("aria-invalid", "false");
+    });
+
+    it("marks every positive EV allocation invalid when the total exceeds 510", () =>
+    {
+        renderCard({ editing: true, fields: createFields({ hpEv: 252, atkEv: 252, defEv: 8 }) });
+        for (const label of ["HP", "Attack", "Defense"])
+        {
+            const input = screen.getByRole("textbox", { name: `Charizard ${label} EVs` });
+            expect(input).toHaveAttribute("aria-invalid", "true");
+            expect(input.closest(".stat-input")).toHaveStyle({ backgroundColor: alpha(APP_THEME.palette.error.main, 0.12) });
+        }
+        expect(screen.getByRole("textbox", { name: "Charizard Speed EVs" })).toHaveAttribute("aria-invalid", "false");
+        expect(screen.getByLabelText("EV total 512 of 510")).toHaveTextContent("2 Over");
+    });
+
+    it.each(["SPECIES_ZYGARDE", "SPECIES_ZYGARDE_10"])("toggles Mega Stats for Power Construct %s holding Zygardite without editing fields", async (species) =>
+    {
+        const fields = createFields({ species, ability: 0, item: "ITEM_ZYGARDITE" });
+        const { card, actions, user } = renderCard({ catalog: createZygardeCatalog(), fields, editing: true });
+        const toggle = within(card).getByRole("switch", { name: "Mega Stats" });
+        const attack = within(card).getByText("Attack", { selector: ".stat-label" }).closest("tr").querySelector("td");
+        expect(toggle).toBeChecked();
+        expect(attack).toHaveTextContent("150");
+        await user.click(toggle);
+        expect(toggle).not.toBeChecked();
+        expect(attack).toHaveTextContent("100");
+        await user.click(toggle);
+        expect(attack).toHaveTextContent("150");
+        expect(actions.updateSpread).not.toHaveBeenCalled();
+    });
+
+    it.each([{ ability: 1, item: "ITEM_ZYGARDITE" }, { ability: 0, item: "ITEM_NONE" }])("does not offer Mega Stats for ineligible Zygarde $ability $item", (fields) =>
+    {
+        renderCard({ catalog: createZygardeCatalog(), fields: createFields({ species: "SPECIES_ZYGARDE", ...fields }), editing: true });
+        expect(screen.queryByRole("switch", { name: "Mega Stats" })).not.toBeInTheDocument();
+    });
+
     it("applies Suggested Spread to the displayed EVs, IVs and nature", async () =>
     {
         const user = userEvent.setup();
@@ -603,6 +688,28 @@ describe("Spread card", () =>
         expect(card.querySelector(".spread-card-side strong")).toHaveTextContent("[M]");
     });
 
+    it("clears Pop Star Fleur Cannon highlighting and filter legality together after catalog refresh", () =>
+    {
+        const spreads = createSpreads();
+        const catalog = createCatalog();
+        const species = "SPECIES_PIKACHU_POP_STAR";
+        const move = "MOVE_FLEURCANNON";
+        catalog.species[species] = { ...catalog.species.SPECIES_CHARIZARD, name: "Pikachu" };
+        catalog.moves[move] = { ...catalog.moves.MOVE_FLAMETHROWER, name: "Fleur Cannon" };
+        catalog.learnsets[species] = { status: "complete", moves: {}, unknown: {} };
+        const fields = createFields({ species, moves: [move, 0, 0, 0] });
+        const props = { entry: spreads.entries[2], fields, set: spreads.sets[0], catalog, teamTypes: spreads.teamTypes,
+            preview: PREVIEW, editing: false, changed: false, problems: [], actions: {} };
+        const { rerender } = render(<ThemeProvider theme={APP_THEME}><SpreadCard {...props} /></ThemeProvider>);
+        expect(screen.getByText("Fleur Cannon").closest(".move-slot")).toHaveClass("move-status-illegal");
+        expect(hasIllegalMove(catalog, fields)).toBe(true);
+        const refreshed = { ...catalog, learnsets: { ...catalog.learnsets,
+            [species]: { status: "complete", moves: { [move]: ["formChange"] }, unknown: {} } } };
+        rerender(<ThemeProvider theme={APP_THEME}><SpreadCard {...props} catalog={refreshed} /></ThemeProvider>);
+        expect(screen.getByText("Fleur Cannon").closest(".move-slot")).toHaveClass("move-status-allowed");
+        expect(hasIllegalMove(refreshed, fields)).toBe(false);
+    });
+
     it("deletes from the actions menu without asking", async () =>
     {
         const { card, actions, user } = renderCard({ editing: true, changed: true });
@@ -654,6 +761,60 @@ describe("Spread card", () =>
         const { card } = renderCard({ editing: true, fields: { ...fields, hpEv: 0, atkEv: 0, defEv: 0, spAtkEv: 0, spDefEv: 0, spdEv: 0 } });
         expect(within(card).getByRole("button", { name: "Reset EVs" })).toBeDisabled();
         expect(within(card).getByRole("button", { name: "Reset IVs" })).toBeDisabled();
+    });
+
+    it.each(["numeric", "symbolic"])("resets IVs for a %s Trick Room team using current fields and disables a matching reset", async (representation) =>
+    {
+        const { teamTypes } = createSpreads();
+        const team = teamTypes.find(({ name }) => name === "DOUBLES_TRICK_ROOM_TEAM");
+        const specificTeamType = representation === "numeric" ? team.value : team.name;
+        const fields = createFields({ specificTeamType, atkIv: 0, moves: ["MOVE_FLAMETHROWER", 0, 0, 0] });
+        const user = userEvent.setup();
+        render(<HeldStatCard initialFields={fields} />);
+        const reset = screen.getByRole("button", { name: "Reset IVs" });
+        expect(reset).toBeEnabled();
+        await user.hover(reset);
+        expect(await screen.findByRole("tooltip")).toHaveTextContent("Doubles Trick Room team");
+        await user.click(reset);
+        expect(screen.getByRole("textbox", { name: "Charizard Speed IV" })).toHaveValue("0");
+        expect(reset).toBeDisabled();
+    });
+
+    it("recomputes Reset IVs for a current numeric Trick Room team while preserving Hidden Power and unrelated fields", async () =>
+    {
+        const { teamTypes } = createSpreads();
+        const fields = createFields();
+        const { card, actions, user } = renderCard({ editing: true, fields, teamTypes });
+        await user.click(within(card).getByRole("button", { name: "Reset IVs" }));
+        const current = { ...fields, specificTeamType: teamTypes.find(({ name }) => name === "DOUBLES_TRICK_ROOM_TEAM").value,
+            moves: ["MOVE_HIDDENPOWER", "MOVE_FLAMETHROWER", 0, 0], hpEv: 253, shiny: true };
+        const before = JSON.stringify(current);
+        const result = actions.updateSpread.mock.calls.at(-1)[1](current);
+        expect(result).toEqual({ ...current, ...getResetIvs(createCatalog(), current, teamTypes) });
+        expect([0, 1]).toContain(result.spdIv);
+        expect(getHiddenPowerType(result)).toBe(getHiddenPowerType(current));
+        expect(JSON.stringify(current)).toBe(before);
+    });
+
+    it("previews and reapplies a numeric Trick Room team suggestion using the snapshot enum", async () =>
+    {
+        const { teamTypes } = createSpreads();
+        const catalog = createCatalog();
+        catalog.natures.NATURE_QUIET = "Quiet";
+        const fields = createFields({ specificTeamType: teamTypes.find(({ name }) => name === "DOUBLES_TRICK_ROOM_TEAM").value });
+        const { actions, user } = renderCard({ editing: true, fields, catalog, teamTypes });
+        const button = screen.getByRole("button", { name: /^Quiet:/ });
+        await user.hover(button);
+        expect(await screen.findByRole("tooltip")).toHaveTextContent("Slow Special Attacker");
+        await user.click(button);
+        const current = { ...fields, shiny: true, moves: ["MOVE_HIDDENPOWER", "MOVE_FLAMETHROWER", 0, 0] };
+        const result = actions.updateSpread.mock.calls.at(-1)[1](current, fields);
+        expect(result).toEqual({ ...current, ...getSuggestedSpread(catalog, current, { teamTypes }).fields });
+        expect([0, 1]).toContain(result.spdIv);
+        expect(result.spdEv).toBe(0);
+        expect(result.nature).toBe("NATURE_QUIET");
+        expect(result.specificTeamType).toBe(fields.specificTeamType);
+        expect(getHiddenPowerType(result)).toBe(getHiddenPowerType(current));
     });
 
     it("marks later inline duplicates and clears a move when its text is emptied", async () =>

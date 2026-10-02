@@ -30,6 +30,8 @@ Filtering chooses matching entries; layout groups them without changing their so
 - The first set is initially selected and counts as one active filter. Clear Filters uses unrestricted `DEFAULT_FILTERS`, showing all sets, not the first-set startup selection. A legacy pure-test title says otherwise; the actual toolbar/page and integration tests are authoritative.
 - Filters combine with AND. Multiple species are alternatives; selected moves must all be present. Ability means the effective source ability slot, not Mega ability. Item resolves omitted zero as No Item.
 - Shiny, Gigantamax, Mega Stone, and Z-Crystal use All/Yes/No. Mega Stone requires a species-compatible mapping; Z-Crystal uses CFRU item kind. Illegal Moves matches illegal or undefined moves, not unknown legality or duplicates alone.
+- Incomplete EVs is a toggle immediately after Illegal Moves, defaulting to false and reset by Clear Filters. It matches current EV investment when any stat can reach its next multiple of four at or below 252 without exceeding the actual total budget of 510. An aligned total of 508 often has no useful point left, while an unaligned total of 509 can need only one EV. Negative, noninteger, missing, nonnumeric, over-cap, or over-budget values do not match. This checks another floor(EV / 4) investment point, not a final-level stat increase; species, Little Cup and preview level do not affect it. Active counting and AND composition follow the existing filter patterns.
+- Incomplete EVs excludes entries marked `placeholder`, while ordinary zero-EV spreads remain eligible. Placeholder visibility under other filters is unchanged.
 - Battle Type displays Singles & Doubles, Singles Only, and Doubles Only. Doubles Team Type appears only with enum data; its clearable autocomplete omits Any so an empty selection is the sole catch-all.
 - File restricts trainer/set options. Changing to an incompatible file clears the trainer and replaces an incompatible nonempty set with the first fitting set. Choosing a trainer clears the set, showing all that trainer's linked sets.
 - Trainer choices are grouped by kind and include ranks. Selected text includes bracketed kind/rank detail; unique option rows show just the name, while duplicate names include detail. Searchable filters use `autoHighlight`.
@@ -54,8 +56,8 @@ Filtering chooses matching entries; layout groups them without changing their so
 
 Run from workspace root; all commands exit rather than watch:
 
-- [src/tests/SpreadFilters.test.jsx](../../../src/tests/SpreadFilters.test.jsx): options, icons, trainer selection, catch-all, and Enter. `yarn test src/tests/SpreadFilters.test.jsx --run`
-- [src/tests/SpreadLayout.test.jsx](../../../src/tests/SpreadLayout.test.jsx): predicates, labels, grouping, rows, pages, and pure ordering. `yarn test src/tests/SpreadLayout.test.jsx --run`
+- [src/tests/SpreadFilters.test.jsx](../../../src/tests/SpreadFilters.test.jsx): options, icons, trainer selection, catch-all, Enter, and Incomplete EVs placement, callbacks, active count and Clear Filters reset. `yarn test src/tests/SpreadFilters.test.jsx --run`
+- [src/tests/SpreadLayout.test.jsx](../../../src/tests/SpreadLayout.test.jsx): predicates including EV investment boundaries and invalid values, labels, grouping, rows, pages, and pure ordering. `yarn test src/tests/SpreadLayout.test.jsx --run`
 - [src/tests/SpreadGridPagination.test.jsx](../../../src/tests/SpreadGridPagination.test.jsx): measured widths, page jump, add tiles, drop/completeness refresh. `yarn test src/tests/SpreadGridPagination.test.jsx --run`
 - [src/tests/AddReorder.test.jsx](../../../src/tests/AddReorder.test.jsx): clearing filters, multi-set controls, placement across pages. `yarn test src/tests/AddReorder.test.jsx --run`
 - [src/tests/SpreadEditor.test.jsx](../../../src/tests/SpreadEditor.test.jsx): matching-result bulk repairs. `yarn test src/tests/SpreadEditor.test.jsx --run`

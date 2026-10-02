@@ -84,13 +84,14 @@ const FORM_CHANGE_MOVES =
 
 const UNBOUND_MACRO = "UNBOUND";
 
-// CFRU's gPikachuSpreads confirms the standard signatures; PhD's Flamethrower is Unbound-specific.
+// CFRU's gPikachuSpreads confirms standard signatures; extra signatures are Unbound-specific.
 const COSPLAY_FORM_CHANGE_MOVES =
 [
     { species: "SPECIES_PIKACHU_LIBRE", move: "MOVE_FLYINGPRESS" },
     { species: "SPECIES_PIKACHU_ROCK_STAR", move: "MOVE_METEORMASH" },
     { species: "SPECIES_PIKACHU_BELLE", move: "MOVE_ICICLECRASH" },
     { species: "SPECIES_PIKACHU_POP_STAR", move: "MOVE_DRAININGKISS" },
+    { species: "SPECIES_PIKACHU_POP_STAR", move: "MOVE_FLEURCANNON", macro: UNBOUND_MACRO },
     { species: "SPECIES_PIKACHU_PHD", move: "MOVE_FLAMETHROWER", macro: UNBOUND_MACRO },
 ];
 
@@ -112,7 +113,8 @@ const SHARED_FORM_FAMILIES =
     ["SPECIES_DEOXYS", "SPECIES_DEOXYS_ATTACK", "SPECIES_DEOXYS_DEFENSE", "SPECIES_DEOXYS_SPEED"],
     ["SPECIES_HOOPA", "SPECIES_HOOPA_UNBOUND"],
 ];
-const SHARED_FORM_PREFIXES = ["SPECIES_PIKACHU", "SPECIES_ROTOM"];
+const SHARED_FORM_PREFIXES = ["SPECIES_PIKACHU", "SPECIES_ROTOM", "SPECIES_MINIOR"];
+const LEARNSET_BASE_FORMS = { SPECIES_ETERNATUS_ETERNAMAX: "SPECIES_ETERNATUS" };
 
 
 /**
@@ -403,15 +405,16 @@ function buildLearnsets({ dpe, species, moveNames, gameMoves, cfruMacros })
     const missing = [];
     for (const target of Object.keys(species))
     {
-        const complete = dpe.levelUp != null && Object.hasOwn(levelUp, target);
+        const source = LEARNSET_BASE_FORMS[target] ?? target;
+        const complete = dpe.levelUp != null && Object.hasOwn(levelUp, source);
         if (!complete)
             missing.push(target);
 
         const moves = {};
-        for (const [move, sources] of available.get(target) ?? [])
+        for (const [move, sources] of available.get(source) ?? [])
             moves[move] = LEARN_SOURCE_ORDER.filter((source) => sources.has(source));
 
-        learnsets[target] = { status: complete ? LEARNSET_COMPLETE : LEARNSET_MISSING, moves, unknown: unknown.get(target) ?? {} };
+        learnsets[target] = { status: complete ? LEARNSET_COMPLETE : LEARNSET_MISSING, moves, unknown: unknown.get(source) ?? {} };
     }
 
     if (dpe.levelUp != null && missing.length > 0)

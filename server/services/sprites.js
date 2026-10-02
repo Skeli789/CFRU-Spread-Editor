@@ -20,7 +20,7 @@ const SPRITE_TABLES =
     palette: { file: "src/Palette_Table.c", array: "gMonPaletteTable", suffix: "Pal" },
     shinyPalette: { file: "src/Shiny_Palette_Table.c", array: "gMonShinyPaletteTable", suffix: "Pal" },
 };
-const GRAPHICS_FOLDERS = ["graphics/frontspr", "graphics/backspr"];
+const GRAPHICS_FOLDERS = ["graphics/frontspr", "graphics/backspr", "graphics/frontspr/palette_only", "graphics/backspr/palette_only"];
 const IMAGE_EXTENSION = ".png";
 const CACHE_SPRITE_TABLES = "dpe-sprites";
 const REPOSITORY_FILE_UNAVAILABLE = "REPOSITORY_FILE_UNAVAILABLE";

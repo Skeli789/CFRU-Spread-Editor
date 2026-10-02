@@ -317,8 +317,8 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
     const inputId = `spread-${id}`;
     const warnings = entry.diagnostics;
     const suggestion = useMemo(() => editing && entry.editable && !deleted
-        ? getSuggestedSpread(catalog, fields, { level, preset: selectedPreset }) : null,
-        [editing, entry.editable, deleted, catalog, fields, level, selectedPreset]);
+        ? getSuggestedSpread(catalog, fields, { level, preset: selectedPreset, teamTypes }) : null,
+        [editing, entry.editable, deleted, catalog, fields, level, selectedPreset, teamTypes]);
     const suggestedEvs = suggestion == null ? "" : STATS.filter((stat) => suggestion.fields[EV_FIELDS[stat]] > 0)
         .map((stat) => `${suggestion.fields[EV_FIELDS[stat]]} ${STAT_SHORT_LABELS[stat]}`).join(" / ");
     const suggestionLabel = suggestion == null ? SUGGESTED_SPREAD_UNAVAILABLE
@@ -340,7 +340,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
      */
     const applySuggestion = (preset = selectedPreset) => update((current, saved) =>
     {
-        const next = getSuggestedSpread(catalog, current, { level, preset });
+        const next = getSuggestedSpread(catalog, current, { level, preset, teamTypes });
         return next == null ? current : setFieldSymbol({ ...current, ...next.fields }, "nature", next.fields.nature, saved);
     });
 
@@ -547,6 +547,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                     onChange={update}
                     name={name}
                     catalog={catalog}
+                    teamTypes={teamTypes}
                     footer={editing ? <Stack alignItems="flex-end">{levelToggle}{megaToggle}</Stack> : null}
                 />
             </div>

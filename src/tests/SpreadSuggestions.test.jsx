@@ -6,7 +6,7 @@ import
     EV_FIELDS, EV_STEP, HIDDEN_POWER_TYPES, IV_FIELDS, MAX_EV, STATS, calculateStat,
     getHiddenPowerType, getNatureEffect, getResetIvs, optimizeHiddenPowerIvs,
 } from "../../shared/pokemon-mechanics.mjs";
-import { createCatalog, createFields } from "./EditorFixtures.js";
+import { createCatalog, createFields, createSpreads } from "./EditorFixtures.js";
 
 const NATURE_NAMES =
 [
@@ -73,6 +73,39 @@ function expectEfficientEvs(suggestion, catalog, species, level)
 
 describe("spread suggestions", () =>
 {
+    it.each([19, 73])("matches symbolic Trick Room suggestions for numeric team %i without leaking context", (value) =>
+    {
+        const catalog = suggestionCatalog();
+        const teamTypes = createSpreads().teamTypes.map((team) => team.name === "DOUBLES_TRICK_ROOM_TEAM" ? { ...team, value } : team);
+        for (const type of HIDDEN_POWER_TYPES)
+        {
+            const fields = createFields({ ...optimizeHiddenPowerIvs(createFields(), type), specificTeamType: value, moves: ["MOVE_HIDDENPOWER", "MOVE_FLAMETHROWER"] });
+            const before = JSON.stringify({ catalog, fields, teamTypes });
+            const symbolic = { ...fields, specificTeamType: "DOUBLES_TRICK_ROOM_TEAM" };
+            for (const preset of [null, ...SPREAD_PRESETS.map(({ name }) => name)])
+            {
+                const result = getSuggestedSpread(catalog, fields, { preset, teamTypes });
+                expect(result).toEqual(getSuggestedSpread(catalog, symbolic, { preset }));
+                expect(getNatureEffect(result.fields.nature).decreased).toBe("spd");
+                expect(getHiddenPowerType(result.fields)).toBe(type);
+                expect(Object.keys(result.fields).sort()).toEqual(EXPECTED_KEYS);
+                if (preset === null || SPREAD_PRESETS.find(({ name }) => name === preset).slow)
+                {
+                    expect([0, 1]).toContain(result.fields.spdIv);
+                    expect(result.fields.spdEv).toBe(0);
+                }
+                else
+                    expect([30, 31]).toContain(result.fields.spdIv);
+            }
+            expect(JSON.stringify({ catalog, fields, teamTypes })).toBe(before);
+        }
+        const fields = createFields({ specificTeamType: value });
+        catalog.natures = { NATURE_TIMID: "Timid" };
+        expect(getSuggestedSpread(catalog, fields, { teamTypes })).toBeNull();
+        expect(getSuggestedSpread(catalog, fields, { preset: "Fast Special Attacker", teamTypes })).toBeNull();
+        expect(getSuggestedSpread(catalog, fields)).not.toBeNull();
+    });
+
     it("exports the nine searchable preset names and investment priorities", () =>
     {
         expect(SPREAD_PRESETS.map(({ name }) => name)).toEqual(
@@ -143,16 +176,23 @@ describe("spread suggestions", () =>
         }
     });
 
-    it.each(["MOVE_TRICKROOM", "MOVE_GYROBALL"])("lets non-slow presets override %s without discarding its known attack use", (move) =>
+    it.each(
+    [
+        { move: "MOVE_TRICKROOM" },
+        { move: "MOVE_GYROBALL" },
+        { move: "MOVE_FLAMETHROWER", specificTeamType: "DOUBLES_TRICK_ROOM_TEAM" },
+    ])("keeps non-slow preset IV/EV priorities but lowers nature Speed for $move / $specificTeamType", ({ move, specificTeamType }) =>
     {
         const catalog = suggestionCatalog();
-        const fields = createFields({ moves: [move] });
+        const fields = createFields({ moves: [move], specificTeamType });
         const before = JSON.stringify({ catalog, fields });
         for (const { name, primary, secondary } of SPREAD_PRESETS.filter(({ slow }) => !slow))
         {
             const result = getSuggestedSpread(catalog, fields, { preset: name });
             expect(result.fields.spdIv).toBe(31);
-            expect([primary, secondary, "spd"]).not.toContain(getNatureEffect(result.fields.nature).decreased);
+            expect(getNatureEffect(result.fields.nature).decreased).toBe("spd");
+            if (primary === "atk" || primary === "spAtk")
+                expect(getNatureEffect(result.fields.nature).increased).toBe(primary);
             if (secondary === "spd")
                 expect(result.fields.spdEv).toBe(252);
             if (move === "MOVE_GYROBALL")
@@ -234,7 +274,10 @@ describe("spread suggestions", () =>
                 expect(slow ? [0, 1] : [30, 31]).toContain(result.fields.spdIv);
                 if (slow)
                     expect(result.fields.spdEv).toBe(0);
-                expect([primary, secondary, "spAtk"]).not.toContain(getNatureEffect(result.fields.nature).decreased);
+                if (moves.includes("MOVE_TRICKROOM") || moves.includes("MOVE_GYROBALL"))
+                    expect(getNatureEffect(result.fields.nature).decreased).toBe("spd");
+                else
+                    expect([primary, secondary, "spAtk"]).not.toContain(getNatureEffect(result.fields.nature).decreased);
                 expectEfficientEvs(result, catalog, fields.species, 50);
                 expect(Object.keys(result.fields).sort()).toEqual(EXPECTED_KEYS);
                 expect(JSON.stringify({ catalog, fields })).toBe(before);
@@ -374,6 +417,60 @@ describe("spread suggestions", () =>
         }));
         expect(result.role).toBe("Slow Physical Attacker");
         expect(result.fields).toMatchObject({ spdEv: 0, spdIv: 0, hpEv: 252, atkEv: 252, nature: "NATURE_BRAVE" });
+    });
+
+    it("infers slow offense for a Trick Room team without slow moves", () =>
+    {
+        const catalog = suggestionCatalog();
+        const fields = createFields({ moves: ["MOVE_FLAMETHROWER"], specificTeamType: "DOUBLES_TRICK_ROOM_TEAM" });
+        const before = JSON.stringify({ catalog, fields });
+        const result = getSuggestedSpread(catalog, fields);
+        expect(result).toMatchObject(
+        {
+            role: "Slow Special Attacker",
+            fields: { spdEv: 0, spdIv: 0, hpEv: 252, spAtkEv: 252, nature: "NATURE_QUIET" },
+        });
+        expect(JSON.stringify({ catalog, fields })).toBe(before);
+    });
+
+    it.each(HIDDEN_POWER_TYPES)("preserves %s for automatic and all preset Trick Room team suggestions", (type) =>
+    {
+        const catalog = suggestionCatalog();
+        const fields = createFields(
+        {
+            ...optimizeHiddenPowerIvs(createFields(), type),
+            specificTeamType: "DOUBLES_TRICK_ROOM_TEAM", moves: ["MOVE_HIDDENPOWER", "MOVE_FLAMETHROWER"],
+        });
+        const before = JSON.stringify({ catalog, fields });
+        for (const preset of [null, ...SPREAD_PRESETS.map(({ name }) => name)])
+        {
+            const result = getSuggestedSpread(catalog, fields, { preset });
+            expect(getHiddenPowerType(result.fields)).toBe(type);
+            expect(getNatureEffect(result.fields.nature).decreased).toBe("spd");
+            const slow = preset === null || SPREAD_PRESETS.find(({ name }) => name === preset).slow;
+            expect(slow ? [0, 1] : [30, 31]).toContain(result.fields.spdIv);
+            if (slow)
+                expect(result.fields.spdEv).toBe(0);
+            expectEfficientEvs(result, catalog, fields.species, 50);
+        }
+        expect(JSON.stringify({ catalog, fields })).toBe(before);
+    });
+
+    it.each(
+    [
+        { moves: ["MOVE_TRICKROOM"] },
+        { moves: ["MOVE_GYROBALL"] },
+        { moves: ["MOVE_FLAMETHROWER"], specificTeamType: "DOUBLES_TRICK_ROOM_TEAM" },
+    ])("rejects non-slow catalog nature fallbacks under a slow condition $moves / $specificTeamType", (overrides) =>
+    {
+        const catalog = suggestionCatalog();
+        const fields = createFields(overrides);
+        catalog.natures = { NATURE_HARDY: "Hardy", NATURE_TIMID: "Timid" };
+        for (const preset of [null, ...SPREAD_PRESETS.map(({ name }) => name)])
+            expect(getSuggestedSpread(catalog, fields, { preset })).toBeNull();
+        catalog.natures.NATURE_SASSY = "Sassy";
+        for (const { name } of SPREAD_PRESETS)
+            expect(getSuggestedSpread(catalog, fields, { preset: name }).fields.nature).toBe("NATURE_SASSY");
     });
 
     it("also lowers Speed for defensive Trick Room", () =>

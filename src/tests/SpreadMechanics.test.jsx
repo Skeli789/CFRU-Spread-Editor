@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { createZygardeCatalog } from "./EditorFixtures";
 
 import
 {
     DEFAULT_PREVIEW_LEVEL, HIDDEN_POWER_TYPES, LITTLE_CUP_LEVEL, MOVE_HIDDEN_POWER, STAT_USE, calculateSpreadStats,
     calculateStats, getAbilityLabel, getAbilityOptions, getEffectiveAbility, getHiddenPowerType, getIvAutoFix,
-    getMaxEv, getMegaAbility, getMoveStatUse, getNatureEffect, getResetIvs, getSpreadLevel, optimizeHiddenPowerIvs, planIvAutoFix,
-    stepEv,
+    getMaxEv, getMegaAbility, getMegaSpecies, getMoveStatUse, getNatureEffect, getResetIvs, getSpreadLevel, optimizeHiddenPowerIvs, planIvAutoFix,
+    isSlowSpeedSpread, stepEv,
 } from "../../shared/pokemon-mechanics.mjs";
 import
 {
@@ -165,6 +166,25 @@ describe("Final stats", () =>
         expect(fields.species).toBe("SPECIES_CHARIZARD");
     });
 
+    it.each(["SPECIES_ZYGARDE", "SPECIES_ZYGARDE_10"])("preview Mega %s only with Power Construct and Zygardite", (species) =>
+    {
+        const catalog = createZygardeCatalog();
+        const fields = createFields({ species, ability: 0, item: "ITEM_ZYGARDITE" });
+        const saved = structuredClone(fields);
+        expect(getMegaSpecies(catalog, fields)).toBe("SPECIES_ZYGARDE_MEGA");
+        expect(getMegaAbility(catalog, fields)).toEqual({ species: "SPECIES_ZYGARDE_MEGA", ability: "ABILITY_POWERCONSTRUCT" });
+        expect(calculateSpreadStats(catalog, fields, { level: 100 }).stats.atk).toBe(336);
+        expect(calculateSpreadStats(catalog, fields, { level: 100, mega: false }).stats.atk).toBe(236);
+        expect(getMegaSpecies(catalog, { ...fields, ability: 1 })).toBeNull();
+        expect(getMegaSpecies(catalog, { ...fields, item: "ITEM_NONE" })).toBeNull();
+        catalog.species.SPECIES_ZYGARDE_COMPLETE.megas[0].available = false;
+        expect(getMegaSpecies(catalog, fields)).toBeNull();
+        catalog.species.SPECIES_ZYGARDE_COMPLETE.megas[0].available = true;
+        delete catalog.species.SPECIES_ZYGARDE_MEGA;
+        expect(getMegaSpecies(catalog, fields)).toBeNull();
+        expect(fields).toEqual(saved);
+    });
+
     it("use level 5 for Little Cup sets and the preview level otherwise", () =>
     {
         expect(getSpreadLevel({ littleCup: true }, 100)).toBe(LITTLE_CUP_LEVEL);
@@ -254,12 +274,20 @@ describe("EV arrows", () =>
 
 describe("EV and IV entry", () =>
 {
-    it("keeps entered EVs within 0 to 252 and the 510 total", () =>
+    it("retains entered EVs beyond legal limits while clamping negatives and ignoring nonintegers", () =>
     {
+        const fields = createFields();
         expect(setEv(createFields(), "atk", 5).atkEv).toBe(5);
-        expect(setEv(createFields(), "atk", 300).atkEv).toBe(252);
+        expect(setEv(fields, "atk", 300).atkEv).toBe(300);
+        expect(setEv(fields, "atk", 1000).atkEv).toBe(1000);
         expect(setEv(createFields(), "atk", -4).atkEv).toBe(0);
-        expect(setEv(createFields({ hpEv: 252, defEv: 248 }), "atk", 20).atkEv).toBe(10);
+        expect(setEv(createFields({ hpEv: 252, defEv: 248 }), "atk", 20).atkEv).toBe(20);
+        expect(setEv(fields, "atk", 1.5)).toBe(fields);
+        expect(setEv(fields, "atk", Number.NaN)).toBe(fields);
+        expect(setEv(fields, "atk", Number.POSITIVE_INFINITY)).toBe(fields);
+        expect(fields.atkEv).toBe(0);
+        expect(validateSpreadFields(setEv(fields, "atk", 300)).map((problem) => problem.field)).toEqual(["atkEv"]);
+        expect(validateSpreadFields(setEv(createFields({ hpEv: 252, defEv: 248 }), "atk", 20)).map((problem) => problem.field)).toEqual(["evTotal"]);
     });
 
     it("keeps entered IVs within 0 to 31 and ignores entries that are not whole numbers", () =>
@@ -538,6 +566,57 @@ describe("IV auto-fix", () =>
         expect(fix.changes.spdIv).toBeLessThanOrEqual(1);
         expect(getHiddenPowerType({ ...fields, ...fix.changes })).toBe("TYPE_FIRE");
         expect(getResetIvs(CATALOG, createFields({ spdIv: 12, moves: ["MOVE_GYROBALL", 0, 0, 0] })).spdIv).toBe(0);
+    });
+
+    it("minimizes Speed for a Trick Room team without slow moves on auto-fix and reset", () =>
+    {
+        const fields = createFields({ specificTeamType: "DOUBLES_TRICK_ROOM_TEAM", spdIv: 12 });
+        const before = JSON.stringify(fields);
+        expect(getIvAutoFix(CATALOG, fields).changes).toEqual({ spAtkIv: 0, spdIv: 0 });
+        expect(getResetIvs(CATALOG, fields)).toMatchObject({ atkIv: 31, spAtkIv: 0, spdIv: 0 });
+        expect(JSON.stringify(fields)).toBe(before);
+        const ordinary = { ...fields, specificTeamType: "DOUBLES_SUN_TEAM" };
+        expect(getIvAutoFix(CATALOG, ordinary).changes).not.toHaveProperty("spdIv");
+        expect(getResetIvs(CATALOG, ordinary).spdIv).toBe(31);
+    });
+
+    it.each([19, 73])("resolves numeric Trick Room team %i for the helper, reset and IV planner", (value) =>
+    {
+        const teamTypes = TEAM_TYPES.map((team) => team.name === "DOUBLES_TRICK_ROOM_TEAM" ? { ...team, value } : team);
+        const fields = createFields({ specificTeamType: value, spdIv: 12 });
+        const before = JSON.stringify({ fields, teamTypes });
+        const symbolic = { ...fields, specificTeamType: "DOUBLES_TRICK_ROOM_TEAM" };
+        expect(isSlowSpeedSpread(fields, teamTypes)).toBe(true);
+        expect(isSlowSpeedSpread(symbolic)).toBe(true);
+        expect(getIvAutoFix(CATALOG, fields, teamTypes)).toEqual(getIvAutoFix(CATALOG, symbolic));
+        expect(getResetIvs(CATALOG, fields, teamTypes)).toEqual(getResetIvs(CATALOG, symbolic));
+        expect(planIvAutoFix(CATALOG, [{ id: "numeric", fields }], teamTypes).changes[0].fields)
+            .toEqual({ spAtkIv: 0, spdIv: 0 });
+        expect(isSlowSpeedSpread(fields)).toBe(false);
+        for (const specificTeamType of [0, 1, value + 1, null, undefined])
+            expect(isSlowSpeedSpread({ ...fields, specificTeamType }, teamTypes)).toBe(false);
+        expect(isSlowSpeedSpread({ ...fields, specificTeamType: null }, [{ name: "DOUBLES_TRICK_ROOM_TEAM", value: null }])).toBe(false);
+        expect(JSON.stringify({ fields, teamTypes })).toBe(before);
+    });
+
+    it.each(HIDDEN_POWER_TYPES)("preserves %s while minimizing Trick Room team Speed on auto-fix and reset", (type) =>
+    {
+        const fields = createFields(
+        {
+            ...optimizeHiddenPowerIvs(createFields(), type),
+            specificTeamType: "DOUBLES_TRICK_ROOM_TEAM", moves: [MOVE_HIDDEN_POWER, "MOVE_FLAMETHROWER", 0, 0],
+        });
+        const numeric = { ...fields, specificTeamType: TEAM_TYPES.find(({ name }) => name === "DOUBLES_TRICK_ROOM_TEAM").value };
+        const fixed = { ...fields, ...getIvAutoFix(CATALOG, fields).changes };
+        const reset = getResetIvs(CATALOG, fields);
+        const numericFixed = { ...numeric, ...getIvAutoFix(CATALOG, numeric, TEAM_TYPES).changes };
+        const numericReset = getResetIvs(CATALOG, numeric, TEAM_TYPES);
+        expect(numericReset).toEqual(reset);
+        for (const ivs of [fixed, reset, numericFixed, numericReset])
+        {
+            expect([0, 1]).toContain(ivs.spdIv);
+            expect(getHiddenPowerType(ivs)).toBe(type);
+        }
     });
 
     it("keeps both IVs for moves that pick their category from the higher stat", () =>

@@ -4,7 +4,7 @@
  */
 
 import { LEGALITY, getMegaEvolutions, getMoveLegality } from "./catalog.mjs";
-import { getEffectiveAbility } from "./pokemon-mechanics.mjs";
+import { EV_FIELDS, EV_STEP, MAX_EV, MAX_EV_TOTAL, STATS, getEffectiveAbility } from "./pokemon-mechanics.mjs";
 import { getBattleType, getFieldSymbol, getTeamType } from "./spread-model.mjs";
 
 export const FLAG_FILTER = { ANY: "", YES: "yes", NO: "no" };
@@ -26,6 +26,7 @@ export const DEFAULT_FILTERS = Object.freeze(
     teamType: "",
     unsaved: false,
     illegalMoves: false,
+    incompleteEvs: false,
 });
 
 export const PAGE_SIZES = [12, 24, 48];
@@ -163,6 +164,29 @@ export function hasIllegalMove(catalog, fields)
 }
 
 /**
+ * Returns whether another effective EV investment point fits within the stat and total limits.
+ *
+ * @param {object} fields The spread's values.
+ * @returns {boolean} Whether a stat can reach its next multiple of four.
+ */
+export function hasIncompleteEvs(fields)
+{
+    const evs = STATS.map((stat) => fields[EV_FIELDS[stat]]);
+    if (evs.some((ev) => !Number.isInteger(ev) || ev < 0 || ev > MAX_EV))
+        return false;
+
+    const total = evs.reduce((sum, ev) => sum + ev, 0);
+    if (total > MAX_EV_TOTAL)
+        return false;
+
+    return evs.some((ev) =>
+    {
+        const next = (Math.floor(ev / EV_STEP) + 1) * EV_STEP;
+        return next <= MAX_EV && total + next - ev <= MAX_EV_TOTAL;
+    });
+}
+
+/**
  * Returns the ability a spread has in battle.
  *
  * @param {object} catalog The game catalog.
@@ -233,6 +257,8 @@ export function matchesFilters(entry, fields, filters, context)
     if (filters.unsaved && !context.isChanged(entry.id))
         return false;
     if (filters.illegalMoves && !hasIllegalMove(catalog, fields))
+        return false;
+    if (filters.incompleteEvs && (entry.placeholder || !hasIncompleteEvs(fields)))
         return false;
 
     return true;

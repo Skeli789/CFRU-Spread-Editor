@@ -53,6 +53,8 @@ const SPECIES_ICON_SIZE = 24;
 const SPECIES_PREVIEW_SIZE = 96;
 const TAB_SPECIES = "species";
 const TAB_IMPORT = "import";
+const RAID_RUSH_CATEGORY = "raidRush";
+const SPECIES_ETERNAMAX = "SPECIES_ETERNATUS_ETERNAMAX";
 const IMPORT_MIN_ROWS = 8;
 const IMPORT_MAX_ROWS = 16;
 const IMPORT_PROBLEMS_TITLE_ID = "import-problems-title";
@@ -183,17 +185,17 @@ export const AddSpreadDialog = ({ sets, defaultSetId, defaultSpecies, catalog, o
     const [text, setText] = useState("");
     const deferredText = useDeferredValue(text);
 
-    // Forms that only exist in battle, such as Megas and Gigantamax forms, cannot be stored in a spread
-    const speciesOptions = useMemo(() => Object.entries(catalog.species).filter(([value]) => !isBattleOnlySpecies(catalog, value))
+    const selectedSet = sets.find((set) => set.id === setId) ?? null;
+    const speciesOptions = useMemo(() => Object.entries(catalog.species).filter(([value]) =>
+        value === SPECIES_ETERNAMAX ? selectedSet?.category === RAID_RUSH_CATEGORY : !isBattleOnlySpecies(catalog, value))
         .map(([value, info], index) => ({ value, name: getSpeciesFormName(catalog, value), info, index }))
-        .sort((first, second) => first.name.localeCompare(second.name) || first.index - second.index), [catalog]);
+        .sort((first, second) => first.name.localeCompare(second.name) || first.index - second.index), [catalog, selectedSet?.category]);
     const [species, setSpecies] = useState(() => speciesOptions.find((option) => option.value === defaultSpecies) ?? null);
     const imported = useMemo(() => resolveShowdownText(catalog, deferredText), [catalog, deferredText]);
     const ready = imported.sets.filter((set) => set.fields != null);
     const reported = imported.sets.map((set, index) => ({ ...set, number: index + 1 })).filter((set) => set.errors.length > 0 || set.warnings.length > 0);
     const hasImportErrors = reported.some((set) => set.errors.length > 0);
-    const selectedSet = sets.find((set) => set.id === setId) ?? null;
-    const selectedSpecies = catalog.species[species?.value];
+    const selectedSpecies = speciesOptions.find((option) => option.value === species?.value)?.info;
     const importLabel = ready.length === 1 ? "Import 1 Spread" : `Import ${ready.length} Spreads`;
     const canAddSpecies = Boolean(selectedSet?.canInsert && selectedSpecies);
 

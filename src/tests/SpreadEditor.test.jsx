@@ -469,9 +469,9 @@ describe("Spread editor", () =>
         expect(calls.filter((call) => call.route.endsWith("/save"))[1].body.revision).toBe("revision-2");
     });
 
-    test("keeps entered IVs and EVs within their limits", async () =>
+    test("caps entered IVs but retains illegal EVs and blocks saving them", async () =>
     {
-        const { user } = await openEditor();
+        const { user, calls } = await openEditor();
 
         const card = await editCard(user, "Charizard");
         await user.clear(within(card).getByLabelText("Charizard Defense IV"));
@@ -480,8 +480,13 @@ describe("Spread editor", () =>
 
         await user.clear(within(card).getByLabelText("Charizard HP EVs"));
         await user.type(within(card).getByLabelText("Charizard HP EVs"), "300");
-        expect(within(card).getByLabelText("EV total 510 of 510")).toBeInTheDocument();
+        expect(within(card).getByLabelText("Charizard HP EVs")).toHaveValue("300");
+        expect(within(card).getByLabelText("Charizard HP EVs")).toHaveAttribute("aria-invalid", "true");
         expect(within(card).getByRole("button", { name: "Raise HP EVs" })).toBeDisabled();
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Done" }));
+        await user.click(screen.getByRole("button", { name: "Save Changes (1)" }));
+        expect(screen.getByText("Fix these problems before saving:")).toBeInTheDocument();
+        expect(calls.some((call) => call.route.endsWith("/save"))).toBe(false);
     });
 
     test("blocks saving changes to a spread that is still invalid and lists the problems", async () =>
@@ -805,6 +810,34 @@ describe("Spread editor", () =>
 
         await user.click(within(dialog).getByRole("button", { name: "Apply All" }));
         expect(await screen.findByRole("button", { name: "Save Changes (3)" })).toBeInTheDocument();
+    });
+
+    test.each(["All", "IVs"])("applies bulk %s to numeric and symbolic Trick Room teams without changing team fields", async (category) =>
+    {
+        const spreads = createSpreads();
+        const team = spreads.teamTypes.find(({ name }) => name === "DOUBLES_TRICK_ROOM_TEAM");
+        const current = createFields({ specificTeamType: team.value, forSingles: false, forDoubles: true,
+            modifyMovesDoubles: false, atkIv: 0, moves: ["MOVE_FLAMETHROWER", 0, 0, 0], hpEv: category === "All" ? 253 : 252 });
+        spreads.entries[0].fields = current;
+        spreads.entries[1].fields = { ...current, specificTeamType: team.name, hpEv: 0, moves: ["MOVE_HIDDENPOWER", 0, 0, 0] };
+        spreads.entries[2].fields = { ...current, specificTeamType: "DOUBLES_SUN_TEAM", hpEv: 0 };
+        const before = JSON.stringify(spreads);
+        const { user, calls } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads) });
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+        if (category === "IVs")
+            await user.click(within(dialog).getByRole("tab", { name: /^IVs/ }));
+        expect(within(dialog).getByText("Lowering Spe IV 31 to 0")).toBeInTheDocument();
+        expect(within(dialog).getByText("Lowering Spe IV 31 to 1 (kept odd for Hidden Power)")).toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: `Apply ${category}` }));
+        await user.click(await screen.findByRole("button", { name: "Save Changes (2)" }));
+        await waitFor(() => expect(calls.some((call) => call.route.endsWith("/save"))).toBe(true));
+        expect(calls.find((call) => call.route.endsWith("/save")).body.operations).toEqual(
+        [
+            { type: "update", entryId: "e0", fields: category === "All" ? { hpEv: 252, spdIv: 0 } : { spdIv: 0 } },
+            { type: "update", entryId: "e1", fields: { spdIv: 1 } },
+        ]);
+        expect(JSON.stringify(spreads)).toBe(before);
     });
 
     test("lists only unsafe active spreads and excludes placeholders from every auto-fix count", async () =>

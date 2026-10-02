@@ -6,7 +6,7 @@ import
 {
     DEFAULT_PREVIEW_LEVEL, EV_FIELDS, EV_STEP, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV,
     MOVE_HIDDEN_POWER, STAT_USE, STATS, calculateStat, getEffectiveAbility, getMegaSpecies,
-    getMoveStatUse, getNatureEffect, getResetIvs,
+    getMoveStatUse, getNatureEffect, getResetIvs, isSlowSpeedSpread,
 } from "./pokemon-mechanics.mjs";
 
 const EV_BUDGET = Math.floor(MAX_EV_TOTAL / EV_STEP) * EV_STEP;
@@ -58,9 +58,10 @@ export const SPREAD_PRESETS =
  * @param {object} fields The original spread.
  * @param {Array<object>} moves Known moves with their stat use.
  * @param {string|null} ability The effective ability, including Mega ability.
+ * @param {Array<{name: string, value: number|null}>} teamTypes The snapshot's resolved team enum.
  * @returns {object} The role, priorities and used attacking stats.
  */
-function chooseRole(baseStats, fields, moves, ability)
+function chooseRole(baseStats, fields, moves, ability, teamTypes)
 {
     const has = (set) => moves.some(({ move }) => set.has(move));
     const counts = Object.fromEntries(["atk", "spAtk"].map((stat) =>
@@ -76,7 +77,7 @@ function chooseRole(baseStats, fields, moves, ability)
     if (!used.includes(attack))
         attack = used[0] ?? null;
 
-    const slow = has(SLOW_MOVES);
+    const slow = isSlowSpeedSpread(fields, teamTypes);
     const boosted = has(SPEED_SETUP) || SPEED_ABILITIES.has(ability) || fields.item === "ITEM_CHOICESCARF";
     const fast = !slow && (baseStats.spd >= FAST_SPEED
         || (baseStats.spd >= MIN_FRAGILE_SPEED && Math.min(baseStats.hp, baseStats.def, baseStats.spDef) < FRAGILE_BULK) || boosted);
@@ -112,29 +113,35 @@ function chooseRole(baseStats, fields, moves, ability)
  * @param {object} fields The current spread.
  * @param {object} plan The role's priorities.
  * @param {object} baseStats The effective base stats.
+ * @param {Array<{name: string, value: number|null}>} teamTypes The snapshot's resolved team enum.
  * @returns {string|null} A known nature, or null when no safe choice exists.
  */
-function chooseNature(catalog, fields, plan, baseStats)
+function chooseNature(catalog, fields, plan, baseStats, teamTypes)
 {
-    const lowered = plan.slow ? "spd" : !plan.used.includes("atk") ? "atk"
+    const slowCondition = isSlowSpeedSpread(fields, teamTypes);
+    const slowNature = plan.slow || slowCondition;
+    const raised = slowNature && plan.raised === "spd" ? (plan.primary === "hp" ? "def" : plan.primary) : plan.raised;
+    const lowered = slowNature ? "spd" : !plan.used.includes("atk") ? "atk"
         : !plan.used.includes("spAtk") ? "spAtk" : baseStats.def <= baseStats.spDef ? "def" : "spDef";
     const suitable = (nature) =>
     {
         const effect = getNatureEffect(nature);
         return Object.hasOwn(catalog.natures ?? {}, nature) && effect != null
-            && !plan.used.includes(effect.decreased) && effect.decreased !== plan.primary
-            && effect.decreased !== plan.secondary && (!plan.slow || plan.explicit || effect.decreased === "spd");
+            && !plan.used.includes(effect.decreased)
+            && ((slowNature && effect.decreased === "spd")
+                || (effect.decreased !== plan.primary && effect.decreased !== plan.secondary))
+            && (!slowNature || (plan.explicit && !slowCondition) || effect.decreased === "spd");
     };
     let available = NATURES.filter(suitable);
-    if (plan.explicit && plan.slow && available.some((nature) => getNatureEffect(nature).decreased === "spd"))
+    if (plan.explicit && slowNature && available.some((nature) => getNatureEffect(nature).decreased === "spd"))
         available = available.filter((nature) => getNatureEffect(nature).decreased === "spd");
     const exact = available.find((nature) =>
     {
         const effect = getNatureEffect(nature);
-        return effect.increased === plan.raised && effect.decreased === lowered;
+        return effect.increased === raised && effect.decreased === lowered;
     });
     return exact ?? (available.includes(fields.nature) ? fields.nature : null)
-        ?? available.find((nature) => getNatureEffect(nature).increased === plan.raised)
+        ?? available.find((nature) => getNatureEffect(nature).increased === raised)
         ?? available[0] ?? null;
 }
 
@@ -144,9 +151,10 @@ function chooseNature(catalog, fields, plan, baseStats)
  * @param {object} fields The original spread.
  * @param {Array<object>} moves Known moves with their stat use.
  * @param {object} plan The explicit role's priorities.
+ * @param {Array<{name: string, value: number|null}>} teamTypes The snapshot's resolved team enum.
  * @returns {object} All six reset IV fields.
  */
-function getPresetResetIvs(catalog, fields, moves, plan)
+function getPresetResetIvs(catalog, fields, moves, plan, teamTypes)
 {
     const context = moves.filter(({ move }) => plan.slow || !SLOW_MOVES.has(move));
     const contextMoves = context.map(({ move }) => move);
@@ -166,7 +174,10 @@ function getPresetResetIvs(catalog, fields, moves, plan)
         details[MOVE_TRICK_ROOM] = { split: "SPLIT_STATUS", power: 0 };
         contextMoves.push(MOVE_TRICK_ROOM);
     }
-    return getResetIvs({ ...catalog, moves: details }, { ...fields, moves: contextMoves });
+    return getResetIvs({ ...catalog, moves: details },
+    {
+        ...fields, moves: contextMoves, specificTeamType: plan.slow ? fields.specificTeamType : null,
+    }, teamTypes);
 }
 
 /**
@@ -228,9 +239,10 @@ function allocateEvs(species, baseStats, values, plan, level)
  * @param {object} [options] Battle-level and preset options.
  * @param {number} [options.level] The level used for measurable EV gains.
  * @param {string|null} [options.preset=null] A preset name, or null for automatic role selection.
+ * @param {Array<{name: string, value: number|null}>} [options.teamTypes=[]] The snapshot's resolved team enum.
  * @returns {{role: string, fields: object}|null} The suggestion, or null for unsafe inputs.
  */
-export function getSuggestedSpread(catalog, fields, { level = DEFAULT_PREVIEW_LEVEL, preset = null } = {})
+export function getSuggestedSpread(catalog, fields, { level = DEFAULT_PREVIEW_LEVEL, preset = null, teamTypes = [] } = {})
 {
     if (!catalog?.species || !catalog?.moves || !fields || !Array.isArray(fields.moves)
         || fields.moves.length > 4 || !Number.isInteger(level) || level < 1 || level > MAX_LEVEL
@@ -268,16 +280,16 @@ export function getSuggestedSpread(catalog, fields, { level = DEFAULT_PREVIEW_LE
         && !Object.values(IV_FIELDS).every((key) => Number.isInteger(fields[key]) && fields[key] >= 0 && fields[key] <= MAX_IV)))
         return null;
 
-    let plan = chooseRole(baseStats, fields, moves, getEffectiveAbility(info, fields.ability));
+    let plan = chooseRole(baseStats, fields, moves, getEffectiveAbility(info, fields.ability), teamTypes);
     if (selected)
     {
         const used = [...new Set([...plan.used, ...(["atk", "spAtk"].includes(selected.primary) ? [selected.primary] : [])])];
         plan = { ...plan, ...selected, role: selected.name, used, slow: selected.slow === true, explicit: true };
     }
-    const nature = chooseNature(catalog, fields, plan, baseStats);
+    const nature = chooseNature(catalog, fields, plan, baseStats, teamTypes);
     if (nature == null)
         return null;
 
-    const values = { ...(selected ? getPresetResetIvs(catalog, fields, moves, plan) : getResetIvs(catalog, fields)), nature };
+    const values = { ...(selected ? getPresetResetIvs(catalog, fields, moves, plan, teamTypes) : getResetIvs(catalog, fields, teamTypes)), nature };
     return { role: plan.role, fields: { ...allocateEvs(species, baseStats, values, plan, level), ...values } };
 }

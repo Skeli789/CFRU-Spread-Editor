@@ -322,6 +322,8 @@ const SpreadFilters = ({ spreads, catalog, filters, onFiltersChange, resultCount
                                       label="Unsaved Changes" />
                     <FormControlLabel control={<Switch size="small" checked={filters.illegalMoves} onChange={(event) => change({ illegalMoves: event.target.checked })} />}
                                       label="Illegal Moves" />
+                    <FormControlLabel control={<Switch size="small" checked={filters.incompleteEvs} onChange={(event) => change({ incompleteEvs: event.target.checked })} />}
+                                      label="Incomplete EVs" />
                 </Stack>
             </Collapse>
         </div>

@@ -20,6 +20,8 @@ import { STAT_LABELS } from "./CatalogDisplay";
 const DIRECTION_UP = 1;
 const DIRECTION_DOWN = -1;
 const DIGITS_PATTERN = /^\d{0,3}$/;
+const EV_DIGITS_PATTERN = /^\d*$/;
+const INVALID_INPUT_OPACITY = 0.12;
 const UNKNOWN_STAT = "?";
 const KEY_ARROW_UP = "ArrowUp";
 const KEY_ARROW_DOWN = "ArrowDown";
@@ -33,7 +35,7 @@ const VIEW_DIVIDER_OPACITY = 0.08;
 const RAISED_LABEL = "Raised by nature";
 const LOWERED_LABEL = "Lowered by nature";
 const RESET_EVS_TIP = "Reset all EVs to 0";
-const RESET_IVS_TIP = "Reset all IVs to 31, keeping unused attacking IVs at 0 and Speed at 0 for Gyro Ball or Trick Room";
+const RESET_IVS_TIP = "Reset all IVs to 31, keeping unused attacking IVs at 0 and Speed at 0 for Gyro Ball, Trick Room or a Doubles Trick Room team";
 
 
 /**
@@ -84,10 +86,11 @@ const NumberInput = ({ value, label, max, onCommit, onStep, error = false, kind 
     return (
         <InputBase
             className={`stat-input${error ? " stat-input-error" : ""}`}
+            sx={error && kind === "ev" ? (theme) => ({ backgroundColor: alpha(theme.palette.error.main, INVALID_INPUT_OPACITY), color: theme.palette.error.main }) : undefined}
             value={text}
             onChange={(event) =>
             {
-                if (!DIGITS_PATTERN.test(event.target.value))
+                if (!(kind === "ev" ? EV_DIGITS_PATTERN : DIGITS_PATTERN).test(event.target.value))
                     return;
                 setText(event.target.value);
                 if (event.target.value !== "")
@@ -223,16 +226,17 @@ const StepperInput = ({ label, canLower, canRaise, onStep, children }) =>
  * @param {Function} props.onChange - Called with a function from the current values to the new values.
  * @param {string} props.name - The spread's name, for input labels.
  * @param {object} [props.catalog] - The game catalog, for working out which IVs a reset keeps at 0.
+ * @param {Array<{name: string, value: number|null}>} [props.teamTypes=[]] - The snapshot's resolved team enum.
  * @param {React.ReactNode} [props.footer] - Controls shown at the right of the Total row.
  * @returns {JSX.Element} The stat table.
  */
-const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange, name, catalog = null, footer = null }) =>
+const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange, name, catalog = null, teamTypes = [], footer = null }) =>
 {
     const theme = useTheme();
     const nature = getNatureEffect(getFieldSymbol(fields, "nature"));
     const evTotal = getEvTotal(fields);
     const baseTotal = STATS.every((stat) => baseStats?.[stat] != null) ? STATS.reduce((sum, stat) => sum + baseStats[stat], 0) : null;
-    const resetIvFields = editing && catalog != null ? getResetIvs(catalog, fields) : null;
+    const resetIvFields = editing && catalog != null ? getResetIvs(catalog, fields, teamTypes) : null;
     const ivsAreReset = resetIvFields == null || STATS.every((stat) => fields[IV_FIELDS[stat]] === resetIvFields[IV_FIELDS[stat]]);
 
     /**
@@ -264,7 +268,7 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
      */
     const resetIvs = () => onChange((current) =>
     {
-        const ivs = getResetIvs(catalog, current);
+        const ivs = getResetIvs(catalog, current, teamTypes);
         return STATS.reduce((next, stat) => setIv(next, stat, ivs[IV_FIELDS[stat]]), current);
     });
 
@@ -337,6 +341,7 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
                     const label = STAT_LABELS[stat];
                     const ev = fields[EV_FIELDS[stat]];
                     const iv = fields[IV_FIELDS[stat]];
+                    const evInvalid = !Number.isInteger(ev) || ev < 0 || ev > MAX_EV || (evTotal > MAX_EV_TOTAL && ev > 0);
                     const natureClass = nature?.increased === stat ? " stat-label-raised" : nature?.decreased === stat ? " stat-label-lowered" : "";
                     return (
                         <tr key={stat}>
@@ -348,11 +353,11 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
                                     <Tooltip title={LOWERED_LABEL}><span role="img" aria-label={LOWERED_LABEL} className="nature-down"><ArrowDownwardIcon fontSize="inherit" /></span></Tooltip>}
                             </th>
                             <td>{baseStats?.[stat] ?? UNKNOWN_STAT}</td>
-                            <td>
+                            <td style={!editing && evInvalid ? { color: theme.palette.error.main } : undefined}>
                                 {editing
                                     ? <StepperInput label={`${label} EVs`} onStep={(direction) => step(stat, direction)}
                                                     canLower={stepEv(fields, stat, DIRECTION_DOWN, littleCup) != null} canRaise={stepEv(fields, stat, DIRECTION_UP, littleCup) != null}>
-                                        <NumberInput kind="ev" value={ev} label={`${name} ${label} EVs`} max={MAX_EV} error={!Number.isInteger(ev) || ev > MAX_EV}
+                                        <NumberInput kind="ev" value={ev} label={`${name} ${label} EVs`} max={MAX_EV} error={evInvalid}
                                                      onCommit={(value) => onChange((current) => setEv(current, stat, value))}
                                                      onStep={(direction) => step(stat, direction)} />
                                     </StepperInput>

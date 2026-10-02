@@ -24,6 +24,10 @@ export const PREVIEW_LEVELS = [50, 100];
 export const DEFAULT_PREVIEW_LEVEL = 50;
 
 const SPECIES_SHEDINJA = "SPECIES_SHEDINJA";
+const ZYGARDE_BASE_FORMS = new Set(["SPECIES_ZYGARDE", "SPECIES_ZYGARDE_10"]);
+const SPECIES_ZYGARDE_COMPLETE = "SPECIES_ZYGARDE_COMPLETE";
+const ABILITY_POWER_CONSTRUCT = "ABILITY_POWERCONSTRUCT";
+const ITEM_ZYGARDITE = "ITEM_ZYGARDITE";
 const SHEDINJA_HP = 1;
 const HP_LEVEL_BONUS = 10;
 const STAT_BONUS = 5;
@@ -50,6 +54,7 @@ const ABILITY_SLOT_LABELS = { [ABILITY_SLOTS.HIDDEN]: "[H]", [ABILITY_SLOTS.FIRS
 export const MOVE_HIDDEN_POWER = "MOVE_HIDDENPOWER";
 // Moves that work better the slower the user is
 const SLOW_SPEED_MOVES = new Set(["MOVE_GYROBALL", "MOVE_TRICKROOM"]);
+const DOUBLES_TRICK_ROOM_TEAM = "DOUBLES_TRICK_ROOM_TEAM";
 const MOVE_NONE = "MOVE_NONE";
 
 // Hidden Power types in the order the IV formula selects them, which is not CFRU's type order
@@ -210,7 +215,10 @@ export function calculateStats(species, baseStats, fields, level)
  */
 export function getMegaSpecies(catalog, fields)
 {
-    const mega = getMegaEvolutions(catalog, fields.species, fields.item, fields.moves)
+    const species = ZYGARDE_BASE_FORMS.has(fields.species) && fields.item === ITEM_ZYGARDITE
+        && getEffectiveAbility(catalog.species[fields.species], fields.ability) === ABILITY_POWER_CONSTRUCT
+        ? SPECIES_ZYGARDE_COMPLETE : fields.species;
+    const mega = getMegaEvolutions(catalog, species, fields.item, fields.moves)
         .find((match) => match.available !== false && Object.hasOwn(catalog.species, match.species));
     return mega?.species ?? null;
 }
@@ -536,22 +544,37 @@ export function getSpreadStatUse(catalog, moves)
 }
 
 /**
+ * Returns whether the moves or doubles team requirement favor minimum Speed.
+ * @param {object} fields The spread's values.
+ * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
+ * @returns {boolean} Whether the spread benefits from slow Speed.
+ */
+export function isSlowSpeedSpread(fields, teamTypes = [])
+{
+    return fields.specificTeamType === DOUBLES_TRICK_ROOM_TEAM
+        || (Number.isInteger(fields.specificTeamType) && teamTypes.some(({ name, value }) =>
+            name === DOUBLES_TRICK_ROOM_TEAM && value === fields.specificTeamType))
+        || fields.moves.some((move) => SLOW_SPEED_MOVES.has(move));
+}
+
+/**
  * Works out the auto-fix for one spread: an attacking IV no move needs becomes 0, or 1 when Hidden Power
- * needs it odd, and Speed does the same when Gyro Ball or Trick Room wants the user slow. An attacking IV a move
+ * needs it odd, and Speed does the same for Gyro Ball, Trick Room or a Doubles Trick Room team. An attacking IV a move
  * needs becomes 31, or 30 when Hidden Power needs it even. The IVs are chosen together so Hidden Power keeps its
  * type, and no other IV changes.
  *
  * @param {object} catalog The game catalog.
  * @param {object} fields The spread's values.
+ * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
  * @returns {{changes: Object<string, number>, uses: {atk: string, spAtk: string}, unknown: Array<string>,
  *          hiddenPowerIvs: Array<string>}} The changed IV fields, how each stat is used, the stats left alone
  *          because a move's details are unknown, and the IV fields kept off their best value for Hidden Power.
  */
-export function getIvAutoFix(catalog, fields)
+export function getIvAutoFix(catalog, fields, teamTypes = [])
 {
     const uses = getSpreadStatUse(catalog, fields.moves);
     const lowered = AUTO_FIX_STATS.filter((stat) => uses[stat] === STAT_USE.UNUSED).map((stat) => IV_FIELDS[stat]);
-    if (fields.moves.some((move) => SLOW_SPEED_MOVES.has(move)))
+    if (isSlowSpeedSpread(fields, teamTypes))
         lowered.push(IV_FIELDS.spd);
     const raised = AUTO_FIX_STATS.filter((stat) => uses[stat] === STAT_USE.USED).map((stat) => IV_FIELDS[stat]).filter((key) => fields[key] < MAX_IV);
     const targets = [...lowered, ...raised];
@@ -583,20 +606,21 @@ export function getIvAutoFix(catalog, fields)
 }
 
 /**
- * Returns a spread's IVs reset to 31, except attacking IVs no move needs and Speed for Gyro Ball or Trick Room,
+ * Returns a spread's IVs reset to 31, except unused attacking IVs and Speed for slow moves or a Trick Room team,
  * which become 0 as the auto-fix would. A Hidden Power keeps its type, using the IVs closest to 31 that give it.
  *
  * @param {object} catalog The game catalog.
  * @param {object} fields The spread's values.
+ * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
  * @returns {Object<string, number>} All six IV fields.
  */
-export function getResetIvs(catalog, fields)
+export function getResetIvs(catalog, fields, teamTypes = [])
 {
     let ivs = Object.fromEntries(Object.values(IV_FIELDS).map((key) => [key, MAX_IV]));
     if (fields.moves.includes(MOVE_HIDDEN_POWER))
         ivs = optimizeHiddenPowerIvs(ivs, getHiddenPowerType(fields)) ?? ivs;
 
-    return { ...ivs, ...getIvAutoFix(catalog, { ...fields, ...ivs }).changes };
+    return { ...ivs, ...getIvAutoFix(catalog, { ...fields, ...ivs }, teamTypes).changes };
 }
 
 /**
@@ -604,17 +628,18 @@ export function getResetIvs(catalog, fields)
  *
  * @param {object} catalog The game catalog.
  * @param {Array<{id: string, fields: object}>} spreads The spreads.
+ * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
  * @returns {{changes: Array<{id: string, fields: Object<string, number>, hiddenPowerIvs: Array<string>}>,
  *          skipped: Array<{id: string, stats: Array<string>}>}} The spreads that change, and the spreads with
  *          stats left alone because a move's details are unknown.
  */
-export function planIvAutoFix(catalog, spreads)
+export function planIvAutoFix(catalog, spreads, teamTypes = [])
 {
     const changes = [];
     const skipped = [];
     for (const { id, fields } of spreads)
     {
-        const fix = getIvAutoFix(catalog, fields);
+        const fix = getIvAutoFix(catalog, fields, teamTypes);
         if (Object.keys(fix.changes).length > 0)
             changes.push({ id, fields: fix.changes, hiddenPowerIvs: fix.hiddenPowerIvs });
         if (fix.unknown.length > 0)

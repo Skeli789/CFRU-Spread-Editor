@@ -2,6 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 import ItemPicker, { getChooserItems, getItemTypeLabel } from "../subcomponents/ItemPicker";
 import { TypeIcon } from "../subcomponents/CatalogDisplay";
@@ -24,6 +25,14 @@ const COSPLAY_SIGNATURES =
 
 // Rendering a few hundred table rows is slow when every test file runs at once
 const LONG_TEST_TIMEOUT = 30000;
+
+test("left-aligns wrapped move names in the chooser", () =>
+{
+    const styles = readFileSync("src/styles/SpreadEditorPage.css", "utf8");
+    const rule = styles.match(/\.move-table-select\s*\{([^}]+)\}/)[1];
+    expect(rule).toMatch(/text-align:\s*left\s*!important/);
+    expect(rule).toMatch(/justify-content:\s*flex-start\s*!important/);
+});
 
 
 /**

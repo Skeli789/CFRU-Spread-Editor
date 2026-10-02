@@ -170,6 +170,27 @@ export function createCatalog(gameId = "unbound", diagnostics = [])
 }
 
 /**
+ * Returns a synthetic catalog with Zygarde's Complete-form Mega Evolution link.
+ *
+ * @returns {object} The catalog.
+ */
+export function createZygardeCatalog()
+{
+    const catalog = createCatalog();
+    const types = ["TYPE_DRAGON", "TYPE_GROUND"];
+    const abilities = ["ABILITY_POWERCONSTRUCT", "ABILITY_AURABREAK", null];
+    catalog.species.SPECIES_ZYGARDE = species("Zygarde", [108, 100, 121, 81, 95, 95], types, abilities);
+    catalog.species.SPECIES_ZYGARDE_10 = species("Zygarde 10%", [54, 100, 71, 61, 85, 115], types, abilities);
+    catalog.species.SPECIES_ZYGARDE_COMPLETE = species("Zygarde Complete", [216, 100, 121, 91, 95, 85], types, abilities,
+        { megas: [{ species: "SPECIES_ZYGARDE_MEGA", item: "ITEM_ZYGARDITE", available: true }] });
+    catalog.species.SPECIES_ZYGARDE_MEGA = species("Mega Zygarde", [216, 150, 150, 150, 150, 100], types, [null, "ABILITY_POWERCONSTRUCT", null]);
+    catalog.items.ITEM_ZYGARDITE = { name: "Zygardite", icon: null, itemType: "ITEM_TYPE_MEGA_STONE" };
+    catalog.abilities.ABILITY_POWERCONSTRUCT = "Power Construct";
+    catalog.abilities.ABILITY_AURABREAK = "Aura Break";
+    return catalog;
+}
+
+/**
  * Returns spread values, starting from a Charizard with no EVs.
  *
  * @param {object} [overrides] Values to change.

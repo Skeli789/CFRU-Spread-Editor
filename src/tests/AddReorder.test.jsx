@@ -6,7 +6,7 @@ import { vi } from "vitest";
 
 import App from "../App";
 import { DRAFTS_STORAGE_KEY, DRAFTS_VERSION, SETTINGS_STORAGE_KEY, SETTINGS_VERSION } from "../SpreadEditorState";
-import { FRONTIER_SET, LITTLE_CUP_SET, PALMER_SET, PATHS, SAVE_ROUTE, createFields, createSpreads, createWorkspace, mockServer } from "./EditorFixtures";
+import { FRONTIER_SET, LITTLE_CUP_SET, PALMER_SET, PATHS, SAVE_ROUTE, createCatalog, createFields, createSpreads, createWorkspace, mockServer } from "./EditorFixtures";
 
 vi.mock("axios", () => ({ default: { post: vi.fn() } }));
 
@@ -97,6 +97,35 @@ describe("Adding and reordering spreads", () =>
     });
 
     afterEach(() => cleanup());
+
+    test("offers Eternamax only for Raid Rush and blocks it after changing destination", async () =>
+    {
+        const catalog = createCatalog();
+        catalog.species.SPECIES_ETERNATUS = { ...catalog.species.SPECIES_GARCHOMP, name: "Eternatus", showdownName: "Eternatus", megas: [] };
+        catalog.species.SPECIES_ETERNATUS_ETERNAMAX = { ...catalog.species.SPECIES_ETERNATUS, name: "Eternamax Eternatus", showdownName: "Eternatus-Eternamax" };
+        const spreads = createSpreads();
+        spreads.sets.push({ ...spreads.sets[0], id: "raid-rush", file: "src/Tables/raid_rush_spreads.h", name: "sRaidRushEasySpreads", category: "raidRush", entryIds: [] });
+        const { user } = await openEditor(spreads, { "/workspaces/:id/catalog": () => catalog });
+        await user.click(screen.getByRole("button", { name: "Add Spread" }));
+        const dialog = screen.getByRole("dialog", { name: "Add Spread" });
+        const speciesInput = within(dialog).getByRole("combobox", { name: "Species" });
+        await user.click(speciesInput);
+        expect(screen.queryByRole("option", { name: "Eternamax Eternatus" })).not.toBeInTheDocument();
+        await user.keyboard("{Escape}");
+        const setInput = within(dialog).getByRole("combobox", { name: "Spread Set" });
+        await user.clear(setInput);
+        await user.type(setInput, "Raid Rush");
+        await user.click(await screen.findByRole("option", { name: /Raid Rush Easy Spreads/ }));
+        await user.click(speciesInput);
+        expect(screen.queryByRole("option", { name: /Mega Charizard/ })).not.toBeInTheDocument();
+        await user.click(await screen.findByRole("option", { name: "Eternamax Eternatus" }));
+        expect(within(dialog).getByRole("button", { name: "Add", exact: true })).toBeEnabled();
+        await user.clear(setInput);
+        await user.type(setInput, "Frontier");
+        await user.click(await screen.findByRole("option", { name: "Frontier Spreads" }));
+        expect(within(dialog).getByRole("button", { name: "Add", exact: true })).toBeDisabled();
+        expect(within(dialog).queryByLabelText("Species preview")).not.toBeInTheDocument();
+    });
 
     test("drops a cached saved order and does not offer a no-op Revert Order", async () =>
     {

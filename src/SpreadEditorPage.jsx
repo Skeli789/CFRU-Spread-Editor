@@ -196,7 +196,7 @@ const SpreadEditorView = () =>
         const matching = results.map(({ id }) => spreadIndex.entries.get(id)).filter((entry) => !entry.placeholder);
         const editable = matching.filter((entry) => entry.editable);
         const entries = editable.map((entry) => ({ id: entry.id, fields: drafts[entry.id] ?? entry.fields }));
-        const plans = Object.fromEntries(Object.values(AUTO_FIX_CATEGORY).map((category) => [category, planSpreadAutoFix(catalog, entries, category)]));
+        const plans = Object.fromEntries(Object.values(AUTO_FIX_CATEGORY).map((category) => [category, planSpreadAutoFix(catalog, entries, category, spreads.teamTypes)]));
 
         /**
          * Names a spread in the preview.

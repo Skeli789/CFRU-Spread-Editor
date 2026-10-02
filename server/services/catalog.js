@@ -291,7 +291,7 @@ function buildSpecies(baseStats, shared, { iconNames, unboundGame, ...spriteCont
             baseStats: stats,
             types,
             abilities,
-            icon: getSpeciesIcon(symbol, iconNames[symbol]),
+            icon: getSpeciesIcon(symbol, iconNames[symbol], spriteContext.images),
             sprite: getSprites(symbol, spriteInfo, spriteContext),
             megas: [],
             gigantamax: null,

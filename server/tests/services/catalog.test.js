@@ -9,9 +9,11 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { BATTLE_MOVES, CLOUD_FILES, COSPLAY_SIGNATURE_MOVES, DPE_FILES, DPE_SPRITE_FILES, ITEM_TABLES, NORMAL_PALETTE, SHINY_PALETTE, createIndexedPng, createPokeApiFetch } = require("../helpers/catalog-fixtures");
+const { createFixtureRepositories } = require("../helpers/fixture-repositories");
+const { BATTLE_MOVES, CLOUD_FILES, COSPLAY_SIGNATURE_MOVES, DPE_FILES, DPE_SPRITE_FILES, ITEM_TABLES, MINIOR_FORMS, MINIOR_TEACHABLE_MOVES, NORMAL_PALETTE, SHINY_PALETTE, SQUAWKABILLY_FORMS, createIndexedPng, createMiniorDpeFiles, createPokeApiFetch, createSquawkabillyArtworkFiles } = require("../helpers/catalog-fixtures");
 const { CFRU_SOURCE_FILES } = require("../helpers/spread-fixtures");
-const { getBallIcon, getItemIcon, getSpeciesIcon, getSpeciesSprites, getTypeIcon, getTypeSymbol } = require("../../services/assets");
+const { getBallIcon, getItemIcon, getSpeciesIcon, getSpeciesSprites, getTypeIcon, getTypeSymbol, readCloudImages } = require("../../services/assets");
+const { createCatalogService } = require("../../services/catalog");
 const
 {
     parseBattleMoves, parseCompatibilityFile, parseEggMoves, parseEvolutionTable, parseItemTypes, parseLevelUpLearnsets, parseSpriteTable, parseTeachableTables,
@@ -20,7 +22,9 @@ const
 const { buildBattleForms, buildLearnsets, parseDpeSources } = require("../../services/learnsets");
 const { createPokeApiIndex } = require("../../services/pokeapi");
 const { evaluatePreprocessor } = require("../../services/preprocessor");
-const { combineSpritePalette, parseSpriteSources } = require("../../services/sprites");
+const { getWorkspace, loadWorkspace } = require("../../services/repositories");
+const { createSourceInventory, isInventoryFile } = require("../../services/source-inventory");
+const { combineSpritePalette, loadSpriteTables, parseSpriteSources, renderSprite } = require("../../services/sprites");
 const { LEGALITY, POWER_KIND, alwaysHits, getMegaEvolutions, getMoveLegality, getPowerKind } = require("../../../shared/catalog.mjs");
 
 const TM_DIRECTORY = "src/tm_compatibility";
@@ -42,19 +46,20 @@ const COSPLAY_GAME_MOVES = [...GAME_MOVES, ...Object.values(COSPLAY_SIGNATURE_MO
 /**
  * Returns the DPE sources as the loader passes them to the parser.
  *
+ * @param {Object<string, string>} [files] Synthetic DPE source files.
  * @returns {object} The sources.
  */
-function getDpeSources()
+function getDpeSources(files = DPE_FILES)
 {
     const compatibility = { [TM_DIRECTORY]: [], [TUTOR_DIRECTORY]: [] };
-    for (const [file, text] of Object.entries(DPE_FILES))
+    for (const [file, text] of Object.entries(files))
     {
         const directory = path.posix.dirname(file);
         if (Object.hasOwn(compatibility, directory) && file.endsWith(".txt"))
             compatibility[directory].push({ name: path.posix.basename(file), text });
     }
 
-    return { configText: DPE_FILES["src/defines.h"], files: DPE_FILES, compatibility };
+    return { configText: files["src/defines.h"], files, compatibility };
 }
 
 /**
@@ -223,6 +228,97 @@ describe("Game data parser", () =>
 
 describe("Learnsets", () =>
 {
+    it("should allow real-layout Minior TM and tutor names on Shield and every core", () =>
+    {
+        const dpe = parseDpeSources(getDpeSources(createMiniorDpeFiles()));
+        const species = Object.fromEntries(MINIOR_FORMS.map((target) => [target, { types: ["TYPE_ROCK", "TYPE_FLYING"], dex: "NATIONAL_DEX_MINIOR" }]));
+        const moves = Object.fromEntries(["MOVE_TACKLE", "MOVE_SHELLSMASH", "MOVE_FLY", ...Object.values(MINIOR_TEACHABLE_MOVES.tm), ...Object.values(MINIOR_TEACHABLE_MOVES.tutor)].map((move) => [move, {}]));
+        const options = { dpe, species, moveNames: {}, gameMoves: Object.keys(moves), cfruMacros: CFRU_MACROS };
+        const { learnsets, diagnostics } = buildLearnsets(options);
+        const catalog = { moves, learnsets };
+        for (const target of MINIOR_FORMS)
+        {
+            expect(learnsets[target].status).to.equal("complete");
+            for (const move of Object.keys(moves).filter((move) => move !== "MOVE_FLY"))
+                expect(getMoveLegality(catalog, target, move).status, `${target}: ${move}`).to.equal(LEGALITY.ALLOWED);
+            expect(getMoveLegality(catalog, target, "MOVE_FLY").status).to.equal(LEGALITY.ILLEGAL);
+        }
+        expect(learnsets.SPECIES_MINIOR_SHIELD.moves.MOVE_EARTHQUAKE).to.deep.equal(["form"]);
+        expect(learnsets.SPECIES_MINIOR_RED.moves.MOVE_EARTHQUAKE).to.deep.equal(["tm"]);
+        expect(learnsets.SPECIES_MINIOR_RED.moves.MOVE_METEORBEAM).to.deep.equal(["tutor"]);
+        expect(diagnostics.find((entry) => entry.code === "COMPATIBILITY_SPECIES_UNKNOWN").details).to.deep.equal(["SPECIES_MISSINGNO"]);
+        delete dpe.levelUp.SPECIES_MINIOR_SHIELD;
+        expect(buildLearnsets(options).learnsets.SPECIES_MINIOR_SHIELD.status).to.equal("missing");
+    });
+
+    it("should share Minior Shield and all core moves without inventing learnset completeness", () =>
+    {
+        const forms = ["SHIELD", "RED", "BLUE", "ORANGE", "YELLOW", "INDIGO", "GREEN", "VIOLET"].map((form) => `SPECIES_MINIOR_${form}`);
+        const dpe = parseDpeSources(getDpeSources());
+        const species = Object.fromEntries(forms.map((target) => [target, { types: ["TYPE_ROCK", "TYPE_FLYING"], dex: "NATIONAL_DEX_MINIOR" }]));
+        for (const target of forms)
+            dpe.levelUp[target] = [{ move: "MOVE_TACKLE", level: 1 }];
+        dpe.levelUp.SPECIES_MINIOR_SHIELD.push({ move: "MOVE_SWIFT", level: 10 });
+        dpe.tmCompatibility.push({ file: "1.txt", number: 1, moveName: null, species: ["SPECIES_MINIOR_RED"] });
+        dpe.tutorCompatibility.push({ file: "1.txt", number: 1, moveName: null, species: ["SPECIES_MINIOR_BLUE"] });
+        const options = { dpe, species, moveNames: {}, gameMoves: GAME_MOVES, cfruMacros: new Map() };
+        const { learnsets } = buildLearnsets(options);
+        for (const target of forms)
+        {
+            expect(learnsets[target].status).to.equal("complete");
+            expect(Object.keys(learnsets[target].moves)).to.have.members(["MOVE_TACKLE", "MOVE_SWIFT", "MOVE_FOCUSPUNCH", "MOVE_MEGAPUNCH"]);
+        }
+        expect(learnsets.SPECIES_MINIOR_SHIELD.moves).to.deep.include({ MOVE_FOCUSPUNCH: ["form"], MOVE_MEGAPUNCH: ["form"] });
+        expect(learnsets.SPECIES_MINIOR_RED.moves.MOVE_SWIFT).to.deep.equal(["form"]);
+        delete dpe.levelUp.SPECIES_MINIOR_SHIELD;
+        expect(buildLearnsets(options).learnsets.SPECIES_MINIOR_SHIELD.status).to.equal("missing");
+    });
+
+    it("should grant Pop Star Fleur Cannon only in active Unbound builds while retaining existing moves", () =>
+    {
+        const gameMoves = [...COSPLAY_GAME_MOVES, "MOVE_FLEURCANNON"];
+        const catalog = buildCosplayCatalog(UNBOUND_CONFIG, gameMoves);
+        expect(catalog.learnsets.SPECIES_PIKACHU_POP_STAR.moves).to.deep.include(
+        {
+            MOVE_FLEURCANNON: ["formChange"],
+            MOVE_DRAININGKISS: ["formChange"],
+            MOVE_THUNDERBOLT: ["level"],
+        });
+        expect(getMoveLegality(catalog, "SPECIES_PIKACHU_POP_STAR", "MOVE_FLEURCANNON").status).to.equal(LEGALITY.ALLOWED);
+        for (const target of ["SPECIES_PIKACHU", "SPECIES_PIKACHU_SURFING", ...Object.keys(COSPLAY_SIGNATURE_MOVES)])
+            if (target !== "SPECIES_PIKACHU_POP_STAR")
+                expect(getMoveLegality(catalog, target, "MOVE_FLEURCANNON").status).to.equal(LEGALITY.ILLEGAL);
+
+        for (const configText of ["", "// #define UNBOUND\n", "#if 0\n#define UNBOUND\n#endif\n", "#define UNBOUND\n#undef UNBOUND\n"])
+        {
+            const other = buildCosplayCatalog(configText, gameMoves);
+            expect(getMoveLegality(other, "SPECIES_PIKACHU_POP_STAR", "MOVE_FLEURCANNON").status).to.equal(LEGALITY.ILLEGAL);
+            expect(other.learnsets.SPECIES_PIKACHU_POP_STAR.moves.MOVE_DRAININGKISS).to.deep.equal(["formChange"]);
+        }
+        expect(buildCosplayCatalog(UNBOUND_CONFIG).learnsets.SPECIES_PIKACHU_POP_STAR.moves).to.not.have.property("MOVE_FLEURCANNON");
+        const unavailable = parseDpeSources({ ...getDpeSources(), configText: "" });
+        expect(getMoveLegality(buildCosplayCatalog(UNBOUND_CONFIG, gameMoves, unavailable), "SPECIES_PIKACHU_POP_STAR", "MOVE_FLEURCANNON").status).to.equal(LEGALITY.UNKNOWN);
+    });
+
+    it("should give Eternamax every base Eternatus move and its learnset completeness", () =>
+    {
+        const dpe = parseDpeSources(getDpeSources());
+        dpe.levelUp.SPECIES_ETERNATUS = [{ move: "MOVE_POUND", level: 1 }];
+        dpe.tmCompatibility.push({ file: "1.txt", number: 1, moveName: null, species: ["SPECIES_ETERNATUS"] });
+        const species = getSpeciesInfo();
+        species.SPECIES_ETERNATUS = { types: ["TYPE_DRAGON"], dex: "NATIONAL_DEX_ETERNATUS" };
+        species.SPECIES_ETERNATUS_ETERNAMAX = species.SPECIES_ETERNATUS;
+        const options = { dpe, species, moveNames: {}, gameMoves: GAME_MOVES, cfruMacros: new Map() };
+        const { learnsets } = buildLearnsets(options);
+        expect(learnsets.SPECIES_ETERNATUS_ETERNAMAX).to.deep.equal(learnsets.SPECIES_ETERNATUS);
+        const catalog = { name: "Fixture", learnsets, moves: { MOVE_POUND: {}, MOVE_DRACOMETEOR: {}, MOVE_FLY: {} } };
+        expect(getMoveLegality(catalog, "SPECIES_ETERNATUS_ETERNAMAX", "MOVE_POUND").status).to.equal(LEGALITY.ALLOWED);
+        expect(getMoveLegality(catalog, "SPECIES_ETERNATUS_ETERNAMAX", "MOVE_DRACOMETEOR").status).to.equal(LEGALITY.UNKNOWN);
+        expect(getMoveLegality(catalog, "SPECIES_ETERNATUS_ETERNAMAX", "MOVE_FLY").status).to.equal(LEGALITY.ILLEGAL);
+        delete dpe.levelUp.SPECIES_ETERNATUS;
+        expect(buildLearnsets(options).learnsets.SPECIES_ETERNATUS_ETERNAMAX.status).to.equal("missing");
+    });
+
     it("should allow every cosplay signature in an Unbound build without sharing it with other forms", () =>
     {
         const catalog = buildCosplayCatalog(UNBOUND_CONFIG);
@@ -398,6 +494,100 @@ describe("Learnsets", () =>
     });
 });
 
+describe("Catalog form fixtures", () =>
+{
+    it("should assemble the corrected learnsets and artwork from temporary repositories", async () =>
+    {
+        const fixture = createFixtureRepositories();
+        const previous = process.env.SPREAD_EDITOR_DATA_DIR;
+        process.env.SPREAD_EDITOR_DATA_DIR = path.join(fixture.base, "editor-data");
+        try
+        {
+            const minior = MINIOR_FORMS;
+            const squawkabilly = { SPECIES_SQUAWKABILLY: 931, SPECIES_SQUAWKABILLY_BLUE: 10260, SPECIES_SQUAWKABILLY_YELLOW: 10261, SPECIES_SQUAWKABILLY_WHITE: 10262 };
+            const species = { ...GAME_SPECIES };
+            for (const target of [...minior, ...Object.keys(squawkabilly), ...Object.keys(COSPLAY_SIGNATURE_MOVES)])
+                species[target] = GAME_SPECIES.SPECIES_PIKACHU;
+            fs.writeFileSync(path.join(fixture.paths.cloud, "src/data/cfru/BaseStats.json"), JSON.stringify(species));
+            fs.writeFileSync(path.join(fixture.paths.cloud, "src/data/cfru/Moves.json"), JSON.stringify(Object.fromEntries([...COSPLAY_GAME_MOVES, "MOVE_FLEURCANNON", "MOVE_SHELLSMASH", ...Object.values(MINIOR_TEACHABLE_MOVES.tm), ...Object.values(MINIOR_TEACHABLE_MOVES.tutor)].map((move) => [move, true]))));
+            fs.writeFileSync(path.join(fixture.paths.cfru, "src/config.h"), CFRU_SOURCE_FILES["src/config.h"] + UNBOUND_CONFIG);
+            const artwork = createSquawkabillyArtworkFiles();
+            const inventory = createSourceInventory("");
+            for (const file of Object.keys(artwork.dpe).filter((file) => file.endsWith(".png")))
+                expect(isInventoryFile(inventory, `dpe/${file}`), file).to.equal(true);
+            expect(isInventoryFile(inventory, "dpe/graphics/frontspr/palette_only/other/private.png")).to.equal(false);
+            for (const [root, files] of [[fixture.paths.dpe, { ...createMiniorDpeFiles(), ...artwork.dpe }], [fixture.paths.cloud, artwork.cloud]])
+                for (const [file, contents] of Object.entries(files))
+                {
+                    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+                    fs.writeFileSync(path.join(root, file), contents);
+                }
+            const workspace = getWorkspace((await loadWorkspace(fixture.paths)).workspaceId);
+            const pokemon = { "squawkabilly-green-plumage": 931, "squawkabilly-blue-plumage": 10260, "squawkabilly-yellow-plumage": 10261, "squawkabilly-white-plumage": 10262 };
+            const service = createCatalogService({ pokeApi: { getIndex: async () => ({ pokemon, types: {} }) } });
+            const catalog = await service.loadGameCatalog(workspace, "cfru");
+            expect(catalog.learnsets.SPECIES_PIKACHU_POP_STAR.moves).to.deep.include({ MOVE_FLEURCANNON: ["formChange"], MOVE_DRAININGKISS: ["formChange"] });
+            expect(catalog.learnsets.SPECIES_PIKACHU.moves).to.not.have.property("MOVE_FLEURCANNON");
+            for (const target of minior)
+            {
+                expect(catalog.learnsets[target].status).to.equal("complete");
+                for (const move of ["MOVE_SHELLSMASH", ...Object.values(MINIOR_TEACHABLE_MOVES.tm), ...Object.values(MINIOR_TEACHABLE_MOVES.tutor)])
+                    expect(getMoveLegality(catalog, target, move).status, `${target}: ${move}`).to.equal(LEGALITY.ALLOWED);
+            }
+            for (const target of SQUAWKABILLY_FORMS)
+            {
+                expect(catalog.species[target].sprite).to.include({ normal: `/api/images/${workspace.id}/sprites/normal/${target}.png`, shiny: `/api/images/${workspace.id}/sprites/shiny/${target}.png`, source: "dpe", exact: true });
+                expect(catalog.species[target].sprite.fallback).to.deep.equal({ normal: `${POKEAPI_SPRITES}${squawkabilly[target]}.png`, shiny: `${POKEAPI_SPRITES}shiny/${squawkabilly[target]}.png` });
+                expect(catalog.species[target].icon).to.equal(`/api/images/${workspace.id}/gen9/${target}.png`);
+            }
+            const { sprites } = await loadSpriteTables(workspace);
+            for (const target of SQUAWKABILLY_FORMS)
+            {
+                const files = sprites[target];
+                expect(files.tiles).to.equal("graphics/frontspr/gFrontSprite1287Squawkabilly.png");
+                if (target !== "SPECIES_SQUAWKABILLY")
+                {
+                    expect(files.palette).to.include("/frontspr/palette_only/");
+                    expect(files.shinyPalette).to.include("/backspr/palette_only/");
+                }
+                for (const variant of ["normal", "shiny"])
+                {
+                    const rendered = await renderSprite(workspace, variant, `${target}.png`);
+                    const palette = variant === "normal" ? files.palette : files.shinyPalette;
+                    expect(rendered.equals(combineSpritePalette(artwork.dpe[files.tiles], artwork.dpe[palette])), `${target}: ${variant}`).to.equal(true);
+                    expect([rendered.readUInt32BE(16), rendered.readUInt32BE(20)]).to.deep.equal([64, 64]);
+                }
+            }
+            expect(catalog.species.SPECIES_BULBASAUR.sprite.source).to.equal("dpe");
+            const offline = await createCatalogService({ pokeApi: { getIndex: async () => null } }).loadGameCatalog(workspace, "cfru");
+            for (const target of SQUAWKABILLY_FORMS)
+            {
+                expect(offline.species[target].sprite).to.include({ normal: catalog.species[target].sprite.normal, shiny: catalog.species[target].sprite.shiny, source: "dpe", exact: true });
+                expect(offline.species[target].icon).to.equal(catalog.species[target].icon);
+            }
+            fs.rmSync(path.join(fixture.paths.dpe, sprites.SPECIES_SQUAWKABILLY_BLUE.palette));
+            const missingPalette = await service.loadGameCatalog(workspace, "cfru");
+            expect(missingPalette.species.SPECIES_SQUAWKABILLY_BLUE.sprite).to.include({ normal: `${POKEAPI_SPRITES}10260.png`, shiny: `${POKEAPI_SPRITES}shiny/10260.png`, source: "pokeapi", exact: true });
+            expect(missingPalette.species.SPECIES_SQUAWKABILLY_BLUE.icon).to.equal(catalog.species.SPECIES_SQUAWKABILLY_BLUE.icon);
+            fs.rmSync(path.join(fixture.paths.dpe, sprites.SPECIES_SQUAWKABILLY_YELLOW.shinyPalette));
+            const missingShiny = await service.loadGameCatalog(workspace, "cfru");
+            expect(missingShiny.species.SPECIES_SQUAWKABILLY_YELLOW.sprite).to.include({ normal: catalog.species.SPECIES_SQUAWKABILLY_YELLOW.sprite.normal, shiny: `${POKEAPI_SPRITES}shiny/10261.png`, source: "dpe" });
+            fs.writeFileSync(path.join(fixture.paths.cfru, "src/config.h"), CFRU_SOURCE_FILES["src/config.h"] + "\n#undef UNBOUND\n");
+            const other = await service.loadGameCatalog(workspace, "cfru");
+            expect(other.learnsets.SPECIES_PIKACHU_POP_STAR.moves).to.not.have.property("MOVE_FLEURCANNON");
+            expect(other.learnsets.SPECIES_PIKACHU_POP_STAR.moves.MOVE_DRAININGKISS).to.deep.equal(["formChange"]);
+        }
+        finally
+        {
+            if (previous === undefined)
+                delete process.env.SPREAD_EDITOR_DATA_DIR;
+            else
+                process.env.SPREAD_EDITOR_DATA_DIR = previous;
+            fixture.cleanup();
+        }
+    });
+});
+
 describe("Battle forms", () =>
 {
     it("should read Mega Stones, move triggers and Gigantamax forms, ignoring reversions", () =>
@@ -425,6 +615,90 @@ describe("Image URLs", () =>
 {
     const index = { pokemon: { charizard: 6, "charizard-gmax": 10196, "lycanroc-midnight": 10126, "lycanroc-midday": 745 }, types: { fire: 10 } };
     const sprites = (species, info, images = EMPTY_IMAGES) => getSpeciesSprites(species, { dex: null, dexNumber: null, iconName: undefined, customShiny: false, ...info }, { index, images });
+
+    it("should prefer exact full artwork over Cloud gen-9 compact icons", () =>
+    {
+        const target = "SPECIES_SQUAWKABILLY_BLUE";
+        const images = { ...EMPTY_IMAGES, gen9: new Set([`${target}.png`]), gen9Shiny: new Set([`${target}.png`]) };
+        const result = getSpeciesSprites(target, { dex: "NATIONAL_DEX_SQUAWKABILLY", dexNumber: 931 },
+            { index: { pokemon: { "squawkabilly-blue-plumage": 10260 } }, images });
+        expect(result).to.include(
+        {
+            normal: `${POKEAPI_SPRITES}10260.png`,
+            shiny: `${POKEAPI_SPRITES}shiny/10260.png`,
+            source: "pokeapi",
+            exact: true,
+        });
+        expect(getSpeciesIcon(target, undefined, images)).to.equal(`${CLOUD_IMAGES}gen9/${target}.png`);
+    });
+
+    it("should use exact full sprites for every Squawkabilly plumage", () =>
+    {
+        const pokemon = { "squawkabilly-green-plumage": 931, "squawkabilly-blue-plumage": 10260, "squawkabilly-yellow-plumage": 10261, "squawkabilly-white-plumage": 10262 };
+        const forms = { SPECIES_SQUAWKABILLY: 931, SPECIES_SQUAWKABILLY_BLUE: 10260, SPECIES_SQUAWKABILLY_YELLOW: 10261, SPECIES_SQUAWKABILLY_WHITE: 10262 };
+        for (const [target, id] of Object.entries(forms))
+        {
+            const info = { dex: "NATIONAL_DEX_SQUAWKABILLY", dexNumber: 931 };
+            expect(getSpeciesSprites(target, info, { index: { pokemon }, images: EMPTY_IMAGES })).to.deep.equal(
+            {
+                normal: `${POKEAPI_SPRITES}${id}.png`,
+                shiny: `${POKEAPI_SPRITES}shiny/${id}.png`,
+                fallback: null,
+                source: "pokeapi",
+                exact: true,
+            });
+        }
+    });
+
+    it("should use dedicated compact icons for Squawkabilly rather than full sprites", () =>
+    {
+        const forms = { SPECIES_SQUAWKABILLY: "green", SPECIES_SQUAWKABILLY_BLUE: "blue", SPECIES_SQUAWKABILLY_YELLOW: "yellow", SPECIES_SQUAWKABILLY_WHITE: "white" };
+        for (const [target, color] of Object.entries(forms))
+        {
+            const icon = `https://img.pokemondb.net/sprites/scarlet-violet/icon/squawkabilly-${color}.png`;
+            expect(getSpeciesIcon(target)).to.equal(icon);
+            expect(getSpeciesIcon(target, "squawkabilly")).to.equal(icon);
+            expect(icon).to.not.equal(sprites(target, { dexNumber: 931 }).normal);
+        }
+    });
+
+    it("should retain Cloud compact icons and sprite fallbacks without a PokeAPI index", async () =>
+    {
+        const fixture = createFixtureRepositories();
+        const previous = process.env.SPREAD_EDITOR_DATA_DIR;
+        process.env.SPREAD_EDITOR_DATA_DIR = path.join(fixture.base, "editor-data");
+        try
+        {
+            const forms = ["SPECIES_SQUAWKABILLY", "SPECIES_SQUAWKABILLY_BLUE", "SPECIES_SQUAWKABILLY_YELLOW", "SPECIES_SQUAWKABILLY_WHITE"];
+            const folder = path.join(fixture.paths.cloud, "public/images/gen_9");
+            fs.mkdirSync(path.join(folder, "shiny"), { recursive: true });
+            for (const target of forms)
+            {
+                fs.writeFileSync(path.join(folder, `${target}.png`), createIndexedPng(NORMAL_PALETTE));
+                fs.writeFileSync(path.join(folder, "shiny", `${target}.png`), createIndexedPng(SHINY_PALETTE));
+            }
+            const workspace = { id: "squawkabilly-fixture", roots: { cloud: fixture.paths.cloud } };
+            const images = await readCloudImages(workspace);
+            for (const target of forms)
+            {
+                const result = getSpeciesSprites(target, { dex: "NATIONAL_DEX_SQUAWKABILLY", dexNumber: 931 }, { index: null, images });
+                if (target === "SPECIES_SQUAWKABILLY")
+                    expect(result).to.include({ normal: `${POKEAPI_SPRITES}931.png`, shiny: `${POKEAPI_SPRITES}shiny/931.png`, source: "pokeapi", exact: true });
+                else
+                    expect(result).to.include({ normal: `/api/images/${workspace.id}/gen9/${target}.png`, shiny: `/api/images/${workspace.id}/gen9Shiny/${target}.png`, source: "cloud", exact: true });
+                expect(getSpeciesIcon(target, undefined, images)).to.equal(`/api/images/${workspace.id}/gen9/${target}.png`);
+                expect(getSpeciesIcon(target)).to.not.equal(result.normal);
+            }
+        }
+        finally
+        {
+            if (previous === undefined)
+                delete process.env.SPREAD_EDITOR_DATA_DIR;
+            else
+                process.env.SPREAD_EDITOR_DATA_DIR = previous;
+            fixture.cleanup();
+        }
+    });
 
     it("should use PokeAPI's IDs rather than game or Pokedex numbers for forms", () =>
     {
