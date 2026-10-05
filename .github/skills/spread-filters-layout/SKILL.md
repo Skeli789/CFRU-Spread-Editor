@@ -23,6 +23,7 @@ Filtering chooses matching entries; layout groups them without changing their so
 2. `createFilterContext` indexes sets and trainer links. The result memo reads current draft values through a ref, excludes transferred originals, filters saved plus new entries, and sorts by snapshot set order then draft/source order.
 3. `groupSpreads` groups by set and stored species in first-appearance order. `buildRows` packs groups into blocks; `paginateRows` keeps each block intact.
 4. The grid measures its own width with `ResizeObserver`, renders only the anchored page, and delegates order/transfer/add actions to the page/provider.
+	The page also supplies the unfiltered current-order candidates for local species expansion; matching results remain separate.
 5. Export and Auto-Fix consume all matching results across pages, using current fields. Auto-Fix excludes placeholders and reports locked entries separately.
 
 ## Behavior and user decisions
@@ -42,14 +43,15 @@ Filtering chooses matching entries; layout groups them without changing their so
 - A standalone row one card short of full widens when capacity is at least 3, unless it contains an add tile or belongs to a multirow block. Lone cards do not stretch across the whole grid.
 - Pages retain the last navigation/reveal anchor across width/page-size changes: navigation stores the chosen page's first spread ID, while reveal stores the requested entry ID. Filter `resetKey` changes default to page one, but a retained reveal request can override that reset when its entry is visible. Explicit navigation scrolls the grid into view.
 - Pagination appears above/below multiple pages. Ellipses open Jump to Page with selected current-page input; only digits submit, values clamp to 1..page count. Continued set sections are labelled `(continued)`.
-- Each visible set's final matching group gets an Add Spread tile on its ending page, using spare row space or a new row. It is hidden while placing a group and disabled with the insertion reason when needed. Empty results offer Clear Filters; toolbar Add Spread remains available.
+- Each visible set's final displayed group gets an Add Spread tile on its ending page, using spare row space or a new row. It is hidden while placing a group and disabled with the insertion reason when needed. Empty results offer Clear Filters; toolbar Add Spread remains available.
+- Species headers offer More beside Move when filters hide peers of that species in that set. More reveals all nonhidden current-order peers only in that set, including pending additions; Less restores matching cards. Revealed cards are faded, regain full opacity on hover/focus, and remain editable. Species-only or set-only filtering has no More when no peers are missing. Expansions reset on filter changes, persist across pagination/resize/page-size changes, and anchor the toggled group. Counts/pagination include revealed cards; toolbar matching counts, Export and Auto-Fix do not.
 
 ## Invariants and pitfalls
 
 - Display grouping does not coalesce interleaved source entries. Only an explicit confirmed whole-group move can do that.
 - Results deliberately do not depend directly on `drafts`: ordinary field edits do not make a card vanish mid-edit. Other memo dependencies can recompute results with the latest drafts; do not promise a permanently frozen result list.
 - Unsaved filtering uses drafts or moved IDs, not the deleted Set directly. Ordinary deleted cards remain visible with Restore; transferred originals are hidden and excluded from completeness checks.
-- Movement permission is per set, not dependent on a single selected set. Whole groups require all nonhidden set entries in results; peers require all same-species entries. See [adding-reordering](../adding-reordering/SKILL.md).
+- Movement permission is per set, not dependent on a single selected set. Whole groups require all nonhidden set entries displayed; peers require all same-species entries. More can complete a displayed species but does not bypass set completeness. See [adding-reordering](../adding-reordering/SKILL.md).
 - Keep shared layout rules browser/Node-free. CSS grid/subgrid and container queries need source/layout checks; jsdom does not prove rendered geometry.
 
 ## Tests and commands

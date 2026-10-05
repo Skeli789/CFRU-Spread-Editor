@@ -397,6 +397,45 @@ describe("Spread editor", () =>
         expect(screen.queryByRole("button", { name: SAVE_BUTTON })).not.toBeInTheDocument();
     });
 
+    test("reveals faded species peers without expanding Export or Auto-Fix scope", async () =>
+    {
+        const { user } = await openEditor();
+        expect(screen.queryByRole("button", { name: "More Charizard Spreads" })).not.toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "More Filters" }));
+        await user.click(screen.getByRole("combobox", { name: /^Shiny/ }));
+        await user.click(await screen.findByRole("option", { name: "Yes" }));
+        expect(screen.getAllByRole("article")).toHaveLength(1);
+        expect(within(getCard("Charizard")).getByText("Charizardite X")).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "More Charizard Spreads" }));
+        expect(screen.getAllByRole("article")).toHaveLength(2);
+        const revealed = getCard("Charizard");
+        expect(within(revealed).getByText("Heavy-Duty Boots")).toBeInTheDocument();
+        expect(revealed.closest(".movable-spread")).toHaveClass("is-filter-revealed");
+        expect(getCard("Charizard", 1).closest(".movable-spread")).not.toHaveClass("is-filter-revealed");
+        expect(getSectionNames()).toEqual(["Frontier Spreads spreads"]);
+
+        await user.click(within(revealed).getByRole("heading", { name: "Charizard" }));
+        const editing = screen.getByRole("dialog", { name: "Edit Charizard" });
+        expect(within(editing).getByRole("combobox", { name: "Item" })).toHaveValue("Heavy-Duty Boots");
+        await user.click(within(editing).getByRole("button", { name: "Done" }));
+
+        await user.click(screen.getByRole("button", { name: "Export" }));
+        const exporting = screen.getByRole("dialog", { name: "Export 1 Spread to Showdown" });
+        const text = within(exporting).getByRole("textbox", { name: "Showdown Text" });
+        expect(text.value).toContain("Charizardite X");
+        expect(text.value).not.toContain("Heavy-Duty Boots");
+        await user.keyboard("{Escape}");
+
+        await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+        const fixing = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+        expect(within(fixing).getByText("Charizard (gFrontierSpreads, line 50)")).toBeInTheDocument();
+        expect(within(fixing).queryByText("Charizard (gFrontierSpreads, line 10)")).not.toBeInTheDocument();
+        await user.keyboard("{Escape}");
+        await user.click(screen.getByRole("button", { name: "Less Charizard Spreads" }));
+        expect(screen.getAllByRole("article")).toHaveLength(1);
+        expect(within(getCard("Charizard")).getByText("Charizardite X")).toBeInTheDocument();
+    });
+
     test("keeps a single draft through Done and Escape while the grid card stays read-only", async () =>
     {
         const { user } = await openEditor();

@@ -245,6 +245,7 @@
 .species-order-controls
 {
     grid-column: 1 / -1;
+    flex-wrap: wrap;
     border-left: 2px solid var(--focus);
     padding-left: 4px;
 }
@@ -260,6 +261,17 @@
 .movable-spread > .spread-card
 {
     flex: 1;
+}
+
+.movable-spread.is-filter-revealed > .spread-card
+{
+    opacity: 0.6;
+}
+
+.movable-spread.is-filter-revealed:hover > .spread-card,
+.movable-spread.is-filter-revealed:focus-within > .spread-card
+{
+    opacity: 1;
 }
 
 .movable-spread.is-dragging
@@ -749,6 +761,34 @@
 .move-editor
 {
     display: contents;
+}
+
+.draggable-move-slot
+{
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+}
+
+.draggable-move-field
+{
+    flex: 1;
+    min-width: 0;
+}
+
+.move-drag-handle.MuiIconButton-root
+{
+    flex: 0 0 28px;
+    width: 28px;
+    height: 32px;
+    cursor: grab;
+    touch-action: none;
+}
+
+.draggable-move-slot.is-dragging
+{
+    opacity: 0.5;
 }
 
 .spread-card-battle

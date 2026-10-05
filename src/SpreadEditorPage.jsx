@@ -104,22 +104,26 @@ const SpreadEditorView = () =>
     const draftsRef = useRef(drafts);
     draftsRef.current = drafts;
     const filterContext = useMemo(() => createFilterContext(spreads), [spreads]);
-    const results = useMemo(() =>
+    const { results, availableSpreads } = useMemo(() =>
     {
         const current = draftsRef.current;
         const context = { ...filterContext, catalog, teamTypes: spreads.teamTypes, isChanged: (id) => Object.hasOwn(current, id) || movedIds.has(id) };
         // A spread moved to another set is only shown there
-        const visible = [...spreads.entries, ...Object.values(newEntries)].filter((entry) => !transferredIds.has(entry.id)
-            && matchesFilters(entry, current[entry.id] ?? entry.fields, filters, context))
+        const visible = [...spreads.entries, ...Object.values(newEntries)].filter((entry) => !transferredIds.has(entry.id))
             .map((entry) => ({ id: entry.id, species: (current[entry.id] ?? entry.fields).species, setId: entry.setId }));
         const positions = new Map(Object.entries(orders).flatMap(([setId, order]) => order.map((id, index) => [id, { setId, index }])));
-        return visible.sort((first, second) =>
+        visible.sort((first, second) =>
         {
             if (first.setId !== second.setId)
                 return spreads.sets.findIndex((set) => set.id === first.setId) - spreads.sets.findIndex((set) => set.id === second.setId);
             const order = orders[first.setId] ?? spreadIndex.sets.get(first.setId).entryIds;
             return (positions.get(first.id)?.index ?? order.indexOf(first.id)) - (positions.get(second.id)?.index ?? order.indexOf(second.id));
         });
+        return { availableSpreads: visible, results: visible.filter(({ id }) =>
+        {
+            const entry = spreadIndex.entries.get(id);
+            return matchesFilters(entry, current[id] ?? entry.fields, filters, context);
+        }) };
     }, [spreads, catalog, filters, filterContext, newEntries, orders, spreadIndex, movedIds, transferredIds]);
 
     const activeSet = results.length > 0 && results.every((item) => item.setId === results[0].setId)
@@ -335,6 +339,7 @@ const SpreadEditorView = () =>
             />
             <SpreadGrid
                 spreads={results}
+                availableSpreads={availableSpreads}
                 renderCard={renderCard}
                 getSetHeading={getSetHeading}
                 pageSize={pageSize}

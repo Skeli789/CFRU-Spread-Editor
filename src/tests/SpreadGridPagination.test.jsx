@@ -108,6 +108,82 @@ describe("Spread grid movement and section endings", () =>
             expect(row.querySelectorAll(".add-spread-slot")).toHaveLength(withAdd ? 1 : 0);
         });
 
+    test("shows More only for missing peers and toggles faded spreads in the same set", async () =>
+    {
+        const user = userEvent.setup();
+        const snapshot = createSpreads();
+        const availableSpreads = snapshot.entries.map((entry) => ({ id: entry.id, setId: entry.setId, species: entry.fields.species }));
+        const spreads = availableSpreads.filter(({ id }) => id === "e2" || id === "e3");
+        const { container, props, rerender } = renderFixtureGrid({ spreads, availableSpreads, orders: { [FRONTIER_SET]: ["e2", "e1", "e0"] } });
+        expect(screen.queryByRole("button", { name: "More SPECIES_PICHU Spreads" })).not.toBeInTheDocument();
+        const more = screen.getByRole("button", { name: "More SPECIES_CHARIZARD Spreads" });
+        expect(more).toHaveTextContent("More");
+        expect(more).toHaveAttribute("aria-expanded", "false");
+        await user.click(more);
+        expect(screen.getByRole("button", { name: "Less SPECIES_CHARIZARD Spreads" })).toHaveAttribute("aria-expanded", "true");
+        expect(screen.getByText("e0").closest(".movable-spread")).toHaveClass("is-filter-revealed");
+        expect(screen.getByText("e2").closest(".movable-spread")).not.toHaveClass("is-filter-revealed");
+        expect(screen.queryByText("e1")).not.toBeInTheDocument();
+        expect(screen.queryByText("e5")).not.toBeInTheDocument();
+        expect([...container.querySelectorAll(".movable-spread")].map((node) => node.textContent)).toEqual(["e0", "e2", "e3"]);
+        expect(screen.getByText(/^Showing \d/)).toHaveTextContent("Showing 1-3 of 3 spreads");
+        expect(screen.getByRole("button", { name: "Move SPECIES_CHARIZARD Group" })).toBeDisabled();
+        await user.click(screen.getByRole("button", { name: "Less SPECIES_CHARIZARD Spreads" }));
+        expect(screen.queryByText("e0")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "More SPECIES_CHARIZARD Spreads" })).toBeInTheDocument();
+
+        rerender(<SpreadGrid {...props} spreads={availableSpreads} />);
+        expect(screen.queryByRole("button", { name: /^More .* Spreads$/ })).not.toBeInTheDocument();
+    });
+
+    test("resets More on filter changes without reviving an earlier expansion", async () =>
+    {
+        const user = userEvent.setup();
+        const snapshot = createSpreads();
+        const availableSpreads = snapshot.entries.map((entry) => ({ id: entry.id, setId: entry.setId, species: entry.fields.species }));
+        const { props, rerender } = renderFixtureGrid({ spreads: [availableSpreads[0]], availableSpreads });
+        await user.click(screen.getByRole("button", { name: "More SPECIES_CHARIZARD Spreads" }));
+        expect(screen.getByText("e2")).toBeInTheDocument();
+        rerender(<SpreadGrid {...props} resetKey="changed" />);
+        expect(screen.queryByText("e2")).not.toBeInTheDocument();
+        rerender(<SpreadGrid {...props} />);
+        expect(screen.queryByText("e2")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "More SPECIES_CHARIZARD Spreads" })).toBeInTheDocument();
+    });
+
+    test("never reveals transferred originals and retains current species and set boundaries", async () =>
+    {
+        const user = userEvent.setup();
+        const snapshot = createSpreads();
+        const availableSpreads = snapshot.entries.map((entry) => ({ id: entry.id, setId: entry.setId, species: entry.fields.species }));
+        availableSpreads.push({ id: "new-peer", setId: FRONTIER_SET, species: "SPECIES_CHARIZARD" });
+        const { container } = renderFixtureGrid({ spreads: [availableSpreads[0]], availableSpreads, hiddenIds: new Set(["e2"]) });
+        await user.click(screen.getByRole("button", { name: "More SPECIES_CHARIZARD Spreads" }));
+        expect(screen.getByText("new-peer")).toBeInTheDocument();
+        expect(screen.queryByText("e2")).not.toBeInTheDocument();
+        expect(screen.queryByText("e5")).not.toBeInTheDocument();
+        expect(container.querySelectorAll(".movable-spread")).toHaveLength(2);
+    });
+
+    test("keeps an expanded oversized species together and anchored across page-size changes", async () =>
+    {
+        const user = userEvent.setup();
+        const peers = Array.from({ length: PAGE_SIZE + 1 }, (_, index) => ({ id: `peer-${index}`, species: TEST_SPECIES, setId: FRONTIER_SET }));
+        const preceding = Array.from({ length: PAGE_SIZE }, (_, index) => ({ id: `preceding-${index}`, species: `SPECIES_OTHER_${index}`, setId: FRONTIER_SET }));
+        const availableSpreads = [...preceding, ...peers];
+        const { props, rerender } = renderFixtureGrid({ spreads: [...preceding, peers.at(-1)], availableSpreads, onAdd: null });
+        await user.click(screen.getAllByRole("button", { name: "Go to next page" })[0]);
+        await user.click(screen.getByRole("button", { name: `More ${TEST_SPECIES} Spreads` }));
+        expect(screen.getByText(/^Showing \d/)).toHaveTextContent("Showing 13-25 of 25 spreads");
+        for (const peer of peers)
+            expect(screen.getByText(peer.id)).toBeInTheDocument();
+        rerender(<SpreadGrid {...props} pageSize={24} />);
+        expect(screen.getByRole("button", { name: `Less ${TEST_SPECIES} Spreads` })).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: `Less ${TEST_SPECIES} Spreads` }));
+        expect(screen.getByText("peer-12")).toBeInTheDocument();
+        expect(screen.queryByText("peer-0")).not.toBeInTheDocument();
+    });
+
     test("handles peer and heading drop events without relying on drag highlight state", () =>
     {
         const { onOrder, onTransfer } = renderFixtureGrid();

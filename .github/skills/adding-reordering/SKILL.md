@@ -42,7 +42,7 @@ Additions, peer/group reorders, and cross-set transfers are implemented draft op
 ### Peer and group movement
 
 - Peer arrows move one position earlier/later within the same stored species and set. Handle dragging can target same-species peers or another set's cards/headings, not a different species in the same set.
-- Peer movement requires editable source, `canReorder`, and all that species' nonhidden entries in results. Whole-group movement requires `canReorder` and all nonhidden entries of that set. Checks work per set even with multiple sets visible.
+- Peer movement requires editable source, `canReorder`, and all that species' nonhidden entries displayed (including peers revealed through More). Whole-group movement requires `canReorder` and all nonhidden entries of that set displayed. Checks work per set even with multiple sets visible.
 - Drag handles remain enabled for editable entries when in-set reorder is blocked or filters hide peers, because cross-set transfer can still be allowed. Destination collision targets reject self/incompatible peers. Final drop validates event source data, not possibly stale React highlight state; canceled drops do nothing.
 - Peer moves permute only that species' existing source slots, leaving other species slots untouched. Visual grouping by species is not itself a reorder.
 - Whole groups use Move/Cancel then Move Here gaps, not group dragging or up/down arrows. Placement persists across pages. Filters/reset key or completeness permissions can hide active placement without clearing `placing`; it may resume when validity returns. Add tiles hide while placement is active.
@@ -64,7 +64,7 @@ Additions, peer/group reorders, and cross-set transfers are implemented draft op
 
 - Keep pending fields, provider additions, original transfer IDs, and created server IDs distinct. Never mutate draft/order objects in place; save reconciliation uses reference identity.
 - Do not trim deleted IDs out of complete permutations or mistake visual coalescing for source modification. Do not promise a group move leaves all unrelated source slots unchanged; only peer moves do.
-- Drag/transfer permission is distinct from reorder permission. Filter completeness concerns all matching results across pages, not just mounted cards, and excludes intentionally hidden transferred originals.
+- Drag/transfer permission is distinct from reorder permission. Filter completeness concerns all displayed results across pages, including More expansions, not just mounted cards, and excludes intentionally hidden transferred originals.
 - Returning to the original set and Revert are different operations: the former preserves current fields; the latter restores saved fields. Ordinary delete of the last saved spread is not preblocked by this transfer check; server save rejects an empty resulting set.
 - Reveal requests cannot override filters. Additions/transfers may be hidden when their destination/species does not match current filters.
 
