@@ -49,7 +49,7 @@ Load the matching skill in `.github/skills/` before changing a feature. Each one
 | [move-picker](skills/move-picker/SKILL.md) | Move fields and the Choose Moves dialog |
 | [item-picker](skills/item-picker/SKILL.md) | Item field and the Choose Item dialog |
 | [adding-reordering](skills/adding-reordering/SKILL.md) | Adding spreads and reordering spreads and species groups |
-| [showdown-exchange](skills/showdown-exchange/SKILL.md) | Showdown import, export and overwrite |
+| [showdown-exchange](skills/showdown-exchange/SKILL.md) | Showdown import, export and overwrite; Smogon sets, dialog and cache |
 | [testing](skills/testing/SKILL.md) | Test layout, fixtures and helpers for both test suites |
 
 Update the matching skill when a change alters the behavior or files it describes.

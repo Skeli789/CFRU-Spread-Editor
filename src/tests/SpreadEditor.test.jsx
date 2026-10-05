@@ -1,5 +1,5 @@
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axios from "axios";
 import { StatusCode } from "status-code-enum";
@@ -9,7 +9,7 @@ import { getHiddenPowerType } from "../../shared/pokemon-mechanics.mjs";
 import App from "../App";
 import { AutoFixDialog } from "../components/SpreadDialogs";
 import { LIST_PAGE_SIZE } from "../subcomponents/CatalogDisplay";
-import { DRAFTS_STORAGE_KEY, SETTINGS_STORAGE_KEY, SETTINGS_VERSION } from "../SpreadEditorState";
+import { DRAFTS_STORAGE_KEY, EDITOR_PHASE, SETTINGS_STORAGE_KEY, SETTINGS_VERSION, SpreadEditorProvider, useSpreadEditor } from "../SpreadEditorState";
 import { CATALOG_ROUTE, PATHS, SAVE_ROUTE, apiError, createCatalog, createFields, createSpreads, createWorkspace, mockServer } from "./EditorFixtures";
 
 vi.mock("axios", () => ({ default: { post: vi.fn() } }));
@@ -20,6 +20,7 @@ const GAME_TITLE = "Choose Game";
 const AUTO_FIX_BATCH_TOTAL = LIST_PAGE_SIZE * 2 + 1;
 const SCROLL_CLIENT_HEIGHT = 200;
 const SCROLL_HEIGHT = 1000;
+const PROGRESS_POLL_INTERVAL = 250;
 
 
 /**
@@ -173,6 +174,199 @@ function scrollPreviewToBottom(list)
     });
     fireEvent.scroll(list, { target: { scrollTop: SCROLL_HEIGHT - SCROLL_CLIENT_HEIGHT } });
 }
+
+/**
+ * Opens the provider without dialog rendering so request lifecycle tests stay isolated.
+ *
+ * @param {object} overrides Mock server handlers.
+ * @returns {Promise<object>} Live editor access, recorded requests and unmount cleanup.
+ */
+async function openProgressEditor(overrides)
+{
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: SETTINGS_VERSION, paths: PATHS, gameId: "unbound" }));
+    const calls = mockServer(overrides);
+    let editor;
+
+    /**
+     * Captures the latest provider value.
+     *
+     * @returns {null} No rendered content.
+     */
+    function Probe()
+    {
+        editor = useSpreadEditor();
+        return null;
+    }
+    const { unmount } = render(<SpreadEditorProvider><Probe /></SpreadEditorProvider>);
+    await waitFor(() => expect(editor.state.phase).toBe(EDITOR_PHASE.READY));
+    return { getEditor: () => editor, calls, unmount };
+}
+
+/**
+ * Creates a controllable server response.
+ *
+ * @returns {object} The promise and its resolve/reject functions.
+ */
+function deferredResponse()
+{
+    let resolve;
+    let reject;
+    const promise = new Promise((onResolve, onReject) =>
+    {
+        resolve = onResolve;
+        reject = onReject;
+    });
+    return { promise, resolve, reject };
+}
+
+describe("Smogon request progress", () =>
+{
+    beforeEach(() =>
+    {
+        localStorage.clear();
+        axios.post.mockReset();
+    });
+
+    afterEach(() =>
+    {
+        cleanup();
+        vi.useRealTimers();
+    });
+
+    test("emits immediate and real polled progress without resetting the loaded editor", async () =>
+    {
+        const response = deferredResponse();
+        const percentages = [33, 10, 100];
+        const { getEditor, calls } = await openProgressEditor(
+        {
+            "/smogon/sets": () => response.promise,
+            "/progress/:id": () => ({ percentage: percentages.shift(), label: "Reading Required Files" }),
+        });
+        const initial = getEditor().state;
+        const onProgress = vi.fn();
+        vi.useFakeTimers();
+        let pending;
+        await act(async () => { pending = getEditor().loadSmogonSets(["Charmander"], onProgress); });
+        expect(onProgress).toHaveBeenCalledWith({ percentage: 0, label: "Loading Smogon Sets..." });
+        expect(calls.filter((call) => call.route.startsWith("/progress/"))).toHaveLength(0);
+        for (let poll = 0; poll < 3; poll++)
+            await act(async () => { await vi.advanceTimersByTimeAsync(PROGRESS_POLL_INTERVAL); });
+        expect(onProgress.mock.calls.map(([event]) => event.percentage)).toEqual([0, 33, 99]);
+        const request = calls.find((call) => call.route === "/smogon/sets");
+        expect(request.body).toEqual({ species: ["Charmander"] });
+        expect(request.params.progressId).toMatch(/^[a-f0-9-]{36}$/);
+        expect(calls.filter((call) => call.route.startsWith("/progress/")).every((call) => call.route.endsWith(request.params.progressId))).toBe(true);
+        const result = { formats: [], sets: [], stale: false, unavailable: [] };
+        await act(async () =>
+        {
+            response.resolve(result);
+            expect(await pending).toBe(result);
+        });
+        expect(onProgress).toHaveBeenLastCalledWith({ percentage: 100, label: "Complete" });
+        expect(getEditor().state.workspace).toBe(initial.workspace);
+        expect(getEditor().state.catalog).toBe(initial.catalog);
+        expect(getEditor().state.setupProgress).toBe(initial.setupProgress);
+        expect(getEditor().state.phase).toBe(EDITOR_PHASE.READY);
+        const count = calls.length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(PROGRESS_POLL_INTERVAL * 3); });
+        expect(calls).toHaveLength(count);
+    });
+
+    test.each([false, true])("keeps unavailable polling optional and cleans up when failed=%s", async (failed) =>
+    {
+        const response = deferredResponse();
+        const { getEditor, calls } = await openProgressEditor(
+        {
+            "/smogon/sets": () => response.promise,
+            "/progress/:id": () => { throw apiError(404, "PROGRESS_NOT_FOUND", "Unavailable"); },
+        });
+        const onProgress = vi.fn();
+        vi.useFakeTimers();
+        let pending;
+        await act(async () => { pending = getEditor().loadSmogonSets(["Charmander"], onProgress).catch((error) => error); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(PROGRESS_POLL_INTERVAL); });
+        expect(onProgress).toHaveBeenCalledTimes(1);
+        await act(async () =>
+        {
+            if (failed)
+                response.reject(apiError(503, "SMOGON_UNAVAILABLE", "Offline"));
+            else
+                response.resolve({ sets: [] });
+            const result = await pending;
+            expect(result).toEqual(failed ? { status: 503, code: "SMOGON_UNAVAILABLE", message: "Offline", details: undefined } : { sets: [] });
+        });
+        expect(onProgress).toHaveBeenLastCalledWith({ percentage: failed ? 0 : 100, label: failed ? "Operation Failed" : "Complete" });
+        const count = calls.length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(PROGRESS_POLL_INTERVAL * 3); });
+        expect(calls).toHaveLength(count);
+    });
+
+    test("aborts in-flight polling and ignores late results after provider unmount", async () =>
+    {
+        const response = deferredResponse();
+        const poll = deferredResponse();
+        const { getEditor, calls, unmount } = await openProgressEditor(
+        {
+            "/smogon/sets": () => response.promise,
+            "/progress/:id": () => poll.promise,
+        });
+        const onProgress = vi.fn();
+        vi.useFakeTimers();
+        let pending;
+        await act(async () => { pending = getEditor().loadSmogonSets(["Charmander"], onProgress).catch((error) => error); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(PROGRESS_POLL_INTERVAL); });
+        const request = calls.find((call) => call.route.startsWith("/progress/"));
+        unmount();
+        expect(request.options.signal.aborted).toBe(true);
+        await act(async () =>
+        {
+            poll.resolve({ percentage: 66, label: "Reading Required Files" });
+            response.resolve({ sets: [] });
+            expect(await pending).toEqual({ code: "OPERATION_CANCELLED" });
+            await vi.advanceTimersByTimeAsync(PROGRESS_POLL_INTERVAL * 3);
+        });
+        expect(onProgress).toHaveBeenCalledTimes(1);
+        expect(calls.filter((call) => call.route.startsWith("/progress/"))).toHaveLength(1);
+    });
+
+    test("supersedes earlier Smogon loads and suppresses their late callbacks", async () =>
+    {
+        const first = deferredResponse();
+        const second = deferredResponse();
+        const { getEditor, calls } = await openProgressEditor({ "/smogon/sets": (body) => body.species[0] === "Charmander" ? first.promise : second.promise });
+        const firstProgress = vi.fn();
+        const secondProgress = vi.fn();
+        let earlier;
+        let later;
+        await act(async () =>
+        {
+            earlier = getEditor().loadSmogonSets(["Charmander"], firstProgress).catch((error) => error);
+            later = getEditor().loadSmogonSets(["Charizard"], secondProgress);
+        });
+        await act(async () =>
+        {
+            first.resolve({ sets: ["old"] });
+            second.resolve({ sets: ["new"] });
+            expect(await earlier).toEqual({ code: "OPERATION_CANCELLED" });
+            expect(await later).toEqual({ sets: ["new"] });
+        });
+        expect(firstProgress).toHaveBeenCalledTimes(1);
+        expect(secondProgress).toHaveBeenLastCalledWith({ percentage: 100, label: "Complete" });
+        const requests = calls.filter((call) => call.route === "/smogon/sets");
+        expect(requests[0].params.progressId).not.toBe(requests[1].params.progressId);
+    });
+
+    test("supports existing callers and ignores exceptions from optional observers", async () =>
+    {
+        const { getEditor } = await openProgressEditor({ "/smogon/sets": () => ({ sets: [] }) });
+        await act(async () =>
+        {
+            expect(await getEditor().loadSmogonSets(["Charmander"])).toEqual({ sets: [] });
+            expect(await getEditor().loadSmogonSets(["Charmander"], () => { throw new Error("Observer closed"); })).toEqual({ sets: [] });
+        });
+        expect(getEditor().state.smogonProgress).toEqual({ percentage: 100, label: "Complete" });
+    });
+});
 
 describe("Spread editor", () =>
 {

@@ -20,6 +20,7 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import ContentPasteIcon from "@mui/icons-material/ContentPaste";
 import IosShareIcon from "@mui/icons-material/IosShare";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
+import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
 import { LEGALITY, getMoveLegality } from "../../shared/catalog.mjs";
@@ -39,6 +40,7 @@ import ItemPicker, { ITEM_NONE, NO_ITEM_LABEL } from "../subcomponents/ItemPicke
 import MoveEditor, { getMoveOption } from "../subcomponents/MovePicker";
 import SpreadStats from "../subcomponents/SpreadStats";
 import { ExportSpreadsDialog, OverwriteSpreadDialog } from "./SpreadDialogs";
+import SmogonDialog from "./SmogonDialog";
 
 const SPRITE_SIZE = 112;
 const ICON_SIZE = 24;
@@ -77,6 +79,7 @@ const DUPLICATE_MOVE = "Duplicate move";
 const PLACEHOLDER_REASON = "This entry is a placeholder with no active battle spread and cannot be edited.";
 const SHOWDOWN_EXPORT = "export";
 const SHOWDOWN_OVERWRITE = "overwrite";
+const SMOGON_OVERWRITE = "smogon";
 const NEW_SPREAD_LABEL = "New Spread";
 const NEW_SPREAD_TIP = "New spread, not saved yet";
 const SUGGESTED_SPREAD_UNAVAILABLE = "No Suggested Spread";
@@ -271,12 +274,14 @@ const FieldAutocomplete = ({ label, value, options, onChange, onFieldCommit }) =
  * @param {boolean} props.editing - Whether the fields can be changed.
  * @param {boolean} props.changed - Whether the spread has unsaved changes.
  * @param {boolean} [props.deleted] - Whether the spread will be deleted on save.
+ * @param {boolean} [props.readOnly] - Whether the card is an inert preview without source metadata.
+ * @param {boolean} [props.showBattleType=true] - Whether to show the battle-type chip.
  * @param {Array<{message: string}>} props.problems - Problems that stop the spread from being saved.
  * @param {object} props.actions - The editor actions updateSpread, setEditing, deleteSpread and restoreSpread.
  * @param {Function} [props.onFieldCommit] Advances focus after an inline field choice.
  * @returns {JSX.Element} The card.
  */
-const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, changed, deleted = false, problems, actions, onFieldCommit }) =>
+const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, changed, deleted = false, readOnly = false, showBattleType = true, problems, actions, onFieldCommit }) =>
 {
     const theme = useTheme();
     const { id } = entry;
@@ -313,7 +318,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
     const ability = getEffectiveAbility(speciesInfo, fields.ability);
     const megaAbility = getMegaAbility(catalog, fields);
     const canGigantamax = speciesInfo?.gigantamax != null;
-    const trainers = getTrainerLabels(set);
+    const trainers = readOnly ? [] : getTrainerLabels(set);
     const inputId = `spread-${id}`;
     const warnings = entry.diagnostics;
     const suggestion = useMemo(() => editing && entry.editable && !deleted
@@ -331,7 +336,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
      *        Doubles value; returns the new values.
      */
     const update = (change) => actions.updateSpread(id, change);
-    const canOpen = !editing && !deleted && entry.editable;
+    const canOpen = !readOnly && !editing && !deleted && entry.editable;
 
     /**
      * Applies suggested stats and nature to the current draft without changing other fields.
@@ -385,13 +390,13 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
     const battleChips =
         <div className="battle-chips">
             {entry.placeholder && <Tooltip title={PLACEHOLDER_REASON}><Chip size="small" label="Placeholder" color="warning" /></Tooltip>}
-            <Chip size="small" color={BATTLE_TYPE_COLORS[battleType]} label={battleLabel} />
+            {showBattleType && <Chip size="small" color={BATTLE_TYPE_COLORS[battleType]} label={battleLabel} />}
             {showTeamType && teamType !== ANY_TEAM_TYPE && <Chip size="small" color="primary" label={`Doubles Team: ${teamTypeLabel}`} />}
             {set.littleCup && <Chip size="small" color="info" label={`Lv. ${LITTLE_CUP_LEVEL}`} />}
         </div>;
 
     return (
-        <Paper component="article" variant="outlined" className={`spread-card${editing && !deleted ? " spread-card-editing" : ""}${changed ? " spread-card-changed" : ""}${deleted ? " spread-card-deleted" : ""}${entry.editable ? "" : " spread-card-locked"}`}
+        <Paper component="article" variant="outlined" className={`spread-card${readOnly ? " spread-card-read-only" : ""}${editing && !deleted ? " spread-card-editing" : ""}${changed ? " spread-card-changed" : ""}${deleted ? " spread-card-deleted" : ""}${entry.editable ? "" : " spread-card-locked"}`}
                aria-label={`${name} spread`} onClick={handleClick} onKeyDown={handleKeyDown} tabIndex={canOpen ? 0 : undefined}>
             {deleted && <div className="spread-deleted-overlay"><Button variant="contained" onClick={() => actions.restoreSpread(id)}>Restore</Button></div>}
             <div className="spread-card-content" inert={deleted}>
@@ -443,7 +448,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                         <Tooltip title="Gigantamax">
                             <span className="option-with-icon"><GameImage src={catalog.assets?.gigantamax ?? null} alt="Gigantamax" width={ICON_SIZE} height={ICON_SIZE} /></span>
                         </Tooltip>}
-                    <Tooltip title={`${set.file}, line ${entry.line}`}>
+                    <Tooltip title={readOnly ? "" : `${set.file}, line ${entry.line}`}>
                         <Typography component="h3" variant="subtitle1" className="spread-name" aria-label={name}>{name}</Typography>
                     </Tooltip>
                     {types.map((type) => <TypeIcon key={type} catalog={catalog} type={type} full={editing && !typesChange} />)}
@@ -457,7 +462,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                             <Tooltip title={warnings.map((diagnostic) => diagnostic.message).join(" ")}>
                                 <span role="img" aria-label="Source warnings" className="type-symbol"><WarningAmberIcon color="warning" fontSize="small" /></span>
                             </Tooltip>}
-                        {!entry.editable
+                        {!readOnly && !entry.editable
                             ? <Tooltip title={entry.placeholder ? PLACEHOLDER_REASON : LOCKED_REASON}>
                                 <span role="img" aria-label={entry.placeholder ? "Placeholder" : LOCKED_REASON}><LockIcon fontSize="small" color="disabled" /></span>
                             </Tooltip>
@@ -466,12 +471,12 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                             <Tooltip title={NEW_SPREAD_TIP}>
                                 <span role="img" aria-label={NEW_SPREAD_LABEL} className="type-symbol"><FiberNewIcon color="success" className="new-spread-icon" /></span>
                             </Tooltip>}
-                        {editing && <Tooltip title="Spread Actions">
+                        {!readOnly && editing && <Tooltip title="Spread Actions">
                             <IconButton size="small" aria-label="Spread Actions" aria-haspopup="menu" aria-expanded={menuAnchor != null}
                                         onClick={(event) => setMenuAnchor(event.currentTarget)}><MoreVertIcon fontSize="small" /></IconButton>
                         </Tooltip>}
                     </span>
-                    {editing && <Menu anchorEl={menuAnchor} open={menuAnchor != null} onClose={() => setMenuAnchor(null)}
+                    {!readOnly && editing && <Menu anchorEl={menuAnchor} open={menuAnchor != null} onClose={() => setMenuAnchor(null)}
                                       anchorOrigin={{ vertical: "bottom", horizontal: "right" }} transformOrigin={{ vertical: "top", horizontal: "right" }}>
                         <MenuItem onClick={() => { setMenuAnchor(null); setShowdownDialog(SHOWDOWN_EXPORT); }}>
                             <ListItemIcon><IosShareIcon fontSize="small" /></ListItemIcon>
@@ -480,6 +485,10 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                         {entry.editable && <MenuItem onClick={() => { setMenuAnchor(null); setShowdownDialog(SHOWDOWN_OVERWRITE); }}>
                             <ListItemIcon><ContentPasteIcon fontSize="small" /></ListItemIcon>
                             <ListItemText>Overwrite From Showdown</ListItemText>
+                        </MenuItem>}
+                        {entry.editable && <MenuItem onClick={() => { setMenuAnchor(null); setShowdownDialog(SMOGON_OVERWRITE); }}>
+                            <ListItemIcon><TravelExploreIcon fontSize="small" /></ListItemIcon>
+                            <ListItemText>Overwrite From Smogon</ListItemText>
                         </MenuItem>}
                         {entry.editable && <MenuItem onClick={() => { setMenuAnchor(null); actions.deleteSpread(id); }} sx={{ color: "error.main" }}>
                             <ListItemIcon><DeleteOutlineIcon fontSize="small" color="error" /></ListItemIcon>
@@ -622,6 +631,14 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                         </Alert>}
                 </div>}
             </div>
+            {showdownDialog === SMOGON_OVERWRITE &&
+                <SmogonDialog catalog={catalog} species={fields.species} set={set} teamTypes={teamTypes} preview={preview}
+                              loadSmogonSets={actions.loadSmogonSets} currentFields={fields} savedFields={entry.fields}
+                              onClose={() => setShowdownDialog(null)} onChoose={(next) =>
+                              {
+                                  update(() => next);
+                                  setShowdownDialog(null);
+                              }} />}
             {showdownDialog === SHOWDOWN_EXPORT &&
                 <ExportSpreadsDialog title={`Export ${name} to Showdown`} catalog={catalog} entries={[{ id, label: name, fields, level }]}
                                      onClose={() => setShowdownDialog(null)} />}

@@ -16,7 +16,7 @@ import { Box, Chip, Container, Divider, List, ListItem, ListItemText, Paper, Typ
 
 import "../styles/SpreadEditorPage.css";
 
-const LAST_UPDATED = "October 1, 2026";
+const LAST_UPDATED = "October 5, 2026";
 
 
 /**
@@ -90,7 +90,7 @@ const PrivacyPolicy = () =>
                     <ListItem>
                         <ListItemText 
                             primary="Caches, backups, and recovery records"
-                            secondary="The API stores parsed source caches, downloaded PokeAPI indexes, original-file backups, and save journals on your computer. The default data folder is %LOCALAPPDATA%/CFRU Spread Editor on Windows or ~/.cfru-spread-editor on macOS and Linux, unless SPREAD_EDITOR_DATA_DIR overrides it."
+                            secondary="The API stores parsed source caches, downloaded PokeAPI indexes, original-file backups, and save journals on your computer. It also downloads Smogon sets and analyses from data.pkmn.cc and saves them under cache/smogon in the data folder. The default data folder is %LOCALAPPDATA%/CFRU Spread Editor on Windows or ~/.cfru-spread-editor on macOS and Linux, unless SPREAD_EDITOR_DATA_DIR overrides it."
                             sx={{ '& .MuiListItemText-primary': { fontWeight: 500 } }}
                         />
                     </ListItem>
@@ -121,7 +121,9 @@ const PrivacyPolicy = () =>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
                     Local hosting does not mean every feature is offline. The API may request public
-                    Pokemon and type indexes from pokeapi.co. Your browser may load artwork from
+                    Pokemon and type indexes from pokeapi.co, and Smogon sets and analyses from
+                    data.pkmn.cc (which redirects to GitHub Pages). Smogon requests send only format
+                    file names, not personal data, selected species, or spread edits. Your browser may load artwork from
                     raw.githubusercontent.com (PokeAPI sprites and PokeSprite) and move category icons
                     from play.pokemonshowdown.com. Local repository artwork is also used when available.
                 </Typography>

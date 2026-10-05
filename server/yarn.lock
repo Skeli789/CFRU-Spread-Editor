@@ -254,12 +254,40 @@
   resolved "https://registry.yarnpkg.com/@pkgjs/parseargs/-/parseargs-0.11.0.tgz#a77ea742fab25775145434eb1d2328cf5013ac33"
   integrity sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==
 
+"@pkmn/data@^0.10.10", "@pkmn/data@^0.10.11":
+  version "0.10.11"
+  resolved "https://registry.yarnpkg.com/@pkmn/data/-/data-0.10.11.tgz#3f8caa1033a5fb0ba399987aa7fc3051b251a5aa"
+  integrity sha512-WZiOOZEdIJybC1M2EJVazx+OKH5Hh544cPhNnjgNjn3B0LORP82YkL4jpZqkww+NoIHIXMvJBYLKg3GZBNm4kQ==
+  dependencies:
+    "@pkmn/dex-types" "^0.10.11"
+
+"@pkmn/dex-types@^0.10.11":
+  version "0.10.11"
+  resolved "https://registry.yarnpkg.com/@pkmn/dex-types/-/dex-types-0.10.11.tgz#0f583f3a355c647d7119a9ee84a9bb8a6e0d83f0"
+  integrity sha512-6hvvi/iHCdBbUGK7RmWPCKuZGujEC+1elvxcLK2BpL/j7Q0roSuC33xrodDsyg2EuyJ5szGunzRtFztyrtb7aQ==
+  dependencies:
+    "@pkmn/types" "^4.0.0"
+
+"@pkmn/dex@^0.10.11":
+  version "0.10.11"
+  resolved "https://registry.yarnpkg.com/@pkmn/dex/-/dex-0.10.11.tgz#45fa1d5f4f72fa26d2ab23f400ad22e155a39d4c"
+  integrity sha512-htR2Etf3WCiu4k4ukmyYD94do97sTm9LfmxJ8tg2uuPGJsZ98ZZGlJFUZNltfXU0pO61ItiU6obRXTw05qipDQ==
+  dependencies:
+    "@pkmn/dex-types" "^0.10.11"
+
 "@pkmn/sets@5.2.0":
   version "5.2.0"
   resolved "https://registry.npmjs.org/@pkmn/sets/-/sets-5.2.0.tgz#f639b6c87ae8b5fb597920a6b5721dbfe9dbb3a2"
   integrity sha512-WHAW6bZu0WCo/3b+LTW7BE0fBhYZnWH1lCXIu2an8/wTiZ/+s1eTcQYj7W/YQKxWT5dm/La03AZ6CeqdJip9CQ==
   dependencies:
     "@pkmn/types" "^4.0.0"
+
+"@pkmn/smogon@^0.6.0":
+  version "0.6.0"
+  resolved "https://registry.yarnpkg.com/@pkmn/smogon/-/smogon-0.6.0.tgz#705b8bf62a3c2efa0ce2d0ebacfa038bb949b82f"
+  integrity sha512-3paSrgnA/QfcC7Ut4S+Abikg6rADr23N93RBZ9kxgrDP6O9bux7dXhxNgi4M7g9xUeqf5rLDIlxmnchf67cWEw==
+  dependencies:
+    "@pkmn/data" "^0.10.10"
 
 "@pkmn/types@^4.0.0":
   version "4.0.0"

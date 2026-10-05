@@ -161,6 +161,49 @@ describe("Showdown adapter", () =>
         expect(mega.warnings.map((warning) => warning.message)).toContain("Mega Charizard X imported as Charizard (battle-only form)");
     });
 
+    it.each(["X", "Y"])("accepts a reachable Mega Charizard %s ability on the base species and retains a valid base slot", (variant) =>
+    {
+        const ability = variant === "X" ? "Tough Claws" : "Drought";
+        const text = `Charizard @ Charizardite ${variant}\nAbility: ${ability}\n- Flamethrower`;
+        for (const existingAbility of [undefined, 0, 2])
+        {
+            const result = resolve(text, { existingFields: createFields({ ability: existingAbility }) });
+            expect(result.errors).toEqual([]);
+            expect(result.fields).toMatchObject({ species: "SPECIES_CHARIZARD", item: `ITEM_CHARIZARDITE_${variant}`, ability: existingAbility === 0 ? 0 : 1 });
+            expect(result.warnings.filter((warning) => warning.field === "ability")).toEqual([]);
+        }
+    });
+
+    it.each(
+    [
+        { item: "Charizardite X", ability: "Sand Veil" },
+        { item: "Charizardite Y", ability: "Tough Claws" },
+        { item: "Leftovers", ability: "Tough Claws" },
+    ])("warns for unavailable $ability with $item", ({ item, ability }) =>
+    {
+        const result = resolve(`Charizard @ ${item}\nAbility: ${ability}\n- Flamethrower`);
+        expect(result.errors).toEqual([]);
+        expect(result.fields.ability).toBe(1);
+        expect(result.warnings.filter((warning) => warning.field === "ability")).toEqual([{ field: "ability", message: `${ability} not available (using Blaze)` }]);
+    });
+
+    it("accepts a move-triggered Mega ability only when its resolved move is present", () =>
+    {
+        const catalog = createCatalog();
+        catalog.species.SPECIES_RAYQUAZA = { ...catalog.species.SPECIES_CHARIZARD, name: "Rayquaza", showdownName: "Rayquaza", megas: [{ species: "SPECIES_RAYQUAZA_MEGA", move: "MOVE_DRAGONASCENT" }] };
+        catalog.species.SPECIES_RAYQUAZA_MEGA = { ...catalog.species.SPECIES_CHARIZARD_MEGA_X, name: "Mega Rayquaza", abilities: [null, "ABILITY_DELTASTREAM", null] };
+        catalog.abilities.ABILITY_DELTASTREAM = "Delta Stream";
+        catalog.moves.MOVE_DRAGONASCENT = { name: "Dragon Ascent" };
+        const text = "Rayquaza\nAbility: Delta Stream\n- Dragon Ascent";
+        const result = resolve(text, {}, catalog);
+        expect(result.errors).toEqual([]);
+        expect(result.fields.moves).toEqual(["MOVE_DRAGONASCENT", 0, 0, 0]);
+        expect(result.warnings.filter((warning) => warning.field === "ability")).toEqual([]);
+        expect(resolve("Rayquaza\nAbility: Delta Stream\n- Protect", {}, catalog).warnings.some((warning) => warning.field === "ability")).toBe(true);
+        delete catalog.moves.MOVE_DRAGONASCENT;
+        expect(resolve(`${text}\n- Protect`, {}, catalog).warnings.some((warning) => warning.field === "ability")).toBe(true);
+    });
+
     it("imports Mega, Gigantamax and other battle-only forms as their base form", () =>
     {
         const catalog = createCatalog();

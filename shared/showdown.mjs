@@ -5,7 +5,7 @@
 import { Sets, Teams } from "@pkmn/sets";
 import { EV_FIELDS, HIDDEN_POWER_TYPES, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV, MOVE_HIDDEN_POWER, STATS, getAbilityOptions, getEffectiveAbility, getHiddenPowerType, optimizeHiddenPowerIvs } from "./pokemon-mechanics.mjs";
 import { ANY_TEAM_TYPE, MAX_MOVES, createNewSpreadFields, getFieldSymbol, setTeamType, validateSpreadFields } from "./spread-model.mjs";
-import { getMoveLegality, getOutOfBattleForm, LEGALITY } from "./catalog.mjs";
+import { getMegaEvolutions, getMoveLegality, getOutOfBattleForm, LEGALITY } from "./catalog.mjs";
 
 export const MAX_SHOWDOWN_LENGTH = 1024 * 1024;
 export const MAX_SHOWDOWN_SETS = 512;
@@ -15,7 +15,7 @@ const DEFAULT_LEVEL = 100;
 const DEFAULT_IV = 31;
 const EMPTY = 0;
 const STAT_LABELS = { hp: "HP", atk: "Atk", def: "Def", spAtk: "SpA", spDef: "SpD", spd: "Spe" };
-const SHOWDOWN_STATS = { hp: "hp", atk: "atk", def: "def", spAtk: "spa", spDef: "spd", spd: "spe" };
+export const SHOWDOWN_STATS = { hp: "hp", atk: "atk", def: "def", spAtk: "spa", spDef: "spd", spd: "spe" };
 const STAT_ALIASES = { hp: "hp", hitpoints: "hp", atk: "atk", attack: "atk", def: "def", defense: "def", defence: "def", spa: "spAtk", spatk: "spAtk", specialattack: "spAtk", spd: "spDef", spdef: "spDef", specialdefense: "spDef", specialdefence: "spDef", spe: "spd", speed: "spd" };
 const HEADERS = new Set(["ability", "trait", "level", "shiny", "gigantamax", "pokeball", "hidden power", "happiness", "dynamax level", "tera type", "evs", "ivs"]);
 // Gender is left out silently, since spreads never set it
@@ -360,12 +360,22 @@ export function resolveImportedSet(catalog, parsedSet, options = {})
     if (!natureMatches.length)
         errors.push(issue(`Unknown nature: ${parsed.nature}.`, "nature"));
     fields.nature = natureMatches[0] ?? fields.nature;
+    const moves = parsed.moves ?? [];
+    const resolvedMoves = moves.slice(0, MAX_MOVES).map((move) =>
+    {
+        const hidden = /^Hidden Power(?:\s*\[([^\]]+)\]|\s+([A-Za-z]+))?$/i.exec(move);
+        const found = hidden ? [MOVE_HIDDEN_POWER] : matches(catalog.moves, move);
+        return { move, hidden, symbol: label(catalog.moves, found[0]) ? found[0] : null };
+    });
+    const movesResolved = resolvedMoves.map(({ symbol }) => symbol).filter(Boolean);
     if (parsed.ability && species)
     {
         const abilityMatches = matches(catalog.abilities, parsed.ability);
         const abilityOptions = getAbilityOptions(catalog.species[species]);
         const slots = abilityOptions.filter((option) => abilityMatches.includes(option.ability)).map((option) => option.slot);
-        const matchesMega = mega && (catalog.species[mega.mega]?.abilities ?? []).some((ability) => abilityMatches.includes(ability));
+        const reachableMegas = getMegaEvolutions(catalog, species, fields.item, movesResolved);
+        const megaSpecies = [mega?.mega, ...reachableMegas.map((evolution) => evolution.species)];
+        const matchesMega = megaSpecies.some((candidate) => (catalog.species[candidate]?.abilities ?? []).some((ability) => abilityMatches.includes(ability)));
         if (slots.length)
             fields.ability = slots.includes(options.abilitySlot) ? options.abilitySlot : slots.includes(options.existingFields?.ability) ? options.existingFields.ability : slots[0];
         else if (matchesMega)
@@ -393,28 +403,27 @@ export function resolveImportedSet(catalog, parsedSet, options = {})
         for (const stat of STATS)
             fields[IV_FIELDS[stat]] = parsed.ivs[SHOWDOWN_STATS[stat]] ?? DEFAULT_IV;
     }
-    const moves = parsed.moves ?? [];
     if (!moves.length)
         errors.push(issue("At least one move required", "moves"));
     if (moves.length > MAX_MOVES)
         errors.push(issue(`At most ${MAX_MOVES} moves allowed`, "moves"));
-    for (const move of moves.slice(0, MAX_MOVES))
+    let moveHiddenPowerType = null;
+    for (const { move, hidden, symbol } of resolvedMoves)
     {
-        const hidden = /^Hidden Power(?:\s*\[([^\]]+)\]|\s+([A-Za-z]+))?$/i.exec(move);
-        const found = hidden ? [MOVE_HIDDEN_POWER] : matches(catalog.moves, move);
+        moveHiddenPowerType ??= hidden?.[1] ?? hidden?.[2];
         // A move the game lacks is left out rather than skipping the whole set
-        if (!found.length || !label(catalog.moves, found[0]))
+        if (!symbol)
             warnings.push(issue(`${move} not in this game (left out)`, "moves"));
         else
         {
-            fields.moves[fields.moves.findIndex((slot) => !slot)] = found[0];
-            if (species && catalog.learnsets && getMoveLegality(catalog, species, found[0]).status === LEGALITY.ILLEGAL)
+            fields.moves[fields.moves.findIndex((slot) => !slot)] = symbol;
+            if (species && catalog.learnsets && getMoveLegality(catalog, species, symbol).status === LEGALITY.ILLEGAL)
                 warnings.push(issue(`${move} not learnable`, "moves"));
         }
     }
     if (moves.length && !fields.moves.some(Boolean))
         errors.push(issue("No moves in this game", "moves"));
-    const requestedType = parsedSet.hiddenPowerType ?? parsed.hpType ?? null;
+    const requestedType = parsedSet.hiddenPowerType ?? parsed.hpType ?? moveHiddenPowerType;
     if (requestedType && fields.moves.includes(MOVE_HIDDEN_POWER))
     {
         const type = HIDDEN_POWER_TYPES.find((candidate) => key(candidate.slice(5)) === key(requestedType));

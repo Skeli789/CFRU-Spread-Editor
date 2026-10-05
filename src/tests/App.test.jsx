@@ -28,7 +28,7 @@ test("privacy policy explains local hosting, stored data, and removal", () =>
     render(<PrivacyPolicy />);
 
     expect(screen.getByRole("heading", { level: 1, name: "Privacy Policy" })).toBeInTheDocument();
-    expect(screen.getByText("Last updated: October 1, 2026")).toBeInTheDocument();
+    expect(screen.getByText("Last updated: October 5, 2026")).toBeInTheDocument();
     expect(screen.getByText(/CFRU Spread Editor is a locally hosted web app/)).toHaveTextContent("There are no user accounts, analytics, tracking cookies");
     expect(screen.getByText(/Browser localStorage remembers repository paths/)).toHaveTextContent("unsaved spread changes");
     expect(screen.getByText(/The local API reads the CFRU/)).toHaveTextContent("DPE and Unbound Cloud remain read-only");
@@ -46,6 +46,7 @@ test("privacy policy discloses external requests and local security limitations"
     expect(requests).toHaveTextContent("pokeapi.co");
     expect(requests).toHaveTextContent("raw.githubusercontent.com");
     expect(requests).toHaveTextContent("play.pokemonshowdown.com");
+    expect(requests).toHaveTextContent("data.pkmn.cc");
     expect(screen.getByText(/These providers receive normal network request information/)).toHaveTextContent("public IP address");
     expect(screen.getByText(/These providers receive normal network request information/)).toHaveTextContent("does not send repository files, local paths, or spread edits");
     expect(screen.getByText(/The API binds to the loopback address/)).toHaveTextContent("Local data is not encrypted by the app");

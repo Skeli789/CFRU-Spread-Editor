@@ -50,6 +50,7 @@ const ARCHIVE_CONTENT_TYPE = "application/zip";
 const PROGRESS_POLL_INTERVAL = 250;
 const UPLOAD_PROGRESS_LIMIT = 20;
 const PENDING_PROGRESS_LIMIT = 99;
+const SMOGON_PROGRESS_KEY = "smogonProgress";
 const PICKER_SELECTED = "selected";
 const ERROR_WORKSPACE_NOT_FOUND = "WORKSPACE_NOT_FOUND";
 const ERROR_VALIDATION_FAILED = "REPOSITORY_VALIDATION_FAILED";
@@ -137,6 +138,7 @@ const INITIAL_STATE =
     archiveError: null,
     setupProgress: null,
     archiveProgress: null,
+    smogonProgress: null,
     spreadIndex: EMPTY_INDEX,
     preview: { level: DEFAULT_PREVIEW_LEVEL },
     ...EMPTY_DRAFTS,
@@ -1086,9 +1088,10 @@ export const SpreadEditorProvider = ({ children }) =>
      * @param {string} key The progress state field.
      * @param {string} label The initial operation label.
      * @param {object} [options] Additional Axios options.
+    * @param {Function} [onProgress] Optional observer receiving percentage and label.
      * @returns {Promise<object>} The main response, independent of polling failures.
      */
-    const trackedPost = useCallback(async (route, body, key, label, options = {}) =>
+    const trackedPost = useCallback(async (route, body, key, label, options = {}, onProgress) =>
     {
         progressRef.current.get(key)?.stop();
         const bytes = new Uint8Array(16);
@@ -1119,16 +1122,32 @@ export const SpreadEditorProvider = ({ children }) =>
         };
         progressRef.current.set(key, operation);
 
-        /** Updates only the active operation and never moves its percentage backwards. */
-        const update = (value, nextLabel) =>
+        /**
+         * Updates only the active operation and never moves its percentage backwards.
+         *
+         * @param {number} value The completed percentage.
+         * @param {string} nextLabel The current stage.
+         * @param {boolean} [complete] Whether the main request succeeded.
+         * @returns {void} Nothing.
+         */
+        const update = (value, nextLabel, complete = false) =>
         {
             if (!pending || progressRef.current.get(key) !== operation || !Number.isFinite(value))
                 return;
-            const next = Math.max(percentage, Math.min(PENDING_PROGRESS_LIMIT, Math.max(0, Math.floor(value))));
+            const next = Math.max(percentage, Math.min(complete ? 100 : PENDING_PROGRESS_LIMIT, Math.max(0, Math.floor(value))));
             if (value < percentage)
                 return;
             percentage = next;
-            dispatch({ type: ACTION.PROGRESS, key, progress: { percentage, label: nextLabel || label } });
+            const progress = { percentage, label: nextLabel || label };
+            dispatch({ type: ACTION.PROGRESS, key, progress });
+            try
+            {
+                onProgress?.({ ...progress });
+            }
+            catch
+            {
+                // Optional observers cannot fail the request or interrupt poll cleanup.
+            }
         };
         update(0, label);
 
@@ -1170,12 +1189,16 @@ export const SpreadEditorProvider = ({ children }) =>
             const result = await request;
             if (!pending)
                 throw { code: ERROR_OPERATION_CANCELLED };
+            if (onProgress || key === SMOGON_PROGRESS_KEY)
+                update(100, "Complete", true);
             return result;
         }
         catch (error)
         {
             if (!pending)
                 throw { code: ERROR_OPERATION_CANCELLED };
+            if (onProgress || key === SMOGON_PROGRESS_KEY)
+                update(percentage, "Operation Failed");
             throw error;
         }
         finally
@@ -1493,8 +1516,19 @@ export const SpreadEditorProvider = ({ children }) =>
     const saveProblems = useMemo(() => findSaveProblems(Object.fromEntries(Object.entries(state.drafts).filter(([id]) => !state.deleted.has(id))),
         state.spreadIndex.entries, state.catalog), [state.drafts, state.deleted, state.spreadIndex, state.catalog]);
 
+    /**
+     * Loads Smogon sets using the current local API session.
+     *
+     * @param {Array<string>} names Base and battle-only species names.
+     * @param {Function} [onProgress] Receives { percentage, label } immediately and during loading.
+     * @returns {Promise<object>} Available formats and sets.
+     */
+    const loadSmogonSets = useCallback((names, onProgress) =>
+        trackedPost("/smogon/sets", { species: names }, SMOGON_PROGRESS_KEY, "Loading Smogon Sets...", {}, onProgress), [trackedPost]);
+
     const actions = useMemo(() =>
     ({
+        loadSmogonSets,
         addSpreads: (setId, fieldsList, { edit = false } = {}) =>
         {
             const spreads = fieldsList.map((fields) =>
@@ -1527,7 +1561,7 @@ export const SpreadEditorProvider = ({ children }) =>
         setEditing: (id, editing) => dispatch({ type: ACTION.SET_EDITING, id, editing }),
         setPreview: (preview) => dispatch({ type: ACTION.SET_PREVIEW, preview }),
         clearSaveError: () => dispatch({ type: ACTION.CLEAR_SAVE_ERROR }),
-    }), []);
+    }), [loadSmogonSets]);
 
     const movedIds = useMemo(() => findMovedIds({ orders: state.orders, orderMoves: state.orderMoves, spreadIndex: state.spreadIndex }),
         [state.orders, state.orderMoves, state.spreadIndex]);

@@ -309,7 +309,7 @@ export function compactMoves(fields)
  * @param {object} fields The spread's values.
  * @returns {object} Only the EV fields that change, without rounding legal investments.
  */
-function getEvAutoFix(fields)
+export function getEvAutoFix(fields)
 {
     const next = { ...fields };
     for (const stat of STATS)

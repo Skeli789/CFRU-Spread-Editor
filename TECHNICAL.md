@@ -156,6 +156,36 @@ Bulk Export includes every current filter result across pages, using current edi
 
 Showdown text does not preserve CFRU file/set/trainer ownership, battle flags, Modify Moves Doubles, doubles team type, source comments, random-ball semantics, or identical-name ability-slot identity. Imported level, nickname, happiness, Dynamax Level, and Tera Type are not saved; gender is silently ignored. Custom game names may not be understood by a standard Showdown simulator. Use source backups, not exported team text, for lossless recovery.
 
+### Smogon sets
+
+Add Spread → Choose Species offers Smogon after choosing a destination set and species. The dialog supports multi-select across tabs and Add N Spreads through the normal import path, closing both dialogs and revealing the first addition. Every addition defaults to Singles & Doubles (Modify), regardless of its originating tab. Spread Actions → Overwrite From Smogon uses single-select and the Showdown overwrite rules, preserving ball, ownership, and battle flags; matching sets are disabled.
+
+- [server/endpoints/smogon.js](server/endpoints/smogon.js) exposes session-protected `POST /api/smogon/sets` with `{ species: string[] }`: 1 to 16 names, at most 64 characters each. One request loads all formats so first open caches everything for offline use.
+- The endpoint accepts an optional `?progressId=<UUID>` using the existing progress store. `getSets(names, { progress } = {})` reports discovery at 0 and advances by completed-format count after resource loading and set parsing, including unavailable formats. Running progress reaches at most 99; the endpoint marks success at 100 or records failure. Cache freshness, offline fallback, sequential format loading, and download deduplication are unchanged.
+- The provider exposes `loadSmogonSets(names, onProgress?) -> Promise<object>` on the editor and `cardActions`. The optional callback receives `{ percentage, label }` immediately at 0, then real polled progress and a final 100 on success (or the retained percentage with `Operation Failed` on failure). It uses a separate `smogonProgress` key through the existing `trackedPost` helper without resetting catalog/workspace state. Poll failures do not fail the main request; completion, failure, superseding loads, and provider unmount clear timers and abort polls. Superseded/unmounted requests reject with `OPERATION_CANCELLED` and suppress late progress callbacks; dialogs must also ignore results after closing or changing species.
+- [server/services/smogon.js](server/services/smogon.js) uses server dependencies `@pkmn/smogon`, `@pkmn/dex`, and `@pkmn/data`. Smogon minimal mode downloads per-format files from data.pkmn.cc; formats are discovered from `sets/index.json`. Only `sets/*.json` and `analyses/*.json` URLs on that host are allowed. Analysis HTML is converted to plain text before returning descriptions.
+- Files live under `<data root>/cache/smogon`, using the data-root rules below (`SPREAD_EDITOR_DATA_DIR`, otherwise `%LOCALAPPDATA%/CFRU Spread Editor` on Windows or `~/.cfru-spread-editor`). Freshness is 7 days. Download failure uses a saved copy with a stale note; without one, the API returns 503, `Smogon sets need an internet connection the first time.`
+- Pure [shared/smogon.mjs](shared/smogon.mjs) exports `SMOGON_TABS`, `SMOGON_CATEGORIES`, `MAX_SMOGON_VARIANTS` (24), `getSmogonSpeciesNames`, `convertStatPoints`, and `expandSmogonSet`. Item × nature × EV-spread alternatives become separate titled variants; moves, ability, and IVs use the first option. Champions Stat Points convert as `SP*8-4`, capped at 252 per stat, then trimmed to 510 total using exported `getEvAutoFix` from [shared/spread-model.mjs](shared/spread-model.mjs). Level and Tera type are ignored.
+- [src/components/SmogonDialog.jsx](src/components/SmogonDialog.jsx) uses `loadSmogonSets` from the editor state and `cardActions`, resolves variants through `resolveImportedSet` with automatic Hidden Power IV optimization, and omits errored sets with a summary. Warnings and plain-text descriptions use icon tooltips; previews are read-only SpreadCards grouped by format.
+
+Tabs are Champions, SV (gen9), SwSh (gen8), SM (gen7), and XY (gen6); tabs without sets are disabled.
+Only indexed formats in the server's ordered tier table are included:
+
+- Singles: National Dex, National Dex Ubers, National Dex UU, National Dex RU, AG, Ubers, OU,
+  Battle Stadium Singles, Battle Spot Singles, Ubers UU, UUBL, UU, RUBL, RU, NUBL, NU, PUBL,
+  PU, ZUBL, ZU, NFE, and LC, in that order.
+- Doubles: National Dex Doubles, Doubles Ubers, Doubles OU, Battle Stadium Doubles,
+  Battle Spot Doubles, VGC of any year (newest first), Doubles UU, Doubles NU, and Doubles LC.
+- Unlisted formats such as Monotype, 1v1, Hackmons, CAP, other metagames, BDSP, and Let's Go are excluded.
+
+Species lookups combine the species and its Mega/Gigantamax/battle-only forms, excluding regional/cosmetic forms.
+Mega-keyed sets resolve to the base species and use the Mega's item when none is supplied.
+Within a format, same-name sets with identical movesets are skipped. Distinct sets from later form queries
+keep a form suffix, such as `Drought Offense (Mega X)`; a remaining name collision is skipped.
+The base query comes first and keeps the plain set name.
+
+The dialog credits `Sets from Smogon University`. Smogon set and analysis text is copyrighted by Smogon and its contributors. Upstream requests send format file names, not repository data or spread edits. Restart the API on port 3001 after installing the server changes.
+
 ## Portable repository archives
 
 The game menu's **Download Required Files** exports `spread-editor-reqs.zip` through authenticated `POST /api/workspaces/:id/archive`. It includes exact source bytes from the reader-derived [source inventory](server/services/source-inventory.js): required files, present optional tables/shared JSON, all declared game data imports, compatibility text, and local Cloud/DPE images. It does not include whole repositories, remote artwork, parse caches, backups, journals, or unsaved browser drafts. The download uses the existing Save/Discard/Cancel guard.
@@ -199,8 +229,14 @@ Use Yarn from the indicated working directory:
 | Showdown adapter | Editor root | `yarn test src/tests/Showdown.test.jsx --run` |
 | Showdown dialogs | Editor root | `yarn test src/tests/ShowdownDialogs.test.jsx --run` |
 | Official Showdown syntax compatibility | Server | `yarn test tests/services/showdown.test.js` |
+| Smogon shared rules | Editor root | `yarn test src/tests/Smogon.test.jsx --run` |
+| Smogon dialog | Editor root | `yarn test src/tests/SmogonDialog.test.jsx --run` |
+| Smogon service/cache | Server | `yarn test tests/services/smogon.test.js` |
+| Smogon endpoint | Server | `yarn test tests/endpoints/smogon.test.js` |
+| Smogon request progress and editor state | Editor root | `yarn test src/tests/SpreadEditor.test.jsx --run` |
 | All frontend tests | Editor root | `yarn test-all` |
 | All backend tests | Server | `yarn test-all` |
 | Production build | Editor root | `yarn build` |
 
 Frontend tests use Vitest/Testing Library; backend tests use Mocha/Chai/Supertest. New server filesystem tests must use temporary repository fixtures and a temporary `SPREAD_EDITOR_DATA_DIR`, never live checkouts. See the [testing skill](.github/skills/testing/SKILL.md) and [Showdown exchange skill](.github/skills/showdown-exchange/SKILL.md) for focused coverage and caveats.
+Smogon tests use [server/tests/helpers/smogon-fixtures.js](server/tests/helpers/smogon-fixtures.js) and mocked/injected fetches; they must never contact the network.

@@ -9,6 +9,7 @@ A tool for editing CFRU Battle Frontier, special trainer, multi partner, raid pa
 - Add, delete, and reorder spreads.
 - Preview stats and automatically fix common move, IV, and EV issues.
 - Import and export Pokémon Showdown sets.
+- Add or overwrite spreads using Smogon sets.
 - Download the editor's required and available optional files as a ZIP, or upload that ZIP to edit a cached copy.
 - Save changes with automatic backups, or revert unwanted edits.
 
@@ -68,6 +69,7 @@ On **Connect Repositories**, choose **Upload ZIP** instead of entering repositor
 - Use the filters to find the spreads you want to change.
 - Edit an existing spread, or use **Add Spread** to create one.
 - To import Showdown sets, choose **Add Spread → Import Showdown Text** and paste your sets.
+- Choose **Smogon** in **Add Spread**, or **Overwrite From Smogon** in a spread's actions, to pick from Smogon University sets, which are saved for offline use.
 - Click **Save Changes** when you are ready to write your edits to CFRU. Until then, your source files are unchanged.
 - Use the revert actions to discard unwanted edits.
 

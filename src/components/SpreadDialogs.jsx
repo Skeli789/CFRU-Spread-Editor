@@ -22,6 +22,8 @@ import { MAX_SHOWDOWN_LENGTH, SHOWDOWN_PLACEHOLDER_ERROR, applyOverwrite, export
 import { getFieldSymbol, getTeamType, getTeamTypeLabel } from "../../shared/spread-model.mjs";
 import { GameImage, STAT_SHORT_LABELS, TypeIcon, getLabel, getSpeciesFormName, useIncrementalList } from "../subcomponents/CatalogDisplay";
 import { getFileLabel, getSetDisplayName } from "./SpreadFilters";
+import SmogonDialog from "./SmogonDialog";
+import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 
 // Long previews are cut short so the dialog stays responsive
 const MAX_PREVIEW_ITEMS = 200;
@@ -100,7 +102,7 @@ const FIELD_LABELS =
  * @param {object} result The resolved Showdown set.
  * @returns {Array<string>} The warning messages.
  */
-function getImportWarnings(result)
+export function getImportWarnings(result)
 {
     const unsupported = result.unsupported.filter((entry) => entry.field !== "happiness" || !result.warnings.some((warning) => warning.field === "happiness"));
     return [...result.warnings.map((warning) => warning.message), ...result.ambiguities.map((ambiguity) => ambiguity.message),
@@ -171,18 +173,22 @@ const SetPicker = ({ sets, value, onChange, getProblem, helperText = "", size = 
  * @param {string} props.defaultSetId The filtered set, when selected.
  * @param {string} [props.defaultSpecies] The only filtered species, when selected.
  * @param {object} props.catalog The game catalog.
+ * @param {object} props.preview The preview level.
+ * @param {Array<object>} props.teamTypes The doubles team types.
+ * @param {Function} props.loadSmogonSets Loads Smogon sets through the editor session.
  * @param {Function} props.onAdd Creates one spread of a species.
  * @param {Function} props.onImport Creates spreads from imported values.
  * @param {Function} props.onClose Closes the dialog.
  * @returns {JSX.Element} The dialog.
  */
-export const AddSpreadDialog = ({ sets, defaultSetId, defaultSpecies, catalog, onAdd, onImport, onClose }) =>
+export const AddSpreadDialog = ({ sets, defaultSetId, defaultSpecies, catalog, preview, teamTypes, loadSmogonSets, onAdd, onImport, onClose }) =>
 {
     const preferred = sets.find((set) => set.id === defaultSetId) ?? sets[0];
     const [setId, setSetId] = useState(preferred?.canInsert ? preferred.id : "");
     const [speciesOpen, setSpeciesOpen] = useState(false);
     const [tab, setTab] = useState(TAB_SPECIES);
     const [text, setText] = useState("");
+    const [smogonOpen, setSmogonOpen] = useState(false);
     const deferredText = useDeferredValue(text);
 
     const selectedSet = sets.find((set) => set.id === setId) ?? null;
@@ -272,10 +278,20 @@ export const AddSpreadDialog = ({ sets, defaultSetId, defaultSpecies, catalog, o
             <DialogActions>
                 <Button onClick={onClose}>Cancel</Button>
                 {tab === TAB_SPECIES
-                    ? <Button variant="contained" disabled={!canAddSpecies} onClick={() => onAdd(setId, species.value)}>Add</Button>
+                    ? <>
+                        <Button startIcon={<TravelExploreIcon />} disabled={!canAddSpecies} onClick={() => setSmogonOpen(true)}>Smogon</Button>
+                        <Button variant="contained" disabled={!canAddSpecies} onClick={() => onAdd(setId, species.value)}>Add</Button>
+                    </>
                     : <Button variant="contained" disabled={!selectedSet?.canInsert || ready.length === 0}
                               onClick={() => onImport(setId, ready.map((set) => set.fields))}>{importLabel}</Button>}
             </DialogActions>
+            {smogonOpen && <SmogonDialog catalog={catalog} species={species.value} set={selectedSet} preview={preview} teamTypes={teamTypes}
+                                        loadSmogonSets={loadSmogonSets} multiple onClose={() => setSmogonOpen(false)}
+                                        onAdd={(fieldsList) =>
+                                        {
+                                            setSmogonOpen(false);
+                                            onImport(setId, fieldsList);
+                                        }} />}
         </Dialog>
     );
 };

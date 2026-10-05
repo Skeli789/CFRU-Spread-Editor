@@ -356,7 +356,7 @@
     min-width: 0;
 }
 
-.spread-card:not(.spread-card-deleted):not(.spread-card-editing):not(.spread-card-locked):hover
+.spread-card:not(.spread-card-deleted):not(.spread-card-editing):not(.spread-card-locked):not(.spread-card-read-only):hover
 {
     background-image: linear-gradient(rgba(128, 128, 128, 0.08), rgba(128, 128, 128, 0.08));
 }
@@ -366,6 +366,80 @@
     cursor: default;
     border-color: var(--theme);
     container: spread-edit-card / inline-size;
+}
+
+.spread-card-read-only
+{
+    cursor: default;
+}
+
+.smogon-grid
+{
+    display: grid;
+    gap: 16px;
+}
+
+.smogon-choice
+{
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.smogon-choice:not([aria-disabled="true"]) *
+{
+    cursor: pointer;
+}
+
+.smogon-choice[aria-disabled="true"],
+.smogon-choice[aria-disabled="true"] *
+{
+    cursor: default;
+}
+
+.smogon-choice[aria-disabled="true"] .smogon-explanation-button,
+.smogon-choice[aria-disabled="true"] .smogon-explanation-button *
+{
+    cursor: pointer;
+}
+
+.smogon-skipped-summary
+{
+    display: inline-flex;
+    align-self: flex-start;
+    max-width: 100%;
+}
+
+.smogon-explanation-text
+{
+    text-align: justify;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+}
+
+.smogon-choice:focus-visible
+{
+    outline: 2px solid;
+    outline-offset: 2px;
+}
+
+.smogon-choice .spread-card
+{
+    flex: 1;
+}
+
+.smogon-check
+{
+    position: absolute;
+    top: -10px;
+    left: -10px;
+    z-index: 1;
+    background: white;
+    border-radius: 50%;
 }
 
 .spread-card-editing .spread-card-content

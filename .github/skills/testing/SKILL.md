@@ -15,6 +15,7 @@ Use Yarn and the narrowest relevant suite. Test user-visible behavior and real s
 - [server/package.json](../../../server/package.json): Mocha scripts and Chai/Supertest dependencies.
 - [server/tests/helpers/fixture-repositories.js](../../../server/tests/helpers/fixture-repositories.js): disposable synthetic repository trees and cleanup.
 - [server/tests/helpers/spread-fixtures.js](../../../server/tests/helpers/spread-fixtures.js): spread/config/trainer source variants; [server/tests/helpers/catalog-fixtures.js](../../../server/tests/helpers/catalog-fixtures.js): catalog, learnsets, indexed PNGs, and fake PokeAPI responses.
+- [server/tests/helpers/smogon-fixtures.js](../../../server/tests/helpers/smogon-fixtures.js): Smogon set/analysis fixtures for network-free service and endpoint tests.
 - [server/tests/endpoints/workspaces.test.js](../../../server/tests/endpoints/workspaces.test.js): fresh app/session setup, API/security integration, and fixture-local data environment.
 - [server/tests/services/spread-writer.test.js](../../../server/tests/services/spread-writer.test.js): injected store/data directories and real byte-preservation/save/recovery tests.
 - [server/tests/services/parse-cache.test.js](../../../server/tests/services/parse-cache.test.js): isolated cache directories; [server/server.js](../../../server/server.js): exported Express app without listening on import.

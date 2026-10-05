@@ -9,6 +9,7 @@ const sessionRouter = require('./endpoints/session');
 const workspacesRouter = require('./endpoints/workspaces');
 const archiveImportRouter = require('./endpoints/archive-import');
 const progressRouter = require('./endpoints/progress');
+const smogonRouter = require('./endpoints/smogon');
 
 const { handleErrors, handleUnknownApiRoute } = require('./middleware/errors');
 const
@@ -41,6 +42,7 @@ app.use('/api', requireSession);
 app.use('/api/progress', progressRouter);
 app.use('/api/repositories', repositoriesRouter);
 app.use('/api/workspaces', workspacesRouter);
+app.use('/api/smogon', smogonRouter);
 // Add more endpoint routers here as needed
 
 // Error responses

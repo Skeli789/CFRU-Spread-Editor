@@ -97,7 +97,8 @@ const SpreadEditorView = () =>
         setEditing: () => {},
         deleteSpread: () => setPending(null),
         restoreSpread: () => {},
-    }), []);
+        loadSmogonSets: editor.loadSmogonSets,
+    }), [editor.loadSmogonSets]);
 
     // Results change when the filters do, not while a spread is being edited, so a card never vanishes mid-edit
     const draftsRef = useRef(drafts);
@@ -362,6 +363,7 @@ const SpreadEditorView = () =>
                 onAdd={(setId) => setAddOpen({ setId })}
             />
             {addOpen && <AddSpreadDialog sets={spreads.sets} defaultSetId={addOpen.setId ?? filters.setId} catalog={catalog}
+                preview={preview} teamTypes={spreads.teamTypes} loadSmogonSets={editor.loadSmogonSets}
                 defaultSpecies={filters.species.length === 1 ? filters.species[0] : undefined}
                 onClose={() => setAddOpen(false)} onAdd={(setId, species) =>
                 {

@@ -89,6 +89,32 @@ function HeldStatCard({ initialFields })
 
 describe("Spread card", () =>
 {
+    it("uses pointer cursors throughout selectable Smogon previews and default cursors throughout disabled choices", () =>
+    {
+        const styles = CARD_STYLES.replace(/\s+/g, " ");
+        expect(styles).toContain('.smogon-choice:not([aria-disabled="true"]) * { cursor: pointer; }');
+        expect(styles).toContain('.smogon-choice[aria-disabled="true"], .smogon-choice[aria-disabled="true"] * { cursor: default; }');
+        expect(styles).toContain('.spread-card-read-only { cursor: default; }');
+        expect(styles).toMatch(/\.spread-card:not\(\.spread-card-deleted\):not\(\.spread-card-editing\):not\(\.spread-card-locked\):not\(\.spread-card-read-only\):hover/);
+    });
+
+    it.each([true, false])("keeps read-only previews inert and hides trainer and source actions with editable=%s", async (editable) =>
+    {
+        const spreads = createSpreads();
+        const { card, actions, user } = renderCard({ readOnly: true, entry: { ...spreads.entries[5], editable }, set: spreads.sets[2] });
+        expect(card).toHaveClass("spread-card-read-only");
+        expect(card).not.toHaveAttribute("tabindex");
+        expect(within(card).queryByText("Palmer")).not.toBeInTheDocument();
+        expect(within(card).queryByRole("button", { name: "Spread Actions" })).not.toBeInTheDocument();
+        expect(within(card).queryByRole("img", { name: /cannot be changed safely/ })).not.toBeInTheDocument();
+        await user.click(card);
+        fireEvent.keyDown(card, { key: "Enter" });
+        expect(actions.setEditing).not.toHaveBeenCalled();
+        await user.hover(within(card).getByRole("heading", { name: "Charizard" }));
+        expect(screen.queryByRole("tooltip", { name: /line 32/ })).not.toBeInTheDocument();
+        expect(CARD_STYLES).toMatch(/:not\(\.spread-card-read-only\):hover/);
+    });
+
     it.each(
     [
         { fields: {}, value: "300", total: 300, budget: "210 Left" },
@@ -468,6 +494,26 @@ describe("Spread card", () =>
         expect(within(card).queryByText("Keep Doubles")).not.toBeInTheDocument();
     });
 
+    it("shows the battle-type chip by default on read-only cards", () =>
+    {
+        const { card } = renderCard({ readOnly: true, fields: createFields() });
+        expect(card.querySelector(".battle-chips .MuiChip-label")).toHaveTextContent(/^Singles & Doubles \(Modify\)$/);
+    });
+
+    it("hides only the battle-type chip when showBattleType is false", () =>
+    {
+        const spreads = createSpreads();
+        const { card } = renderCard({ showBattleType: false, entry: { ...spreads.entries[2], placeholder: true },
+            set: { ...spreads.sets[0], littleCup: true },
+            fields: createFields({ forSingles: false, forDoubles: true, specificTeamType: 7 }) });
+        const chips = card.querySelector(".battle-chips");
+        expect(within(chips).queryByText(/Singles Only|Doubles Only|Singles & Doubles/)).not.toBeInTheDocument();
+        expect(within(chips).getByText("Placeholder")).toBeInTheDocument();
+        expect(within(chips).getByText(/^Doubles Team:/)).toBeInTheDocument();
+        expect(within(chips).getByText("Lv. 5")).toBeInTheDocument();
+        expect(chips.querySelectorAll(".MuiChip-root")).toHaveLength(3);
+    });
+
     it("groups trainer chips before battle chips below the title in view mode", () =>
     {
         const spreads = createSpreads();
@@ -716,7 +762,7 @@ describe("Spread card", () =>
         const actionButtons = [...card.querySelectorAll(".spread-card-actions button")];
         expect(actionButtons.map((button) => button.getAttribute("aria-label"))).toEqual(["Spread Actions"]);
         await user.click(within(card).getByRole("button", { name: "Spread Actions" }));
-        expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Export to Showdown", "Overwrite From Showdown", "Delete"]);
+        expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Export to Showdown", "Overwrite From Showdown", "Overwrite From Smogon", "Delete"]);
         await user.click(screen.getByRole("menuitem", { name: "Delete" }));
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
         expect(actions.deleteSpread).toHaveBeenCalledWith("e2");
