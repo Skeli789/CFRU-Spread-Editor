@@ -7,7 +7,7 @@ description: "Use when changing MovePicker, MoveEditor, MoveChooserDialog, Choos
 
 ## Overview
 
-`MoveEditor` edits four move slots in the spread edit dialog. Each inline `MovePicker` offers learnable moves; the Choose Moves dialog edits all four slots against one searchable, sortable list of game moves. Changes flow through `onChange(slot, move, hiddenPowerType)` to `SpreadCard`, which calls `setMove` on the draft.
+`MoveEditor` edits four move slots in the spread edit dialog. Each inline `MovePicker` offers learnable moves; the Choose Moves dialog edits all four slots against one searchable, sortable list of game moves. Changes flow through `onChange(slot, move, hiddenPowerType)` to `SpreadCard`, which calls `setMove` on the draft. Drag reordering flows through `onReorder(moves)` to replace the draft's move array atomically.
 
 ## Files
 
@@ -22,6 +22,7 @@ description: "Use when changing MovePicker, MoveEditor, MoveChooserDialog, Choos
 
 ### Inline move fields
 
+- Each slot has a small right-side drag handle using the existing `@dnd-kit/react` provider, draggable and droppable hooks. Dropping inserts that move at the target slot and shifts intervening slots, including empty slots and duplicates. Reordering preserves IVs and other fields and does not advance field focus; canceled, missed and same-slot drops do nothing. Handles support the library's pointer, touch and keyboard sensors.
 - The four labeled `Move 1` through `Move 4` fields use MUI `Autocomplete` with `autoHighlight`: typing ranks names starting with the query before names merely containing it, and Enter selects the highlighted match. Known, complete learnsets limit suggestions to moves in `learnset.moves` or `learnset.unknown`; without a complete learnset, all game moves are offered.
 - `MoveEditor` forwards optional `onFieldCommit(event, label)` callbacks only for inline option selections. `EditSpreadDialog` advances to the next move, or from Move 4 to Item, using dialog-local `data-advance-field` targets. It consumes the commit event so Enter does not also submit a new spread. Typing, blur, clearing, cancellation, and Choose Moves selections do not trigger this callback.
 - The current move stays in the options even if the species cannot learn it. `getMoveLegality` treats absent or incomplete learnsets as unknown, not illegal; a move absent from a complete learnset is illegal. Illegal current moves and illegal options get red styling. Unknown move constants remain visible as their raw names and have undefined styling.
@@ -61,7 +62,7 @@ description: "Use when changing MovePicker, MoveEditor, MoveChooserDialog, Choos
 
 ## Tests
 
-- [MovePicker.test.jsx](../../../src/tests/MovePicker.test.jsx) covers move options and legality display, Hidden Power variants, search order, exclusion of Struggle, stat formatting, symbols and banners, slot editing and clearing, filters, sorting, Other Powers, status columns, selected highlights, keyboard navigation and Enter, pagination, and focus restoration. It also exercises the shared `ItemPicker` on a small fixture.
+- [MovePicker.test.jsx](../../../src/tests/MovePicker.test.jsx) covers move options and legality display, Hidden Power variants, search order, exclusion of Struggle, stat formatting, symbols and banners, slot editing and clearing, filters, sorting, Other Powers, status columns, selected highlights, keyboard navigation and Enter, pagination, and focus restoration. Reorder tests mock the drag provider/hooks to exercise forward/backward, empty/duplicate, canceled/missed/same-slot drops and the atomic card update preserving Hidden Power IVs. It also exercises the shared `ItemPicker` on a small fixture.
 - [SpreadCard.test.jsx](../../../src/tests/SpreadCard.test.jsx) covers inline Enter and click advancement across the four moves and through Item, Ability, Battle Type, optional Doubles Team Type, and Spread Set, including suppression of edit-dialog submission on committing Enter.
 - Run from the repository root: `$env:DEBUG_PRINT_LIMIT=0; yarn test src/tests/MovePicker.test.jsx --run`.
 

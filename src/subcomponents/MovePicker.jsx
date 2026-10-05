@@ -7,12 +7,15 @@
 import React, { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import
 {
-    Alert, Autocomplete, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, Stack,
+    Alert, Autocomplete, Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, Stack,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, TextField, Tooltip, Typography,
 } from "@mui/material";
 import ClearIcon from "@mui/icons-material/Clear";
 import TuneIcon from "@mui/icons-material/Tune";
+import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import { alpha } from "@mui/material/styles";
+import { DragDropProvider, useDraggable, useDroppable } from "@dnd-kit/react";
+import { closestCenter } from "@dnd-kit/collision";
 
 import { LEARNSET_COMPLETE, LEGALITY, POWER_KIND, alwaysHits, getMoveLegality, getPowerKind } from "../../shared/catalog.mjs";
 import { HIDDEN_POWER_TYPES, MOVE_HIDDEN_POWER, getHiddenPowerType } from "../../shared/pokemon-mechanics.mjs";
@@ -42,6 +45,7 @@ const KEY_DOWN = "ArrowDown";
 const KEY_UP = "ArrowUp";
 const KEY_END = "End";
 const KEY_HOME = "Home";
+const DRAG_MOVE = "moveSlot";
 const SELECTED_MOVE_COLORS = { light: "#8e44ad", dark: "#c58bf5" };
 const SELECTED_MOVE_OPACITY = 0.18;
 const SELECTED_MOVE_HOVER_OPACITY = 0.27;
@@ -877,6 +881,43 @@ const MovePicker = ({ catalog, fields, slot, onChange, onAdvanced, onFieldCommit
 };
 
 /**
+ * Adds a handle and drop target to an inline move slot.
+ *
+ * @param {object} props The component props.
+ * @param {number} props.slot The zero-based move slot.
+ * @param {React.ReactNode} props.children The move field.
+ * @returns {JSX.Element} The draggable slot.
+ */
+const DraggableMoveSlot = ({ slot, children }) =>
+{
+    const drag = useDraggable({ id: `${DRAG_MOVE}:${slot}`, type: DRAG_MOVE, data: { slot } });
+    const drop = useDroppable({ id: `drop:${slot}`, accept: DRAG_MOVE, data: { slot }, collisionDetector: closestCenter });
+    const { ref: dragRef } = drag;
+    const { ref: dropRef } = drop;
+    /**
+     * Registers the move field as both a drag source and drop target.
+     * @param {HTMLElement|null} element The slot wrapper.
+     */
+    const ref = useCallback((element) =>
+    {
+        dragRef(element);
+        dropRef(element);
+    }, [dragRef, dropRef]);
+
+    return (
+           <Box ref={ref} className={`draggable-move-slot${drag.isDragSource ? " is-dragging" : ""}${drop.isDropTarget ? " is-drop-target" : ""}`}
+               sx={{ "&.is-drop-target .MuiOutlinedInput-notchedOutline": { borderColor: "focus.main", borderWidth: 2 } }}>
+            <div className="draggable-move-field">{children}</div>
+            <Tooltip title={`Reorder Move ${slot + 1}`}>
+                <IconButton ref={drag.handleRef} size="small" className="move-drag-handle" aria-label={`Drag Move ${slot + 1}`}>
+                    <DragIndicatorIcon fontSize="small" />
+                </IconButton>
+            </Tooltip>
+        </Box>
+    );
+};
+
+/**
  * Represents the MoveEditor component: the four move slots and their Choose Moves dialog.
  *
  * @component
@@ -884,13 +925,30 @@ const MovePicker = ({ catalog, fields, slot, onChange, onAdvanced, onFieldCommit
  * @param {object} props.catalog - The game catalog.
  * @param {object} props.fields - The spread's values.
  * @param {Function} props.onChange - Called with the slot, the MOVE_* constant or null, and the Hidden Power type.
+ * @param {Function} props.onReorder Replaces the move array after a drag.
  * @param {Function} [props.onFieldCommit] Advances focus after an inline option selection.
  * @returns {JSX.Element} The move slots.
  */
-const MoveEditor = ({ catalog, fields, onChange, onFieldCommit }) =>
+const MoveEditor = ({ catalog, fields, onChange, onReorder, onFieldCommit }) =>
 {
     const [dialog, setDialog] = useState({ open: false, slot: 0 });
     const rootRef = useRef(null);
+
+    /**
+     * Moves a slot to its dropped position without changing move values or IVs.
+     * @param {object} event The completed drag operation.
+     */
+    const reorderMoves = (event) =>
+    {
+        const source = event.operation.source?.data?.slot;
+        const target = event.operation.target?.data?.slot;
+        if (event.canceled || source == null || target == null || source === target)
+            return;
+        const moves = Array.from({ length: MAX_MOVES }, (_, slot) => fields.moves[slot] ?? EMPTY_MOVE);
+        const [move] = moves.splice(source, 1);
+        moves.splice(target, 0, move);
+        onReorder?.(moves);
+    };
 
     /**
      * Clears a move when its inline input is emptied and committed.
@@ -905,6 +963,7 @@ const MoveEditor = ({ catalog, fields, onChange, onFieldCommit }) =>
     };
 
     return (
+        <DragDropProvider onDragEnd={reorderMoves}>
         <div ref={rootRef} className="move-editor">
             {Array.from({ length: MAX_MOVES }, (_, slot) =>
             {
@@ -917,7 +976,11 @@ const MoveEditor = ({ catalog, fields, onChange, onFieldCommit }) =>
                         <MovePicker catalog={catalog} fields={fields} slot={slot} onChange={onChange} onFieldCommit={onFieldCommit}
                                     onAdvanced={() => setDialog({ open: true, slot })} />
                     </div>;
-                return duplicate ? <Tooltip key={slot} title={DUPLICATE_MOVE_LABEL}>{field}</Tooltip> : <React.Fragment key={slot}>{field}</React.Fragment>;
+                return (
+                    <DraggableMoveSlot key={slot} slot={slot}>
+                        {duplicate ? <Tooltip title={DUPLICATE_MOVE_LABEL}>{field}</Tooltip> : field}
+                    </DraggableMoveSlot>
+                );
             })}
             <MoveChooserDialog
                 open={dialog.open}
@@ -929,6 +992,7 @@ const MoveEditor = ({ catalog, fields, onChange, onFieldCommit }) =>
                 onExited={() => rootRef.current?.querySelectorAll(".move-picker input")[dialog.slot]?.focus()}
             />
         </div>
+        </DragDropProvider>
     );
 };
 

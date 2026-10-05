@@ -1,19 +1,34 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { ThemeProvider } from "@mui/material/styles";
 
+import SpreadCard from "../components/SpreadCard";
+import { APP_THEME } from "../Theme";
 import ItemPicker, { getChooserItems, getItemTypeLabel } from "../subcomponents/ItemPicker";
 import { TypeIcon } from "../subcomponents/CatalogDisplay";
 import MoveEditor, { formatAccuracy, formatBoostedPower, formatPower, getChooserRows, getLearnableMoveOptions, getMoveOption } from "../subcomponents/MovePicker";
-import { createCatalog, createFields } from "./EditorFixtures";
+import { createCatalog, createFields, createSpreads } from "./EditorFixtures";
 import { LEGALITY, getMoveLegality } from "../../shared/catalog.mjs";
 
 const CATALOG = createCatalog();
 const NAME_SORT = { key: "name", direction: "asc" };
 const NO_FILTERS = { search: "", type: null, split: null, target: null, sort: NAME_SORT };
 const EXTRA_MOVE_COUNT = 150;
+const dragHandlers = vi.hoisted(() => ({ onDragEnd: null }));
+
+vi.mock("@dnd-kit/react", () => ({
+    DragDropProvider: ({ children, onDragEnd }) =>
+    {
+        dragHandlers.onDragEnd = onDragEnd;
+        return children;
+    },
+    useDraggable: () => ({ ref: vi.fn(), handleRef: vi.fn(), isDragSource: false }),
+    useDroppable: () => ({ ref: vi.fn(), isDropTarget: false }),
+}));
+
 const COSPLAY_SIGNATURES =
 [
     ["SPECIES_PIKACHU_LIBRE", "Pikachu Libre", "MOVE_FLYINGPRESS", "Flying Press"],
@@ -32,6 +47,77 @@ test("left-aligns wrapped move names in the chooser", () =>
     const rule = styles.match(/\.move-table-select\s*\{([^}]+)\}/)[1];
     expect(rule).toMatch(/text-align:\s*left\s*!important/);
     expect(rule).toMatch(/justify-content:\s*flex-start\s*!important/);
+});
+
+describe("Move slot reordering", () =>
+{
+    it("places each drag handle after its move field on the right", () =>
+    {
+        renderEditor();
+        for (let slot = 1; slot <= 4; slot++)
+        {
+            const handle = screen.getByRole("button", { name: `Drag Move ${slot}` });
+            const input = screen.getByRole("combobox", { name: `Move ${slot}` });
+            expect(handle.previousElementSibling).toContainElement(input);
+        }
+    });
+
+    it("applies a drag to the edit card in one update without changing Hidden Power IVs", () =>
+    {
+        const spreads = createSpreads();
+        const fields = createFields({ moves: ["MOVE_PROTECT", "MOVE_HIDDENPOWER", "MOVE_FLAMETHROWER", 0], atkIv: 30, defIv: 30 });
+        const updateSpread = vi.fn();
+        const props =
+        {
+            entry: spreads.entries[2], fields, set: spreads.sets[0], catalog: CATALOG, teamTypes: spreads.teamTypes,
+            preview: { level: 50 }, editing: true, changed: false, problems: [], actions: { updateSpread },
+        };
+        const { rerender } = render(<ThemeProvider theme={APP_THEME}><SpreadCard {...props} /></ThemeProvider>);
+        act(() => dragHandlers.onDragEnd({ operation: { source: { data: { slot: 1 } }, target: { data: { slot: 0 } } } }));
+
+        expect(updateSpread).toHaveBeenCalledTimes(1);
+        const updated = updateSpread.mock.calls[0][1](fields, fields);
+        expect(updated).toEqual({ ...fields, moves: ["MOVE_HIDDENPOWER", "MOVE_PROTECT", "MOVE_FLAMETHROWER", 0] });
+        rerender(<ThemeProvider theme={APP_THEME}><SpreadCard {...props} fields={updated} /></ThemeProvider>);
+        expect(screen.getByRole("combobox", { name: "Move 1" })).toHaveValue("Hidden Power [Ice]");
+        expect(screen.getByRole("combobox", { name: "Move 2" })).toHaveValue("Protect");
+        expect(screen.getByRole("combobox", { name: "Move 3" })).toHaveValue("Flamethrower");
+        expect(screen.getByRole("combobox", { name: "Move 4" })).toHaveValue("");
+    });
+
+    it.each([
+        { source: 0, target: 3, expected: [0, "MOVE_HIDDENPOWER", "MOVE_PROTECT", "MOVE_PROTECT"] },
+        { source: 3, target: 0, expected: ["MOVE_PROTECT", "MOVE_PROTECT", 0, "MOVE_HIDDENPOWER"] },
+    ])("moves slot $source to $target while preserving empty and duplicate moves", ({ source, target, expected }) =>
+    {
+        const fields = createFields({ moves: ["MOVE_PROTECT", 0, "MOVE_HIDDENPOWER", "MOVE_PROTECT"], atkIv: 30 });
+        const original = structuredClone(fields);
+        const onReorder = vi.fn();
+        const onChange = vi.fn();
+        const onFieldCommit = vi.fn();
+        render(<MoveEditor catalog={CATALOG} fields={fields} onChange={onChange} onReorder={onReorder} onFieldCommit={onFieldCommit} />);
+
+        for (let slot = 1; slot <= 4; slot++)
+            expect(screen.getByRole("button", { name: `Drag Move ${slot}` })).toBeEnabled();
+        dragHandlers.onDragEnd({ operation: { source: { data: { slot: source } }, target: { data: { slot: target } } } });
+
+        expect(onReorder).toHaveBeenCalledExactlyOnceWith(expected);
+        expect(onChange).not.toHaveBeenCalled();
+        expect(onFieldCommit).not.toHaveBeenCalled();
+        expect(fields).toEqual(original);
+    });
+
+    it.each([
+        { canceled: true, operation: { source: { data: { slot: 0 } }, target: { data: { slot: 2 } } } },
+        { operation: { source: { data: { slot: 0 } }, target: null } },
+        { operation: { source: { data: { slot: 0 } }, target: { data: { slot: 0 } } } },
+    ])("leaves moves unchanged for canceled, missed, or same-slot drops", (event) =>
+    {
+        const onReorder = vi.fn();
+        render(<MoveEditor catalog={CATALOG} fields={createFields()} onChange={vi.fn()} onReorder={onReorder} />);
+        dragHandlers.onDragEnd(event);
+        expect(onReorder).not.toHaveBeenCalled();
+    });
 });
 
 
