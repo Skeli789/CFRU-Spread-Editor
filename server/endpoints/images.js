@@ -5,6 +5,7 @@ const { StatusCode } = require('status-code-enum');
 const { resolveCloudImage } = require('../services/assets');
 const { getWorkspace } = require('../services/repositories');
 const { renderSprite } = require('../services/sprites');
+const { getTypeImageCache } = require('../services/type-images');
 
 const IMAGE_CACHE_CONTROL = 'private, max-age=3600';
 const PNG_CONTENT_TYPE = 'image/png';
@@ -30,6 +31,22 @@ router.get('/:workspaceId/sprites/:variant/:file', async (req, res) =>
 {
     const { workspaceId, variant, file } = req.params;
     const image = await renderSprite(getWorkspace(workspaceId), variant, file);
+    res.status(StatusCode.SuccessOK).set(IMAGE_HEADERS).type(PNG_CONTENT_TYPE).send(image);
+});
+
+/**
+ * Serves a cached type symbol or full banner without downloading on image requests.
+ * @route GET /api/images/:workspaceId/types/:variant/:file
+ * @param {string} req.params.workspaceId The workspace ID.
+ * @param {string} req.params.variant symbol or full.
+ * @param {string} req.params.file The lowercase type name with .png.
+ * @returns {File} 200 - The image
+ */
+router.get('/:workspaceId/types/:variant/:file', async (req, res) =>
+{
+    const { workspaceId, variant, file } = req.params;
+    getWorkspace(workspaceId);
+    const image = await getTypeImageCache().readImage(variant, file);
     res.status(StatusCode.SuccessOK).set(IMAGE_HEADERS).type(PNG_CONTENT_TYPE).send(image);
 });
 

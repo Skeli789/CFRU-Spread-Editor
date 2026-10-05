@@ -159,18 +159,18 @@ describe("Move options", () =>
 
     it("shows only a labeled type symbol, not the banner image", () =>
     {
-        const catalog = { ...CATALOG, types: { ...CATALOG.types, TYPE_FIRE: { name: "Fire", symbol: "/symbol.png", icon: "/banner.png" } } };
+        const catalog = { ...CATALOG, types: { ...CATALOG.types, TYPE_FIRE: { name: "Fire", symbol: "/api/images/workspace-1/types/symbol/fire.png", icon: "/api/images/workspace-1/types/full/fire.png" } } };
         render(<TypeIcon catalog={catalog} type="TYPE_FIRE" />);
         expect(screen.getByRole("img", { name: "Fire" })).toHaveClass("type-symbol");
-        expect(screen.getByRole("img", { name: "Fire" }).querySelector("img")).toHaveAttribute("src", expect.stringContaining("symbol.png"));
-        expect(screen.queryByRole("img", { name: "Fire" }).querySelector("img")).not.toHaveAttribute("src", expect.stringContaining("banner.png"));
+        expect(screen.getByRole("img", { name: "Fire" }).querySelector("img")).toHaveAttribute("src", expect.stringContaining("/api/images/workspace-1/types/symbol/fire.png"));
+        expect(screen.queryByRole("img", { name: "Fire" }).querySelector("img")).not.toHaveAttribute("src", expect.stringContaining("/types/full/"));
     });
 
     it("shows the full type banner when requested", () =>
     {
-        const catalog = { ...CATALOG, types: { ...CATALOG.types, TYPE_FIRE: { name: "Fire", symbol: "/symbol.png", icon: "/banner.png" } } };
+        const catalog = { ...CATALOG, types: { ...CATALOG.types, TYPE_FIRE: { name: "Fire", symbol: "/api/images/workspace-1/types/symbol/fire.png", icon: "/api/images/workspace-1/types/full/fire.png" } } };
         render(<TypeIcon catalog={catalog} type="TYPE_FIRE" full />);
-        expect(screen.getByRole("img", { name: "Fire" }).querySelector("img")).toHaveAttribute("src", expect.stringContaining("banner.png"));
+        expect(screen.getByRole("img", { name: "Fire" }).querySelector("img")).toHaveAttribute("src", expect.stringContaining("/api/images/workspace-1/types/full/fire.png"));
     });
 });
 

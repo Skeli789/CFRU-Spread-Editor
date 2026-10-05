@@ -573,9 +573,10 @@ function toPokeApiList(resource, entries)
  *
  * @param {object} [options] Stub options.
  * @param {boolean} [options.fail] Whether every request fails as if offline.
+ * @param {boolean} [options.images] Whether to serve synthetic PNG artwork.
  * @returns {Function & {calls: Array<string>}} The fetch replacement.
  */
-function createPokeApiFetch({ fail = false } = {})
+function createPokeApiFetch({ fail = false, images = false } = {})
 {
     const calls = [];
     const fetchResource = async (url) =>
@@ -583,6 +584,9 @@ function createPokeApiFetch({ fail = false } = {})
         calls.push(url);
         if (fail)
             throw new TypeError("fetch failed");
+
+        if (images && url.endsWith(".png"))
+            return { ok: true, status: 200, arrayBuffer: async () => createIndexedPng(NORMAL_PALETTE) };
 
         const body = url.includes("/type") ? toPokeApiList("type", POKEAPI_TYPES) : toPokeApiList("pokemon", POKEAPI_POKEMON);
         return { ok: true, status: 200, text: async () => body };

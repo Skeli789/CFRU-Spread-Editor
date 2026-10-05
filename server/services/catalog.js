@@ -9,7 +9,7 @@ const { StatusCode } = require("status-code-enum");
 
 const { LEARNSET_COMPLETE } = require("../../shared/catalog.mjs");
 const { ApiError } = require("../middleware/errors");
-const { getBallIcon, getGigantamaxIcon, getItemIcon, getSpeciesIcon, getSpeciesSprites, getTypeIcon, getTypeSymbol, readCloudImages } = require("./assets");
+const { getBallIcon, getGigantamaxIcon, getItemIcon, getSpeciesIcon, getSpeciesSprites, readCloudImages } = require("./assets");
 const { parseBattleMoves, parseItemTypes } = require("./data-parser");
 const { buildBattleForms, buildLearnsets, loadDpeData } = require("./learnsets");
 const { createParseCache, getParserVersion, hash, hashMacros } = require("./parse-cache");
@@ -18,6 +18,7 @@ const { evaluatePreprocessor } = require("./preprocessor");
 const { CFRU_CONFIG_FILE, REPOSITORY_CFRU, REPOSITORY_CLOUD, getRootKey, readOwnedFile } = require("./repositories");
 const { getDpeSpriteUrls, loadSpriteTables } = require("./sprites");
 const { PROGRESS_LABELS } = require("./progress");
+const { getTypeImageCache } = require("./type-images");
 
 const CFRU_MOVES_FILE = "src/Tables/battle_moves.c";
 const CFRU_ITEM_TABLES_FILE = "src/Tables/item_tables.c";
@@ -399,9 +400,10 @@ function findUnresolvedSymbols(spreadState, catalog)
  * @param {object} [options] Loader options.
  * @param {object} [options.cache] The parse cache.
  * @param {object} [options.pokeApi] The PokeAPI index loader.
+ * @param {object} [options.typeImages] The persistent type image cache.
  * @returns {{loadGameCatalog: Function}} The loader.
  */
-function createCatalogService({ cache = createParseCache(), pokeApi = createPokeApiIndex() } = {})
+function createCatalogService({ cache = createParseCache(), pokeApi = createPokeApiIndex(), typeImages = getTypeImageCache() } = {})
 {
     /**
      * Loads CFRU's move details, reusing the cached parse while the file and configuration are unchanged.
@@ -501,7 +503,14 @@ function createCatalogService({ cache = createParseCache(), pokeApi = createPoke
 
         // CFRU picks a random ball for this value, so it has no icon of its own
         balls[BALL_TYPE_RANDOM] = { name: BALL_TYPE_RANDOM_NAME, icon: null };
-        const types = Object.fromEntries(Object.entries(shared.typeNames).map(([type, name]) => [type, { name, icon: getTypeIcon(name, index), symbol: getTypeSymbol(name) }]));
+        const types = Object.fromEntries(await Promise.all(Object.entries(shared.typeNames).map(async ([type, name]) =>
+        {
+            const [icon, symbol] = await Promise.all([
+                typeImages.getUrl(workspace.id, name, index, "full"),
+                typeImages.getUrl(workspace.id, name, index, "symbol"),
+            ]);
+            return [type, { name, icon, symbol }];
+        })));
 
         // Learnsets and battle forms come from DPE, applied to this game's species
         const speciesInfo = Object.fromEntries(Object.entries(species).map(([symbol, { types: speciesTypes, dex }]) => [symbol, { types: speciesTypes, dex }]));

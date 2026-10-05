@@ -10,7 +10,7 @@ const path = require("path");
 const request = require("supertest");
 const { StatusCode } = require("status-code-enum");
 
-const { NORMAL_PALETTE, SHINY_PALETTE, createPokeApiFetch } = require("../helpers/catalog-fixtures");
+const { NORMAL_PALETTE, SHINY_PALETTE, createIndexedPng, createPokeApiFetch } = require("../helpers/catalog-fixtures");
 const { createFixtureRepositories } = require("../helpers/fixture-repositories");
 
 const ALLOWED_ORIGIN = "http://localhost:3000";
@@ -404,7 +404,7 @@ describe("Workspace API Endpoints", () =>
 
         beforeEach(async () =>
         {
-            globalThis.fetch = createPokeApiFetch();
+            globalThis.fetch = createPokeApiFetch({ images: true });
             workspaceId = (await post(app, token, "/api/workspaces/load", { paths: fixture.paths })).body.workspaceId;
         });
 
@@ -491,9 +491,41 @@ describe("Workspace API Endpoints", () =>
             expect(items.ITEM_NONE.icon).to.equal(null);
             expect(balls.BALL_TYPE_POKE_BALL).to.deep.equal({ name: "Poké Ball", icon: "https://raw.githubusercontent.com/msikma/pokesprite/master/items/ball/poke.png" });
             expect(balls.BALL_TYPE_RANDOM).to.deep.equal({ name: "Random", icon: null });
-            expect(types.TYPE_FIRE.icon).to.match(/sword-shield\/10\.png$/);
-            expect(types.TYPE_FIRE.symbol).to.match(/pokesprite.*types\/gen8\/fire\.png$/);
+            expect(types.TYPE_FIRE.icon).to.equal(`/api/images/${workspaceId}/types/full/fire.png`);
+            expect(types.TYPE_FIRE.symbol).to.equal(`/api/images/${workspaceId}/types/symbol/fire.png`);
             expect(assets.gigantamax).to.equal(`/api/images/${workspaceId}/root/gigantamax.png`);
+        });
+
+        it("should serve both cached type formats after restarting offline", async () =>
+        {
+            await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
+            app = startServer();
+            token = await getToken(app);
+            globalThis.fetch = createPokeApiFetch({ fail: true });
+            workspaceId = (await post(app, token, "/api/workspaces/load", { paths: fixture.paths })).body.workspaceId;
+            const res = await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
+            expect(res.status).to.equal(StatusCode.SuccessOK);
+            for (const url of [res.body.types.TYPE_FIRE.icon, res.body.types.TYPE_FIRE.symbol])
+            {
+                expect(url).to.match(/^\/api\/images\//);
+                const image = await request(app).get(url);
+                expect(image.status).to.equal(StatusCode.SuccessOK);
+                expect(image.headers["content-type"]).to.match(/^image\/png/);
+                expect(image.headers["cross-origin-resource-policy"]).to.equal("same-site");
+                expect(image.headers["x-content-type-options"]).to.equal("nosniff");
+                expect(image.body.equals(createIndexedPng(NORMAL_PALETTE))).to.equal(true);
+            }
+            expect(globalThis.fetch.calls).to.deep.equal([]);
+
+            const base = `/api/images/${workspaceId}/types`;
+            for (const url of [`${base}/other/fire.png`, `${base}/full/missing.png`, `${base}/symbol/..%2Ffire.png`, `${base}/full/fire.svg`])
+            {
+                const image = await request(app).get(url);
+                expect(image.status).to.equal(StatusCode.ClientErrorNotFound);
+                expect(image.body.error.code).to.equal("IMAGE_NOT_FOUND");
+            }
+            const missing = await request(app).get(`/api/images/${MISSING_WORKSPACE_ID}/types/full/fire.png`);
+            expect(missing.body.error.code).to.equal("WORKSPACE_NOT_FOUND");
         });
 
         it("should serve Cloud's images from the local repository without a session token", async () =>
@@ -622,11 +654,12 @@ describe("Workspace API Endpoints", () =>
         {
             const first = await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
             const cache = path.join(process.env[DATA_DIRECTORY_ENV], "cache");
-            expect(fs.readdirSync(cache)).to.include.members(["battle-moves", "dpe-data", "pokeapi-index.json"]);
+            expect(fs.readdirSync(cache)).to.include.members(["battle-moves", "dpe-data", "pokeapi-index.json", "type-images"]);
+            const firstFetchCount = globalThis.fetch.calls.length;
 
             const second = await post(app, token, `/api/workspaces/${workspaceId}/catalog`, { gameId: "cfru" });
             expect(second.body).to.deep.equal(first.body);
-            expect(globalThis.fetch.calls).to.have.length(2);
+            expect(globalThis.fetch.calls).to.have.length(firstFetchCount);
         });
 
         it("should reject games that are not available", async () =>

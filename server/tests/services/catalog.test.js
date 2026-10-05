@@ -25,6 +25,7 @@ const { evaluatePreprocessor } = require("../../services/preprocessor");
 const { getWorkspace, loadWorkspace } = require("../../services/repositories");
 const { createSourceInventory, isInventoryFile } = require("../../services/source-inventory");
 const { combineSpritePalette, loadSpriteTables, parseSpriteSources, renderSprite } = require("../../services/sprites");
+const { createTypeImageCache } = require("../../services/type-images");
 const { LEGALITY, POWER_KIND, alwaysHits, getMegaEvolutions, getMoveLegality, getPowerKind } = require("../../../shared/catalog.mjs");
 
 const TM_DIRECTORY = "src/tm_compatibility";
@@ -524,7 +525,8 @@ describe("Catalog form fixtures", () =>
                 }
             const workspace = getWorkspace((await loadWorkspace(fixture.paths)).workspaceId);
             const pokemon = { "squawkabilly-green-plumage": 931, "squawkabilly-blue-plumage": 10260, "squawkabilly-yellow-plumage": 10261, "squawkabilly-white-plumage": 10262 };
-            const service = createCatalogService({ pokeApi: { getIndex: async () => ({ pokemon, types: {} }) } });
+            const typeImages = createTypeImageCache({ directory: path.join(fixture.base, "type-images"), fetchResource: createPokeApiFetch({ images: true }) });
+            const service = createCatalogService({ pokeApi: { getIndex: async () => ({ pokemon, types: {} }) }, typeImages });
             const catalog = await service.loadGameCatalog(workspace, "cfru");
             expect(catalog.learnsets.SPECIES_PIKACHU_POP_STAR.moves).to.deep.include({ MOVE_FLEURCANNON: ["formChange"], MOVE_DRAININGKISS: ["formChange"] });
             expect(catalog.learnsets.SPECIES_PIKACHU.moves).to.not.have.property("MOVE_FLEURCANNON");
@@ -559,7 +561,7 @@ describe("Catalog form fixtures", () =>
                 }
             }
             expect(catalog.species.SPECIES_BULBASAUR.sprite.source).to.equal("dpe");
-            const offline = await createCatalogService({ pokeApi: { getIndex: async () => null } }).loadGameCatalog(workspace, "cfru");
+            const offline = await createCatalogService({ pokeApi: { getIndex: async () => null }, typeImages }).loadGameCatalog(workspace, "cfru");
             for (const target of SQUAWKABILLY_FORMS)
             {
                 expect(offline.species[target].sprite).to.include({ normal: catalog.species[target].sprite.normal, shiny: catalog.species[target].sprite.shiny, source: "dpe", exact: true });
@@ -813,6 +815,73 @@ describe("DPE sprites", () =>
         expect([...combined[2].data]).to.deep.equal([0]);
         expect(combined[3].data.equals(chunks(tiles).find((chunk) => chunk.type === "IDAT").data)).to.equal(true);
         expect(() => combineSpritePalette(Buffer.from("png"), tiles)).to.throw();
+    });
+});
+
+describe("Type image cache", () =>
+{
+    let directory;
+
+    beforeEach(() =>
+    {
+        directory = fs.mkdtempSync(path.join(os.tmpdir(), "cfru-editor-type-images-"));
+    });
+
+    afterEach(() =>
+    {
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
+
+    it("should persist both formats and serve them after an offline restart without an index", async () =>
+    {
+        const image = createIndexedPng(NORMAL_PALETTE);
+        const calls = [];
+        const fetchResource = async (url) =>
+        {
+            calls.push(url);
+            return { ok: true, arrayBuffer: async () => image };
+        };
+        const cache = createTypeImageCache({ directory, fetchResource });
+        const index = { types: { fire: 10 } };
+        for (const variant of ["symbol", "full"])
+            expect(await cache.getUrl("first", "Fire", index, variant)).to.equal(`/api/images/first/types/${variant}/fire.png`);
+        expect(calls).to.deep.equal([getTypeSymbol("Fire"), getTypeIcon("Fire", index)]);
+
+        const offline = createTypeImageCache({ directory, fetchResource: async () => { throw new Error("Offline"); } });
+        for (const variant of ["symbol", "full"])
+        {
+            expect(await offline.getUrl("second", "Fire", null, variant)).to.equal(`/api/images/second/types/${variant}/fire.png`);
+            expect((await offline.readImage(variant, "fire.png")).equals(image)).to.equal(true);
+        }
+    });
+
+    it("should deduplicate downloads and tolerate unavailable or invalid images", async () =>
+    {
+        let calls = 0;
+        const cache = createTypeImageCache({ directory, fetchResource: async () =>
+        {
+            calls++;
+            return { ok: true, arrayBuffer: async () => Buffer.from("not a PNG") };
+        } });
+        const urls = await Promise.all([cache.getUrl("first", "Fire", null, "symbol"), cache.getUrl("second", "Fire", null, "symbol")]);
+        expect(urls).to.deep.equal([getTypeSymbol("Fire"), getTypeSymbol("Fire")]);
+        expect(await cache.getUrl("first", "Fire", null, "symbol")).to.equal(getTypeSymbol("Fire"));
+        expect(calls).to.equal(1);
+        expect(fs.readdirSync(directory)).to.deep.equal([]);
+        const offline = createTypeImageCache({ directory, fetchResource: async () => { throw new Error("Offline"); } });
+        expect(await offline.getUrl("first", "Fire", null, "full")).to.equal(getTypeIcon("Fire", null));
+    });
+
+    it("should reject unknown variants and paths outside the cache", async () =>
+    {
+        const cache = createTypeImageCache({ directory });
+        for (const [variant, file] of [["other", "fire.png"], ["symbol", "../fire.png"], ["full", "fire.svg"], ["symbol", "missing.png"]])
+        {
+            let error;
+            try { await cache.readImage(variant, file); }
+            catch (caught) { error = caught; }
+            expect(error?.code).to.equal("IMAGE_NOT_FOUND");
+        }
     });
 });
 
