@@ -18,10 +18,12 @@ const
     forgetWorkspace, getWorkspace, loadWorkspace, readOwnedBuffer,
 } = require("./repositories");
 const { createSourceInventory, isInventoryFile, listArchiveSources } = require("./source-inventory");
-const { loadSpreads } = require("./spread-store");
+const { loadSpreads, prepareSpreadFiles } = require("./spread-store");
 const { PROGRESS_LABELS } = require("./progress");
+const { recordSpreadExport, readSpreadExport, previewSpreadMerge, getEditorContext, normalizeSpreadExportName } = require("./spread-exchange");
 
 const ARCHIVE_FILENAME = "spread-editor-reqs.zip";
+const SPREAD_ARCHIVE_FILENAME = "spread-files.zip";
 const ARCHIVE_CONTENT_TYPE = "application/zip";
 const ARCHIVE_FORMAT = "cfru-spread-editor";
 const ARCHIVE_VERSION = 1;
@@ -46,11 +48,20 @@ const UNIX_FILE_TYPE = 0o100000;
 const UNIX_DIRECTORY_TYPE = 0o040000;
 const INVALID_ARCHIVE = "ARCHIVE_INVALID";
 const VALIDATION_YIELD_INTERVAL = 32;
+const ZIP_PROGRESS_START = 20;
+const ZIP_PROGRESS_END = 40;
+const SMART_VALIDATION_END = 25;
+const SMART_BASELINE_END = 30;
+const OVERWRITE_VALIDATION_END = 45;
+const PREVIEW_READY_PERCENTAGE = 99;
+const SPREAD_ARCHIVE_DIRECTORIES = new Set(["cfru/", "cfru/src/", "cfru/src/Tables/", "src/", "src/Tables/"]);
 const RESERVED_COMPONENT = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 module.exports.ARCHIVE_FILENAME = ARCHIVE_FILENAME;
+module.exports.SPREAD_ARCHIVE_FILENAME = SPREAD_ARCHIVE_FILENAME;
 module.exports.ARCHIVE_CONTENT_TYPE = ARCHIVE_CONTENT_TYPE;
 module.exports.MAX_COMPRESSED_BYTES = MAX_COMPRESSED_BYTES;
 module.exports.ARCHIVE_LIMITS = { entries: MAX_ENTRIES, fileBytes: MAX_FILE_BYTES, expandedBytes: MAX_EXPANDED_BYTES, compressedBytes: MAX_COMPRESSED_BYTES };
+
 
 /**
  * Lets HTTP polling run between batches of completed ZIP work.
@@ -61,6 +72,20 @@ function yieldProgress()
     return new Promise((resolve) => setImmediate(resolve));
 }
 
+/**
+ * Maps validation progress from the ZIP range into another range.
+ * @param {Function} onProgress Receives the scaled progress.
+ * @param {number} start The scaled range start.
+ * @param {number} end The scaled range end.
+ * @param {string} [label] A label that replaces the validation label.
+ * @returns {Function} A progress reporter for ZIP validation.
+ */
+function scaleProgress(onProgress, start, end, label)
+{
+    return ({ percentage, label: validationLabel }) => onProgress({
+        percentage: Math.floor(start + (end - start) * (percentage - ZIP_PROGRESS_START) / (ZIP_PROGRESS_END - ZIP_PROGRESS_START)),
+        label: label ?? validationLabel });
+}
 
 /**
  * Raises a stable archive validation error without exposing source-machine paths.
@@ -211,9 +236,10 @@ function readEntry(entry)
  *
  * @param {Buffer} buffer The uploaded archive.
  * @param {Function} [onProgress] Reports completed validation work.
- * @returns {Promise<{entries: Array<object>, manifest: object}>} Validated entries and manifest.
+ * @param {boolean} [spreadsOnly] Whether to accept only supported spread headers without a manifest.
+ * @returns {Promise<{entries: Array<object>, manifest: object}|{files: Map<string, Buffer>}>} Validated entries and manifest, or spread file bytes keyed by repository path.
  */
-async function validateArchive(buffer, onProgress)
+async function validateArchive(buffer, onProgress, spreadsOnly = false)
 {
     try
     {
@@ -251,6 +277,30 @@ async function validateArchive(buffer, onProgress)
                 onProgress?.({ percentage: Math.floor(25 + 5 * checkedPaths / count), label: PROGRESS_LABELS.paths });
                 await yieldProgress();
             }
+        }
+
+        // Accept only known spread headers and their parent directories
+        if (spreadsOnly)
+        {
+            const files = new Map();
+            for (const entry of entries)
+            {
+                if (entry.isDirectory)
+                {
+                    if (!SPREAD_ARCHIVE_DIRECTORIES.has(entry.entryName))
+                        rejectArchive("The ZIP must contain only CFRU spread files.");
+                    continue;
+                }
+                const file = CFRU_SPREAD_FILES.find((candidate) => [candidate, `cfru/${candidate}`, path.posix.basename(candidate)].includes(entry.entryName));
+                if (!file || files.has(file))
+                    rejectArchive("The ZIP contains an unknown or duplicate spread file.");
+                files.set(file, readEntry(entry));
+                onProgress?.({ percentage: Math.floor(30 + 10 * files.size / count), label: PROGRESS_LABELS.validation });
+                await yieldProgress();
+            }
+            if (files.size === 0)
+                rejectArchive("The ZIP contains no spread files.");
+            return { files };
         }
 
         const manifestEntry = entries.find((entry) => entry.entryName === MANIFEST_FILE);
@@ -294,15 +344,20 @@ async function validateArchive(buffer, onProgress)
  * @param {object} workspace The loaded workspace.
  * @param {string} [gameId] The selected game, not a filter on exported games.
  * @param {Function} [onProgress] Receives {percentage, label}; 100 is reserved for route success.
+ * @param {boolean} [spreadsOnly] Whether to omit all non-spread sources and the manifest.
+ * @param {string} [exportName] An optional retained baseline display name.
  * @returns {Promise<Buffer>} A ZIP archive containing exact source bytes.
  */
-async function exportArchive(workspace, gameId, onProgress)
+async function exportArchive(workspace, gameId, onProgress, spreadsOnly = false, exportName)
 {
+    const baselineName = spreadsOnly ? normalizeSpreadExportName(exportName) : undefined;
     if (gameId !== undefined && (typeof gameId !== "string" || gameId.length > 256 || !workspace.games.has(gameId)))
         throw new ApiError(StatusCode.ClientErrorNotFound, "GAME_NOT_FOUND", "This game is not available in the loaded workspace.");
 
     onProgress?.({ percentage: 0, label: PROGRESS_LABELS.listing });
-    const inventory = await listArchiveSources(workspace);
+    const inventory = spreadsOnly
+        ? { files: new Set(CFRU_SPREAD_FILES.map((file) => `cfru/${file}`)), directories: new Set() }
+        : await listArchiveSources(workspace);
     onProgress?.({ percentage: 5, label: PROGRESS_LABELS.reading });
     const required = new Set(REPOSITORY_KINDS.flatMap((kind) => REPOSITORY_SENTINELS[kind]
         .filter((entry) => entry.type === "file" && !(kind === "cfru" && CFRU_SPREAD_FILES.includes(entry.path)))
@@ -315,7 +370,8 @@ async function exportArchive(workspace, gameId, onProgress)
 
     const zip = new AdmZip();
     const manifest = Buffer.from(JSON.stringify({ format: ARCHIVE_FORMAT, version: ARCHIVE_VERSION, ...(gameId !== undefined ? { gameId } : {}) }));
-    zip.addFile(MANIFEST_FILE, manifest);
+    if (!spreadsOnly)
+        zip.addFile(MANIFEST_FILE, manifest);
     for (const directory of inventory.directories)
     {
         validateEntryPath(`${directory}/`, true);
@@ -354,7 +410,7 @@ async function exportArchive(workspace, gameId, onProgress)
         expanded += bytes.length;
         if (bytes.length > MAX_FILE_BYTES || expanded > MAX_EXPANDED_BYTES || zip.getEntryCount() >= MAX_ENTRIES)
             rejectArchive("The sources exceed the archive size or entry limits.");
-        zip.addFile(name, bytes);
+        zip.addFile(spreadsOnly ? path.posix.basename(name) : name, bytes);
         completedFiles++;
         onProgress?.({ percentage: Math.floor(5 + 40 * completedFiles / files.length), label: PROGRESS_LABELS.reading });
     }
@@ -383,9 +439,42 @@ async function exportArchive(workspace, gameId, onProgress)
     });
     if (bytes.length > MAX_COMPRESSED_BYTES)
         rejectArchive("The sources exceed the compressed archive size limit.");
+    if (spreadsOnly)
+        await recordSpreadExport(workspace, bytes, baselineName);
     return bytes;
 }
 module.exports.exportArchive = exportArchive;
+
+/**
+ * Validates a spread-only ZIP and returns staged operations or a smart-import preview without writing CFRU files.
+ * @param {object} workspace The loaded destination workspace.
+ * @param {Buffer} buffer The uploaded ZIP.
+ * @param {string} revision The destination snapshot revision.
+ * @param {Function} [onProgress] Reports validation and completion work.
+ * @param {string} [baselineId] A selected retained export for a write-free smart preview.
+ * @param {string} [currentId] A server-issued effective editor snapshot ID.
+ * @returns {Promise<object>} Staged operations or a smart-import preview.
+ */
+async function importSpreadFiles(workspace, buffer, revision, onProgress, baselineId, currentId)
+{
+    // Validate the uploaded ZIP, scaling progress into the smart range when previewing
+    const smart = baselineId !== undefined;
+    const { files } = await validateArchive(buffer, smart && onProgress
+        ? scaleProgress(onProgress, ZIP_PROGRESS_START, SMART_VALIDATION_END) : onProgress, true);
+    onProgress?.({ percentage: smart ? SMART_VALIDATION_END : OVERWRITE_VALIDATION_END, label: PROGRESS_LABELS.spreads });
+    // Smart import: validate the retained baseline and build a write-free preview
+    if (smart)
+    {
+        const baseline = await validateArchive(await readSpreadExport(workspace, baselineId), onProgress
+            ? scaleProgress(onProgress, SMART_VALIDATION_END, SMART_BASELINE_END, PROGRESS_LABELS.exportBaseline) : undefined, true);
+        return previewSpreadMerge(workspace, baseline.files, files, revision, onProgress, currentId);
+    }
+    // Overwrite import: stage the uploaded files as editor operations
+    const result = await prepareSpreadFiles(workspace, files, revision, currentId ? getEditorContext(workspace, currentId, revision) : undefined);
+    onProgress?.({ percentage: PREVIEW_READY_PERCENTAGE, label: PROGRESS_LABELS.spreads });
+    return result;
+}
+module.exports.importSpreadFiles = importSpreadFiles;
 
 /**
  * Imports into a fresh server-owned UUID directory and returns a normal loaded snapshot.

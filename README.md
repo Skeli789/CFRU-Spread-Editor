@@ -64,6 +64,10 @@ On **Connect Repositories**, choose **Upload ZIP** instead of entering repositor
 
 **Save Changes** writes to the cached copy, not the original ZIP or checkout. Download the ZIP again to transfer saved changes.
 
+### Exchange Spread Files
+
+Use **Export Spread Files** in the game menu to share your saved spread files as a ZIP, optionally giving the export a name. When they come back, choose **Import Spread Files**, select **Smart Import**, search for the original **Export**, then handle any conflicts if present. **Full Overwrite** is also available.
+
 ## Using the Editor
 
 - Use the filters to find the spreads you want to change.

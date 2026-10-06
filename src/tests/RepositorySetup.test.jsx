@@ -7,6 +7,7 @@ import { vi } from "vitest";
 
 import App from "../App";
 import { DiagnosticList } from "../components/RepositorySetup";
+import { formatExportDate } from "../components/SpreadFileImportDialog";
 import { SETTINGS_STORAGE_KEY, SETTINGS_VERSION, SpreadEditorProvider, useSpreadEditor } from "../SpreadEditorState";
 import OperationProgress from "../subcomponents/OperationProgress";
 import { APP_THEME } from "../Theme";
@@ -152,7 +153,7 @@ describe("Tracked repository and archive progress", () =>
     beforeEach(() =>
     {
         localStorage.clear();
-        axios.post.mockReset();
+        vi.spyOn(axios, "post").mockReset();
         vi.useFakeTimers();
     });
 
@@ -400,7 +401,7 @@ describe("Repository setup", () =>
     beforeEach(() =>
     {
         localStorage.clear();
-        axios.post.mockReset();
+        vi.spyOn(axios, "post").mockReset();
     });
 
     afterEach(() =>
@@ -584,6 +585,611 @@ describe("Repository setup", () =>
         expect(download.anchor.isConnected).toBe(false);
         expect(download.revoke).toHaveBeenCalledWith("blob:archive");
         expect(screen.getByText(/ZIP contains saved source files, not unsaved drafts/)).toBeInTheDocument();
+    });
+
+    test("places spread file actions beneath required files and exports the spread-only ZIP", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const download = mockDownload();
+        const calls = mockServer({ "/workspaces/workspace-1/spread-files/export": () => new Blob(["SPREAD ZIP"]) });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        const labels = screen.getAllByRole("menuitem").map((item) => item.textContent);
+        expect(labels.slice(labels.indexOf(DOWNLOAD_LABEL), labels.indexOf(DOWNLOAD_LABEL) + 3))
+            .toEqual([DOWNLOAD_LABEL, "Export Spread Files", "Import Spread Files"]);
+        await user.click(screen.getByRole("menuitem", { name: "Export Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Export Spread Files" });
+        expect(download.create).not.toHaveBeenCalled();
+        await user.type(within(dialog).getByRole("textbox", { name: "Export Name" }), "  October Collaboration  ");
+        await user.click(within(dialog).getByRole("button", { name: "Export", exact: true }));
+        await waitFor(() => expect(download.create).toHaveBeenCalledOnce());
+        expect(download.anchor.download).toBe("spread-files.zip");
+        expect(within(dialog).getByText("The ZIP contains your saved CFRU spread files.")).toBeInTheDocument();
+        expect(within(dialog).queryByText(/local cached copy/)).not.toBeInTheDocument();
+        expect(calls.find((call) => call.route.endsWith("/spread-files/export")).options.responseType).toBe("blob");
+        expect(calls.find((call) => call.route.endsWith("/spread-files/export")).body.name).toBe("October Collaboration");
+    });
+
+    test("keeps the export name when retrying a failed spread download", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const download = mockDownload();
+        let attempts = 0;
+        const calls = mockServer({ "/workspaces/workspace-1/spread-files/export": () =>
+        {
+            if (++attempts === 1)
+                throw apiError(503, "EXPORT_FAILED", "Could not prepare this export.");
+            return new Blob(["SPREAD ZIP"]);
+        } });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Export Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Export Spread Files" });
+        await user.type(within(dialog).getByRole("textbox", { name: "Export Name" }), "Partner Review");
+        await user.click(within(dialog).getByRole("button", { name: "Export", exact: true }));
+        expect(await within(dialog).findByText("Could not prepare this export.")).toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+        await waitFor(() => expect(download.create).toHaveBeenCalledOnce());
+        expect(calls.filter((call) => call.route.endsWith("/spread-files/export")).map((call) => call.body.name))
+            .toEqual(["Partner Review", "Partner Review"]);
+    });
+
+    test("confirms spread-file overwrite, uploads a ZIP, and refreshes the editor", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const spreads = createSpreads("imported-revision");
+        spreads.entries[0].fields.atkIv = 7;
+        const calls = mockServer({ "/workspaces/workspace-1/spread-files/import": () => ({ revision: createSpreads().revision,
+            operations: [{ type: "update", entryId: spreads.entries[0].id, fields: { atkIv: 7 } }], files: [], backupId: null }) });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        expect(within(dialog).getByText(/Files are not written until Save Changes/)).toBeInTheDocument();
+        const confirm = within(dialog).getByRole("button", { name: "Import And Overwrite" });
+        expect(confirm).toHaveClass("MuiButton-outlined");
+        expect(confirm).toBeDisabled();
+        const file = new File(["ZIP"], "spreads.zip", { type: "application/zip" });
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), file);
+        expect(calls.some((call) => call.route.endsWith("/spread-files/import"))).toBe(false);
+        await user.click(confirm);
+        expect(await within(dialog).findByText("Changes imported as unsaved edits.")).toBeInTheDocument();
+        expect(calls.some((call) => call.route.endsWith("/save"))).toBe(false);
+        const request = calls.find((call) => call.route.endsWith("/spread-files/import"));
+        expect(request.body).toBe(file);
+        expect(request.options.headers["Content-Type"]).toBe("application/zip");
+        expect(request.params.revision).toBe(createSpreads().revision);
+        await user.click(within(dialog).getByRole("button", { name: "Close" }));
+        const card = (await screen.findAllByRole("article", { name: "Charizard spread" }))[0];
+        expect(screen.getByRole("button", { name: /^Save Changes/ })).toBeEnabled();
+        await user.click(within(card).getByRole("heading", { name: "Charizard" }));
+        const edit = await screen.findByRole("dialog", { name: "Edit Charizard" });
+        expect(within(edit).getByLabelText("Charizard Attack IV")).toHaveValue("7");
+    });
+
+    test("stages full-overwrite additions and reorders without movement metadata or saving", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const spreads = createSpreads();
+        const set = spreads.sets[0];
+        const entry = spreads.entries.find((entry) => entry.id === set.entryIds[0]);
+        const tempId = "new-full-import";
+        const order = [tempId, ...set.entryIds.slice(1), entry.id];
+        const operations = [
+            { type: "update", entryId: entry.id, fields: { atkIv: 7 } },
+            { type: "add", tempId, setId: set.id, fields: { ...entry.fields, atkIv: 9 } },
+            { type: "reorder", setId: set.id, order },
+        ];
+        const calls = mockServer({ "/workspaces/workspace-1/spread-files/import": () => ({ revision: spreads.revision,
+            operations, files: [], backupId: null }) });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        let dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "full-import.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Import And Overwrite" }));
+        dialog = await screen.findByRole("dialog", { name: "Import Results" });
+        expect(within(dialog).getByText("Changes imported as unsaved edits.")).toBeInTheDocument();
+        const stored = JSON.parse(localStorage.getItem("cfruSpreadEditor.unsavedChanges"));
+        expect(stored.orders[set.id]).toEqual(order);
+        expect(stored.drafts[entry.id].atkIv).toBe(7);
+        expect(stored.newEntries[tempId].fields.atkIv).toBe(9);
+        expect(calls.some((call) => call.route.endsWith("/save"))).toBe(false);
+        await user.click(within(dialog).getByRole("button", { name: "Close", exact: true }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        const newIndicator = screen.getByRole("img", { name: "New Spread" });
+        const newCard = newIndicator.closest("article");
+        expect(newCard).not.toHaveAttribute("data-highlighted-fields");
+        expect(newCard.querySelector("[data-highlighted-field]")).toBeNull();
+        expect(screen.getByRole("button", { name: /^Save Changes/ })).toBeEnabled();
+    });
+
+    test("formats export dates as YYYY/MM/DD with local 12-hour time and AM or PM", () =>
+    {
+        expect(formatExportDate(new Date(2026, 9, 5, 21, 42, 17).toISOString())).toBe("2026/10/05 09:42:17 PM");
+        expect(formatExportDate(new Date(2026, 9, 5, 0, 5, 0).toISOString())).toBe("2026/10/05 12:05:00 AM");
+        expect(formatExportDate(new Date(2026, 9, 5, 12, 5, 0).toISOString())).toBe("2026/10/05 12:05:00 PM");
+    });
+
+    test("shows loading stages with determinate percentages", () =>
+    {
+        render(<OperationProgress progress={{ percentage: 54, label: "Comparing Whole Spreads..." }} />);
+        expect(screen.getByRole("status")).toHaveTextContent("Comparing Whole Spreads... 54%");
+        expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "54");
+    });
+
+    test("displays the reported comparison percentage while the ZIP is loading", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        let finishImport;
+        mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [{ id: "baseline", exportedAt: "2026-10-05T10:30:00.000Z" }] }),
+            "/workspaces/workspace-1/spread-files/import": () => new Promise((resolve) => { finishImport = resolve; }),
+            "/progress/:id": () => ({ percentage: 63, label: "Comparing Whole Spreads...", status: "running" }),
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "returned.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        expect(await within(dialog).findByText("Comparing Whole Spreads... 63%")).toBeInTheDocument();
+        expect(within(dialog).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "63");
+        await act(async () => finishImport({ previewId: "progress-preview", changes: [], conflicts: [] }));
+        await screen.findByRole("dialog", { name: "Import Results" });
+    });
+
+    test("selects a dated baseline, previews smart changes, and imports explicit conflict choices", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const baselineId = "export-baseline-1";
+        const conflictId = "spread:0";
+        const version = { fields: createSpreads().entries[0].fields,
+            set: { name: "gFrontierSpreads", file: "src/Tables/battle_tower_spreads.h", littleCup: false }, diagnostics: [], line: 1 };
+        const preview = { previewId: "merge-preview-1", changedFiles: ["src/Tables/battle_tower_spreads.h"],
+            changes: [],
+            conflicts: [{ id: conflictId, file: version.set.file, setName: version.set.name, label: "SPECIES_CHARIZARD / gFrontierSpreads",
+                operations: [{ type: "update", entryId: createSpreads().entries[0].id, fields: { atkIv: 7 } }],
+                spreads: { original: [version], current: [{ ...version, fields: { ...version.fields, atkIv: 0 } }],
+                    incoming: [{ ...version, fields: { ...version.fields, atkIv: 7 } }] } }] };
+        const calls = mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [
+                { id: "newer-export", exportedAt: "2026-10-05T12:30:00.000Z" },
+                { id: baselineId, exportedAt: "2026-10-05T10:30:00.000Z" },
+            ] }),
+            "/workspaces/workspace-1/spread-files/import": () => preview,
+            "/workspaces/workspace-1/spread-files/merge": () => ({ revision: createSpreads().revision,
+                operations: [{ type: "update", entryId: createSpreads().entries[0].id, fields: { atkIv: 7 } }],
+                acceptedCount: 1, rejectedCount: 0, files: [{ path: version.set.file, status: "staged" }], backupId: null }),
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Export" })).toBeEnabled());
+        expect(within(dialog).getByRole("button", { name: "Smart Import" })).toHaveAttribute("aria-pressed", "true");
+        await user.clear(within(dialog).getByRole("combobox", { name: "Export" }));
+        await user.click(within(dialog).getByRole("combobox", { name: "Export" }));
+        await user.click(await screen.findByRole("option", { name: formatExportDate("2026-10-05T10:30:00.000Z") }));
+        const file = new File(["ZIP"], "returned-spreads.zip");
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), file);
+        expect(within(dialog).getByRole("button", { name: file.name })).toHaveClass("MuiButton-colorFocus");
+        expect(within(dialog).queryByRole("button", { name: "Choose ZIP" })).not.toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Preview Changes" })).toHaveClass("MuiButton-colorFocus");
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        expect(await within(dialog).findByText("1 conflict.")).toBeInTheDocument();
+        expect(screen.getByRole("dialog", { name: "Review Spread Changes" })).toBeInTheDocument();
+        expect(within(dialog).getAllByRole("article", { name: "Charizard spread" })).toHaveLength(3);
+        expect(within(dialog).queryByRole("combobox", { name: "Export" })).not.toBeInTheDocument();
+        expect(calls.find((call) => call.route.endsWith("/spread-files/import")).params.baselineId).toBe(baselineId);
+        expect(calls.some((call) => call.route.endsWith("/spread-files/merge"))).toBe(false);
+        expect(within(dialog).queryByRole("button", { name: "Import Changes" })).not.toBeInTheDocument();
+        const cards = within(dialog).getAllByRole("article", { name: "Charizard spread" });
+        expect(cards[1]).toHaveAttribute("data-highlighted-fields", "atkIv");
+        expect(cards[2]).toHaveAttribute("data-highlighted-fields", "atkIv");
+        expect(cards[1].querySelector('[data-highlighted-field="atkIv"]')).not.toBeNull();
+        expect(cards[2].querySelector('[data-highlighted-field="atkIv"]')).not.toBeNull();
+        expect(within(cards[1].parentElement).getByRole("button", { name: "Keep Current" })).toBeInTheDocument();
+        expect(within(cards[2].parentElement).getByRole("button", { name: "Keep Incoming" })).toBeInTheDocument();
+        expect(within(dialog).queryByRole("tab")).not.toBeInTheDocument();
+        expect(within(dialog).getByRole("heading", { name: "Original", level: 4 })).toHaveStyle({ fontWeight: 700 });
+        await user.click(within(dialog).getByRole("button", { name: "Keep Incoming" }));
+        expect(await within(dialog).findByText("Changes imported as unsaved edits.")).toBeInTheDocument();
+        expect(screen.getByRole("dialog", { name: "Import Results" })).toBeInTheDocument();
+        expect(within(dialog).getByText(/1 accepted; 0 rejected/)).toBeInTheDocument();
+        expect(calls.some((call) => call.route.endsWith("/save"))).toBe(false);
+        expect(calls.some((call) => call.route.endsWith("/spread-files/merge"))).toBe(false);
+        await user.click(within(dialog).getByRole("button", { name: "Back" }));
+        expect(screen.getByRole("dialog", { name: "Import Spread Files" })).toBeInTheDocument();
+        expect(within(dialog).getByText(file.name)).toBeInTheDocument();
+    });
+
+    test("searches named exports and selects the first matching baseline with Enter", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const calls = mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [
+                { id: "newest", name: "Raid Review", exportedAt: "2026-10-06T10:30:00.000Z" },
+                { id: "round-first", name: "Round One", exportedAt: "2026-10-05T10:30:00.000Z" },
+                { id: "round-second", name: "Round One", exportedAt: "2026-10-04T10:30:00.000Z" },
+            ] }),
+            "/workspaces/workspace-1/spread-files/import": () => ({ previewId: "named-preview", changes: [], conflicts: [] }),
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        const input = within(dialog).getByRole("combobox", { name: "Export" });
+        await waitFor(() => expect(input).toHaveValue("Raid Review"));
+        await user.clear(input);
+        await user.type(input, "Round One");
+        const options = await screen.findAllByRole("option");
+        expect(options).toHaveLength(2);
+        expect(within(options[0]).getByText(formatExportDate("2026-10-05T10:30:00.000Z"))).toBeInTheDocument();
+        expect(within(options[1]).getByText(formatExportDate("2026-10-04T10:30:00.000Z"))).toBeInTheDocument();
+        await user.keyboard("{Enter}");
+        expect(input).toHaveValue("Round One");
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "returned.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        await screen.findByRole("dialog", { name: "Import Results" });
+        expect(calls.find((call) => call.route.endsWith("/spread-files/import")).params.baselineId).toBe("round-first");
+    });
+
+    test("groups paginated conflict triples by spread set without tabs or accordions", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const spreads = createSpreads();
+        const regular = spreads.sets.find((set) => set.name === "gFrontierSpreads");
+        const special = spreads.sets.find((set) => set.name.includes("Palmer"));
+        const version = { fields: spreads.entries[0].fields, diagnostics: [], line: 1, set: regular };
+        const changes = Array.from({ length: 7 }, (_, index) => ({ file: regular.file, setName: regular.name, label: `Change ${index}`,
+            spreads: { original: [version], current: [], incoming: [{ ...version, fields: { ...version.fields, atkIv: index } }] } }));
+        changes.unshift({ file: special.file, setName: special.name, label: "Special change",
+            spreads: { original: [{ ...version, set: special }], current: [], incoming: [{ ...version, set: special }] } });
+        mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [{ id: "baseline", exportedAt: "2026-10-05T10:30:00.000Z" }] }),
+            "/workspaces/workspace-1/spread-files/import": () => ({ previewId: "pagination-preview", changes: [], conflicts: changes, changedFiles: [regular.file, special.file] }),
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Export" })).toBeEnabled());
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "changes.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        expect(await within(dialog).findByText("8 conflicts.")).toBeInTheDocument();
+        expect(within(dialog).getAllByRole("article", { name: "Charizard spread" })).toHaveLength(12);
+        expect(within(dialog).getByRole("heading", { name: "Frontier Spreads" })).toBeInTheDocument();
+        expect(dialog.querySelectorAll(".MuiAccordion-root")).toHaveLength(0);
+        expect([...dialog.querySelectorAll(".spread-import-comparison-row")].every((row) => row.dataset.columns === "3")).toBe(true);
+        expect(within(dialog).queryByRole("tab")).not.toBeInTheDocument();
+        const pagination = within(dialog).getByRole("navigation", { name: "Spread Comparison Pagination" });
+        await user.click(within(pagination).getByRole("button", { name: "Go to page 2" }));
+        expect(within(dialog).getAllByRole("article", { name: "Charizard spread" })).toHaveLength(4);
+        expect(within(dialog).getAllByRole("heading", { level: 3 }).filter((heading) => !heading.closest("article")).map((heading) => heading.textContent))
+            .toEqual(["Frontier Spreads", "Special Spread Palmer 1"]);
+    });
+
+    test("does not import an unchanged returned ZIP and resets review when changing its export date", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const calls = mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [
+                { id: "export-newer", exportedAt: "2026-10-05T12:30:00.000Z" },
+                { id: "export-older", exportedAt: "2026-10-04T12:30:00.000Z" },
+            ] }),
+            "/workspaces/workspace-1/spread-files/import": () => ({ previewId: "no-changes", changedFiles: [], changes: [], conflicts: [] }),
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Export" })).toBeEnabled());
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "unchanged.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        expect(await within(dialog).findByText("No incoming changes since this export.")).toBeInTheDocument();
+        expect(within(dialog).queryByRole("button", { name: "Import Changes" })).not.toBeInTheDocument();
+        expect(calls.some((call) => call.route.endsWith("/spread-files/merge"))).toBe(false);
+        await user.click(within(dialog).getByRole("button", { name: "Back" }));
+        await user.clear(within(dialog).getByRole("combobox", { name: "Export" }));
+        await user.click(within(dialog).getByRole("combobox", { name: "Export" }));
+        await user.click(await screen.findByRole("option", { name: formatExportDate("2026-10-04T12:30:00.000Z") }));
+        expect(within(dialog).queryByText("No incoming changes since this export.")).not.toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Preview Changes" })).toBeEnabled();
+    });
+
+    test("shows export-history errors and can retry without overwriting files", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        let attempts = 0;
+        const calls = mockServer({ "/workspaces/:id/spread-files/exports": () =>
+        {
+            if (++attempts === 1)
+                throw apiError(503, "EXPORT_READ_FAILED", "Export history is unavailable.");
+            return { exports: [{ id: "export-retry", exportedAt: "2026-10-05T10:30:00.000Z" }] };
+        } });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        expect(await within(dialog).findByText("Export history is unavailable.")).toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+        await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Export" })).toBeEnabled());
+        expect(within(dialog).queryByText("Export history is unavailable.")).not.toBeInTheDocument();
+        expect(calls.some((call) => call.route.endsWith("/spread-files/import"))).toBe(false);
+    });
+
+    test.each(["Export Spread Files"])("guards %s and keeps drafts on cancellation", async (label) =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const calls = mockServer();
+        render(<App />);
+        await screen.findByRole("button", { name: "Unbound menu" });
+        await changeSpread(user);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: label }));
+        const guard = await screen.findByRole("dialog", { name: "Unsaved Changes" });
+        await user.click(within(guard).getByRole("button", { name: "Cancel" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(screen.getByRole("button", { name: /^Save Changes/ })).toBeEnabled();
+        expect(calls.some((call) => call.route.includes("/spread-files/"))).toBe(false);
+    });
+
+    test("automatically imports ordinary changes, preserves drafts, and highlights the main grid", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const spreads = createSpreads();
+        const first = spreads.entries[0];
+        const second = spreads.entries[1];
+        const set = spreads.sets.find((set) => set.id === first.setId);
+        const comparison = (entry, id, atkIv) => ({ id, file: set.file, setName: set.name, label: entry.fields.species,
+            operations: [{ type: "update", entryId: entry.id, fields: { atkIv } }],
+            spreads: { original: [{ fields: entry.fields, set }], current: [], incoming: [{ fields: { ...entry.fields, atkIv }, set }] } });
+        const changes = [comparison(second, "change-second", 9)];
+        let currentOperations = [];
+        const calls = mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [{ id: "baseline", exportedAt: "2026-10-05T10:30:00.000Z" }] }),
+            "/workspaces/:id/spread-files/current": (body) => { currentOperations = body.operations; return { currentId: "effective-current" }; },
+            "/workspaces/workspace-1/spread-files/import": () => ({ previewId: "selective-preview", conflicts: [], changedFiles: [set.file],
+                changes: changes.filter(() => !currentOperations.some((operation) => operation.entryId === second.id && operation.fields?.atkIv === 9)) }),
+            "/workspaces/workspace-1/spread-files/merge": () => ({ revision: spreads.revision,
+                operations: [{ type: "update", entryId: first.id, fields: { atkIv: 7 } }], acceptedCount: 1, rejectedCount: 1,
+                files: [{ path: set.file, status: "staged" }] }),
+        });
+        render(<App />);
+        await screen.findByRole("button", { name: "Unbound menu" });
+        await changeSpread(user);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        let dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        expect(screen.queryByRole("dialog", { name: "Unsaved Changes" })).not.toBeInTheDocument();
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "returned.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        dialog = await screen.findByRole("dialog", { name: "Import Results" });
+        expect(screen.queryByRole("dialog", { name: "Review Spread Changes" })).not.toBeInTheDocument();
+        expect(within(dialog).getByText(/1 accepted; 0 rejected/)).toBeInTheDocument();
+        expect(calls.some((call) => call.route.endsWith("/spread-files/merge"))).toBe(false);
+        expect(calls.some((call) => call.route.endsWith("/save"))).toBe(false);
+        const stored = JSON.parse(localStorage.getItem("cfruSpreadEditor.unsavedChanges"));
+        expect(stored.drafts[first.id].atkIv).toBe(0);
+        expect(stored.drafts[second.id].atkIv).toBe(9);
+        await user.click(within(dialog).getByRole("button", { name: "Back" }));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        dialog = await screen.findByRole("dialog", { name: "Import Results" });
+        expect(within(dialog).getByText("No incoming changes since this export.")).toBeInTheDocument();
+        expect(currentOperations.some((operation) => operation.entryId === second.id && operation.fields.atkIv === 9)).toBe(true);
+        await user.click(within(dialog).getByRole("button", { name: "Close", exact: true }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        const cards = screen.getAllByRole("article");
+        expect(cards.filter((card) => card.dataset.highlightedFields?.includes("atkIv"))).toHaveLength(2);
+        expect(cards.some((card) => card.querySelector('[data-highlighted-field="atkIv"]'))).toBe(true);
+        await user.click(await screen.findByRole("button", { name: /^Save Changes/ }));
+        await waitFor(() => expect(calls.some((call) => call.route.endsWith("/save"))).toBe(true));
+        expect(calls.find((call) => call.route.endsWith("/save")).body.operations)
+            .toEqual([{ type: "update", entryId: first.id, fields: { atkIv: 0 } }, { type: "update", entryId: second.id, fields: { atkIv: 9 } }]);
+    });
+
+    test("accepts consecutive comparisons locally even when the server is unavailable", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const spreads = createSpreads();
+        const entries = spreads.entries.slice(0, 2);
+        const set = spreads.sets.find((set) => set.id === entries[0].setId);
+        const changes = entries.map((entry, index) => ({ id: `immediate-${index}`, file: set.file, setName: set.name,
+            operations: [{ type: "update", entryId: entry.id, fields: { atkIv: 7 + index } }],
+            spreads: { original: [{ fields: entry.fields, set }], current: [], incoming: [{ fields: { ...entry.fields, atkIv: 7 + index }, set }] } }));
+        const calls = mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [{ id: "baseline", exportedAt: "2026-10-05T10:30:00.000Z" }] }),
+            "/workspaces/workspace-1/spread-files/import": () => ({ previewId: "immediate-preview", changes: [], conflicts: changes, changedFiles: [set.file] }),
+            "/workspaces/workspace-1/spread-files/merge": (body) =>
+            {
+                throw apiError(503, "SERVER_UNAVAILABLE", "The server is unavailable.");
+            },
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        let dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "returned.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        dialog = await screen.findByRole("dialog", { name: "Review Spread Changes" });
+        await user.click(within(dialog).getAllByRole("button", { name: "Keep Incoming", exact: true })[0]);
+        await waitFor(() => expect(within(dialog).getAllByRole("button", { name: "Keep Incoming", exact: true })).toHaveLength(1));
+        expect(within(dialog).queryByRole("progressbar")).not.toBeInTheDocument();
+        expect(JSON.parse(localStorage.getItem("cfruSpreadEditor.unsavedChanges")).drafts[entries[0].id].atkIv).toBe(7);
+        await user.click(within(dialog).getByRole("button", { name: "Keep Incoming", exact: true }));
+        dialog = await screen.findByRole("dialog", { name: "Import Results" });
+        expect(within(dialog).getByText(/2 accepted; 0 rejected/)).toBeInTheDocument();
+        const drafts = JSON.parse(localStorage.getItem("cfruSpreadEditor.unsavedChanges")).drafts;
+        expect(drafts[entries[0].id].atkIv).toBe(7);
+        expect(drafts[entries[1].id].atkIv).toBe(8);
+        expect(calls.some((call) => call.route.endsWith("/spread-files/merge"))).toBe(false);
+        expect(calls.some((call) => call.route.endsWith("/save"))).toBe(false);
+    });
+
+    test.each([false, true])("locally stages additions in incoming order when accepted in reverse order: %s", async (reverse) =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const spreads = createSpreads();
+        const set = spreads.sets[0];
+        const fields = spreads.entries.find((entry) => entry.setId === set.id).fields;
+        const additionOrder = ["new-incoming-first", "new-incoming-second"];
+        const changes = additionOrder.map((tempId, index) => ({ id: tempId, file: set.file, setName: set.name, additionOrder,
+            operations: [{ type: "add", tempId, setId: set.id, afterEntryId: set.entryIds[0], fields: { ...fields, atkIv: 7 + index } }],
+            spreads: { original: [], current: [], incoming: [{ fields: { ...fields, atkIv: 7 + index }, set }] } }));
+        const calls = mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [{ id: "baseline", exportedAt: "2026-10-05T10:30:00.000Z" }] }),
+            "/workspaces/workspace-1/spread-files/import": () => ({ previewId: "additions-preview", changes: [], conflicts: changes, changedFiles: [set.file] }),
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        let dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "returned.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        dialog = await screen.findByRole("dialog", { name: "Review Spread Changes" });
+        await user.click(within(dialog).getAllByRole("button", { name: "Keep Incoming", exact: true })[reverse ? 1 : 0]);
+        await user.click(within(dialog).getByRole("button", { name: "Keep Incoming", exact: true }));
+        await screen.findByRole("dialog", { name: "Import Results" });
+        const stored = JSON.parse(localStorage.getItem("cfruSpreadEditor.unsavedChanges"));
+        expect(stored.orders[set.id]).toEqual([set.entryIds[0], ...additionOrder, ...set.entryIds.slice(1)]);
+        expect(stored.newEntries[additionOrder[0]].fields.atkIv).toBe(7);
+        expect(stored.newEntries[additionOrder[1]].fields.atkIv).toBe(8);
+        expect(calls.some((call) => call.route.endsWith("/merge") || call.route.endsWith("/save"))).toBe(false);
+    });
+
+    test.each(["current", "incoming"])("confirms all %s conflict choices while ordinary changes are already imported", async (choice) =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const spreads = createSpreads();
+        const entries = spreads.entries.slice(0, 3);
+        const set = spreads.sets[0];
+        const comparisons = entries.map((entry, index) => ({ id: `bulk-${index}`, file: set.file, setName: set.name,
+            operations: [{ type: "update", entryId: entry.id, fields: { atkIv: 7 + index } }],
+            spreads: { original: [{ fields: entry.fields, set }], current: [{ fields: entry.fields, set }],
+                incoming: [{ fields: { ...entry.fields, atkIv: 7 + index }, set }] } }));
+        const calls = mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [{ id: "baseline", exportedAt: "2026-10-05T10:30:00.000Z" }] }),
+            "/workspaces/workspace-1/spread-files/import": () => ({ previewId: "bulk-preview", changes: comparisons.slice(2),
+                conflicts: comparisons.slice(0, 2), changedFiles: [set.file] }),
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        let dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "returned.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        dialog = await screen.findByRole("dialog", { name: "Review Spread Changes" });
+        expect(within(dialog).getByText("2 conflicts.")).toBeInTheDocument();
+        expect(within(dialog).getAllByRole("article")).toHaveLength(6);
+        expect(JSON.parse(localStorage.getItem("cfruSpreadEditor.unsavedChanges")).drafts[entries[2].id].atkIv).toBe(9);
+        const label = choice === "incoming" ? "Keep All Incoming" : "Keep All Current";
+        await user.click(within(dialog).getByRole("button", { name: label }));
+        let confirmation = await screen.findByRole("dialog", { name: label });
+        await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: label })).not.toBeInTheDocument());
+        dialog = await screen.findByRole("dialog", { name: "Review Spread Changes" });
+        expect(JSON.parse(localStorage.getItem("cfruSpreadEditor.unsavedChanges")).drafts[entries[0].id]).toBeUndefined();
+        await user.click(within(dialog).getByRole("button", { name: label }));
+        confirmation = await screen.findByRole("dialog", { name: label });
+        await user.click(within(confirmation).getByRole("button", { name: label }));
+        dialog = await screen.findByRole("dialog", { name: "Import Results" });
+        expect(within(dialog).getByText(choice === "incoming" ? /3 accepted; 0 rejected/ : /1 accepted; 2 rejected/)).toBeInTheDocument();
+        const drafts = JSON.parse(localStorage.getItem("cfruSpreadEditor.unsavedChanges")).drafts;
+        expect(drafts[entries[0].id]?.atkIv).toBe(choice === "incoming" ? 7 : undefined);
+        expect(drafts[entries[1].id]?.atkIv).toBe(choice === "incoming" ? 8 : undefined);
+        expect(drafts[entries[2].id].atkIv).toBe(9);
+        expect(calls.some((call) => call.route.endsWith("/merge") || call.route.endsWith("/save"))).toBe(false);
+    });
+
+    test("does not partially stage an invalid automatic import batch", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const entry = createSpreads().entries[0];
+        mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [{ id: "baseline", exportedAt: "2026-10-05T10:30:00.000Z" }] }),
+            "/workspaces/workspace-1/spread-files/import": () => ({ previewId: "invalid-batch", conflicts: [], changes: [
+                { id: "valid", operations: [{ type: "update", entryId: entry.id, fields: { atkIv: 7 } }] },
+                { id: "invalid" },
+            ] }),
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "returned.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        expect(await within(dialog).findByText("This preview does not contain local edits. Preview the ZIP again.")).toBeInTheDocument();
+        expect(localStorage.getItem("cfruSpreadEditor.unsavedChanges")).toBeNull();
+        expect(within(dialog).getByRole("button", { name: "Preview Changes" })).toBeEnabled();
+    });
+
+    test("Keep Current dismisses a conflict without staging or saving changes", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        const spreads = createSpreads();
+        const set = spreads.sets[0];
+        const version = { fields: spreads.entries[0].fields, set };
+        const calls = mockServer({
+            "/workspaces/:id/spread-files/exports": () => ({ exports: [{ id: "baseline", exportedAt: "2026-10-05T10:30:00.000Z" }] }),
+            "/workspaces/workspace-1/spread-files/import": () => ({ previewId: "dismiss-preview", changedFiles: [set.file], changes: [],
+                conflicts: [{ id: "dismiss-conflict", file: set.file, setName: set.name,
+                    spreads: { original: [version], current: [version], incoming: [{ ...version, fields: { ...version.fields, atkIv: 7 } }] } }] }),
+        });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        let dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "returned.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Preview Changes" }));
+        dialog = await screen.findByRole("dialog", { name: "Review Spread Changes" });
+        await user.click(within(dialog).getByRole("button", { name: "Keep Current" }));
+        dialog = await screen.findByRole("dialog", { name: "Import Results" });
+        expect(within(dialog).getByText(/0 accepted; 1 rejected/)).toBeInTheDocument();
+        expect(within(dialog).queryByRole("article")).not.toBeInTheDocument();
+        expect(calls.some((call) => call.route.endsWith("/merge") || call.route.endsWith("/save"))).toBe(false);
+        expect(localStorage.getItem("cfruSpreadEditor.unsavedChanges")).toBeNull();
+    });
+
+    test("shows spread import errors and allows retry without leaving the editor", async () =>
+    {
+        saveSettings({ paths: PATHS, gameId: "unbound" });
+        const user = userEvent.setup();
+        let attempts = 0;
+        mockServer({ "/workspaces/workspace-1/spread-files/import": () =>
+        {
+            if (++attempts === 1)
+                throw apiError(422, "ARCHIVE_INVALID", "The ZIP contains an unknown spread file.");
+            return { revision: createSpreads().revision, operations: [], files: [] };
+        } });
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Unbound menu" }));
+        await user.click(screen.getByRole("menuitem", { name: "Import Spread Files" }));
+        const dialog = await screen.findByRole("dialog", { name: "Import Spread Files" });
+        await user.upload(within(dialog).getByLabelText("Choose Spread Files ZIP"), new File(["ZIP"], "spreads.zip"));
+        await user.click(within(dialog).getByRole("button", { name: "Import And Overwrite" }));
+        expect(await within(dialog).findByText("The ZIP contains an unknown spread file.")).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "Import And Overwrite" })).toBeEnabled();
+        await user.click(within(dialog).getByRole("button", { name: "Import And Overwrite" }));
+        expect(await within(dialog).findByText("Changes imported as unsaved edits.")).toBeInTheDocument();
+        expect(attempts).toBe(2);
     });
 
     test("parses Blob errors and recovers both session and workspace after restart", async () =>

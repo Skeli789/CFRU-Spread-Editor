@@ -354,6 +354,8 @@ export function mockServer(overrides = {})
         [CATALOG_ROUTE]: (body) => createCatalog(body.gameId),
         [SAVE_ROUTE]: () => ({ spreads: createSpreads("revision-2"), createdIds: {}, files: [], backupId: "backup-1" }),
         [ARCHIVE_ROUTE]: () => new Blob(["ZIP"], { type: "application/zip" }),
+        "/workspaces/:id/spread-files/exports": () => ({ exports: [] }),
+        "/workspaces/:id/spread-files/current": () => ({ currentId: "current-editor-1" }),
         "/progress/:id": () => ({ percentage: 0, label: "Checking repositories...", status: "running" }),
         "/repositories/pick": () => ({ status: "cancelled" }),
         ...overrides,
@@ -363,6 +365,7 @@ export function mockServer(overrides = {})
     {
         const route = url.replace(/^.*\/api/, "");
         const handlerRoute = route.replace(/^\/workspaces\/[^/]+\/(catalog|save|archive)$/, "/workspaces/:id/$1")
+            .replace(/^\/workspaces\/[^/]+\/spread-files\/(exports|current)$/, "/workspaces/:id/spread-files/$1")
             .replace(/^\/progress\/[^/]+$/, "/progress/:id");
         const token = options?.headers?.["X-Session-Token"];
         calls.push({ route, body, token, options, params: options?.params });

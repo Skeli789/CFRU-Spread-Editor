@@ -6,9 +6,10 @@ const { ApiError } = require('../middleware/errors');
 const { loadGameCatalog } = require('../services/catalog');
 const { getWorkspace, loadWorkspace } = require('../services/repositories');
 const { loadSpreads, saveSpreads } = require('../services/spread-store');
-const { ARCHIVE_CONTENT_TYPE, ARCHIVE_FILENAME, exportArchive } = require('../services/archives');
+const { ARCHIVE_CONTENT_TYPE, ARCHIVE_FILENAME, SPREAD_ARCHIVE_FILENAME, exportArchive } = require('../services/archives');
 const { registerRequestProgress } = require('../middleware/progress');
 const { PROGRESS_LABELS } = require('../services/progress');
+const { listSpreadExports, applySpreadMerge, prepareImportContext } = require('../services/spread-exchange');
 
 
 /**
@@ -73,6 +74,45 @@ router.post('/:id/archive', async (req, res) =>
     const bytes = await exportArchive(workspace, req.body?.gameId, progress?.update);
     progress?.complete();
     res.attachment(ARCHIVE_FILENAME).type(ARCHIVE_CONTENT_TYPE).send(bytes);
+});
+
+/**
+ * Exports only the CFRU spread headers as exact source bytes.
+ * @route POST /api/workspaces/:id/spread-files/export
+ */
+router.post('/:id/spread-files/export', async (req, res) =>
+{
+    const progress = registerRequestProgress(req, res, PROGRESS_LABELS.listing);
+    const bytes = await exportArchive(getWorkspace(req.params.id), undefined, progress?.update, true, req.body?.name);
+    progress?.complete();
+    res.attachment(SPREAD_ARCHIVE_FILENAME).type(ARCHIVE_CONTENT_TYPE).send(bytes);
+});
+
+/**
+ * Lists dated export baselines owned by this workspace's CFRU repository.
+ * @route POST /api/workspaces/:id/spread-files/exports
+ */
+router.post('/:id/spread-files/exports', async (req, res) =>
+{
+    res.status(StatusCode.SuccessOK).send({ exports: await listSpreadExports(getWorkspace(req.params.id)) });
+});
+
+/**
+ * Applies a reviewed smart import with explicit conflict choices.
+ * @route POST /api/workspaces/:id/spread-files/merge
+ */
+router.post('/:id/spread-files/merge', async (req, res) =>
+{
+    res.status(StatusCode.SuccessOK).send(await applySpreadMerge(getWorkspace(req.params.id), req.body ?? {}));
+});
+
+/**
+ * Prepares current unsaved editor operations for a read-only import comparison.
+ * @route POST /api/workspaces/:id/spread-files/current
+ */
+router.post('/:id/spread-files/current', async (req, res) =>
+{
+    res.status(StatusCode.SuccessOK).send(await prepareImportContext(getWorkspace(req.params.id), req.body ?? {}));
 });
 
 module.exports = router;

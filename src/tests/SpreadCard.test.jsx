@@ -89,6 +89,29 @@ function HeldStatCard({ initialFields })
 
 describe("Spread card", () =>
 {
+    it("omits change indicators in editing", () =>
+    {
+        const entry = createSpreads().entries[2];
+        const { card } = renderCard({ fields: { ...entry.fields, atkIv: 7 }, changed: true, editing: true });
+        expect(card).toHaveClass("spread-card-editing");
+        expect(card).not.toHaveClass("spread-card-changed");
+        expect(card).not.toHaveAttribute("data-highlighted-fields");
+        expect(card.querySelector('[data-highlighted-field="atkIv"]')).toBeNull();
+    });
+
+    it("highlights only unsaved fields and changed move slots in the regular spread view", () =>
+    {
+        const entry = createSpreads().entries[2];
+        const fields = { ...entry.fields, atkIv: 7, moves: [...entry.fields.moves] };
+        fields.moves[1] = "MOVE_POUND";
+        const { card } = renderCard({ fields, changed: true });
+        expect(card).toHaveAttribute("data-highlighted-fields", "atkIv,move1");
+        expect(card.querySelector('[data-highlighted-field="atkIv"]')).not.toBeNull();
+        expect(card.querySelector('[data-highlighted-field="moves.1"]')).not.toBeNull();
+        expect(card.querySelector('[data-highlighted-field="hpIv"]')).toBeNull();
+        expect(card.querySelector('[data-highlighted-field="moves.0"]')).toBeNull();
+    });
+
     it("uses pointer cursors throughout selectable Smogon previews and default cursors throughout disabled choices", () =>
     {
         const styles = CARD_STYLES.replace(/\s+/g, " ");
@@ -541,7 +564,7 @@ describe("Spread card", () =>
         const toggle = within(card.querySelector(".spread-stats tfoot")).getByRole("switch", { name: "Lv. 5" });
 
         expect(toggle).toBeChecked();
-        expect(within(card).queryByText("Lv. 5")).not.toBeInTheDocument();
+        expect(within(card).getAllByText("Lv. 5")).toHaveLength(1);
         if (usages.length)
         {
             expect(trainers.parentElement.previousElementSibling).toHaveClass("spread-card-title");
@@ -774,6 +797,8 @@ describe("Spread card", () =>
         const { card } = renderCard({ entry: { ...spreads.entries[2], isNew: true }, changed: true });
         expect(within(card).getByRole("img", { name: "New Spread" }).querySelector("[data-testid='FiberNewIcon']")).toHaveClass("MuiSvgIcon-colorSuccess");
         expect(within(card).queryByText("New")).not.toBeInTheDocument();
+        expect(card).not.toHaveAttribute("data-highlighted-fields");
+        expect(card.querySelector("[data-highlighted-field]")).toBeNull();
     });
 
     it("shows a read-only source placeholder", async () =>

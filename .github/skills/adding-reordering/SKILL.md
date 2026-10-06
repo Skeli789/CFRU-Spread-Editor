@@ -37,7 +37,8 @@ Additions, peer/group reorders, and cross-set transfers are implemented draft op
 - Import Showdown Text resolves deferred text, reports warnings/errors, skips bad sets, and permits valid sets to import together despite other errors. It bypasses the pending single-species editor; detailed exchange rules belong to the exchange feature.
 - Smogon selections also use the import addition path. All tabs produce Singles & Doubles (Modify) using shared new-spread defaults; the originating category does not change battle flags.
 - New entries get unused `new-*` IDs, `isNew`, full-field drafts, and positions after their species' last source peer or at the set end. The visible Add Spread at the End tile does not force raw end insertion ahead of species insertion rules.
-- Ordinary new cards show a green NEW symbol, not a chip, and no Revert. Delete removes the addition without a server delete operation. Revert Order preserves additions in default species positions.
+- Spread-file additions carry an `additionOrder` group; browser-only accepts place each after its nearest accepted predecessor or before its nearest accepted successor, preserving incoming order. Save regenerates normal anchors from the draft order.
+- Ordinary new cards show a green NEW symbol, not a chip, without automatic changed-field backgrounds or Revert. Delete removes the addition without a server delete operation. Revert Order preserves additions in default species positions.
 
 ### Peer and group movement
 
@@ -50,6 +51,7 @@ Additions, peer/group reorders, and cross-set transfers are implemented draft op
 - A non-no-op group move asks Move Species Group? when any species is interleaved anywhere in the set's current order, before coalescing all species' source entries into contiguous groups. Cancel leaves the order untouched. Movement applies directly when no species is interleaved.
 - Movement metadata favors intentionally moved saved entries for changed highlighting/dirty counts. Group and peer reverts are independent: group Revert keeps its internal peer order; peer Revert keeps the group's location. Set Revert Order restores saved order plus default additions without clearing field drafts.
 - Saved-entry edit Revert also resets that entry's peer order, not whole-group order. No-op orders/movement markers stop offering Revert Order; insertion bookkeeping alone is not a reorder change.
+- Smart spread-file imports keep local-only reorders when incoming files only edit fields: updates target the moved spread's current ID and stage no order change. Incoming reorders and ambiguous duplicates still need review.
 
 ### Cross-set transfers and saving
 

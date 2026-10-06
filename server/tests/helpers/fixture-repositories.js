@@ -104,7 +104,8 @@ function writeRepository(root, files)
  */
 function createFixtureRepositories()
 {
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cfru-editor-test-"));
+    // Canonical like real workspace roots; Windows tmpdir can be an 8.3 short path that realpath expands
+    const base = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "cfru-editor-test-"));
     const paths = {};
 
     for (const [kind, files] of Object.entries(REPOSITORY_FILES))

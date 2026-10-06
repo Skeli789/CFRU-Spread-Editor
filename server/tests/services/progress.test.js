@@ -4,6 +4,19 @@ const { createProgressStore, PROGRESS_LABELS } = require("../../services/progres
 
 describe("Operation progress storage", () =>
 {
+    it("retains every spread import comparison stage instead of the earlier loading label", () =>
+    {
+        const store = createProgressStore();
+        const id = crypto.randomUUID();
+        const handle = store.start(id, PROGRESS_LABELS.spreads);
+        for (const label of [PROGRESS_LABELS.exportBaseline, PROGRESS_LABELS.currentSpreads, PROGRESS_LABELS.incomingSpreads,
+            PROGRESS_LABELS.compareSpreads, PROGRESS_LABELS.prepareComparisons])
+        {
+            handle.update({ percentage: 54, label });
+            expect(store.snapshot(id).label).to.equal(label);
+        }
+    });
+
     it("clamps monotonic integer progress, strips unsafe labels and detaches snapshots", () =>
     {
         const store = createProgressStore();

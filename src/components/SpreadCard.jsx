@@ -10,7 +10,7 @@ import
     Alert, Autocomplete, Button, ButtonGroup, Checkbox, Chip, FormControl, FormControlLabel, IconButton, InputLabel, ListItemIcon,
     ListItemText, Menu, MenuItem, Paper, Popover, Select, Stack, Switch, TextField, Tooltip, Typography,
 } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
@@ -48,7 +48,10 @@ const BALL_RANDOM = "BALL_TYPE_RANDOM";
 const RANDOM_BALL_LABEL = "Random Ball";
 const UNKNOWN_LABEL = "?";
 const MEGA_ABILITY_LABEL = "[M]";
+const LEVEL_TOGGLE_LABEL = `Lv. ${LITTLE_CUP_LEVEL}`;
 const OPEN_KEYS = ["Enter", " "];
+const MOVES_FIELD_NAME = "moves";
+const DIFF_BACKGROUND = "var(--spread-diff-background)";
 
 const BATTLE_TYPE_LABELS =
 {
@@ -174,6 +177,25 @@ function getTypes(speciesInfo)
 }
 
 /**
+ * Marks changed values and individual move slots relative to original fields.
+ * @param {object} fields Current spread fields.
+ * @param {object|null} original The original fields, if present.
+ * @returns {object} Field highlight flags.
+ */
+export function getSpreadHighlights(fields, original)
+{
+    const highlights = {};
+    for (const [field, value] of Object.entries(fields))
+    {
+        if (field === MOVES_FIELD_NAME)
+            value.forEach((move, slot) => { if (move !== original?.moves?.[slot]) highlights[`move${slot}`] = true; });
+        else if (JSON.stringify(value) !== JSON.stringify(original?.[field]))
+            highlights[field] = true;
+    }
+    return highlights;
+}
+
+/**
  * A compact labelled select.
  *
  * @component
@@ -276,14 +298,16 @@ const FieldAutocomplete = ({ label, value, options, onChange, onFieldCommit }) =
  * @param {boolean} [props.deleted] - Whether the spread will be deleted on save.
  * @param {boolean} [props.readOnly] - Whether the card is an inert preview without source metadata.
  * @param {boolean} [props.showBattleType=true] - Whether to show the battle-type chip.
+ * @param {object} [props.highlightedFields] Fields highlighted in an import comparison.
  * @param {Array<{message: string}>} props.problems - Problems that stop the spread from being saved.
  * @param {object} props.actions - The editor actions updateSpread, setEditing, deleteSpread and restoreSpread.
  * @param {Function} [props.onFieldCommit] Advances focus after an inline field choice.
  * @returns {JSX.Element} The card.
  */
-const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, changed, deleted = false, readOnly = false, showBattleType = true, problems, actions, onFieldCommit }) =>
+const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, changed, deleted = false, readOnly = false, showBattleType = true, highlightedFields = null, problems, actions, onFieldCommit }) =>
 {
     const theme = useTheme();
+    const highlights = highlightedFields ?? (!readOnly && !editing && !entry.isNew && changed ? getSpreadHighlights(fields, entry.fields) : null);
     const { id } = entry;
     const [showMega, setShowMega] = useState(true);
     const [showLevelFive, setShowLevelFive] = useState(true);
@@ -381,7 +405,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
     const megaToggle = megaAbility != null &&
         <FormControlLabel label="Mega Stats" labelPlacement="start" control={<Switch size="small" checked={showMega} onChange={(event) => setShowMega(event.target.checked)} />} />;
     const levelToggle = set.littleCup &&
-        <FormControlLabel label={`Lv. ${LITTLE_CUP_LEVEL}`} labelPlacement="start" control={<Switch size="small" checked={showLevelFive} onChange={(event) => setShowLevelFive(event.target.checked)} />} />;
+        <FormControlLabel label={LEVEL_TOGGLE_LABEL} labelPlacement="start" control={<Switch size="small" checked={showLevelFive} onChange={(event) => setShowLevelFive(event.target.checked)} />} />;
     const trainerNames = trainers.map((trainer) =>
         <Chip key={trainer} size="small" variant="outlined" label={trainer} />);
     const battleLabel = battleType === BATTLE_TYPES.BOTH
@@ -396,7 +420,17 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
         </div>;
 
     return (
-        <Paper component="article" variant="outlined" className={`spread-card${readOnly ? " spread-card-read-only" : ""}${editing && !deleted ? " spread-card-editing" : ""}${changed ? " spread-card-changed" : ""}${deleted ? " spread-card-deleted" : ""}${entry.editable ? "" : " spread-card-locked"}`}
+        <Paper component="article" variant="outlined" className={`spread-card${readOnly ? " spread-card-read-only" : ""}${editing && !deleted ? " spread-card-editing" : ""}${changed && !editing ? " spread-card-changed" : ""}${deleted ? " spread-card-deleted" : ""}${entry.editable ? "" : " spread-card-locked"}`}
+               data-highlighted-fields={highlights ? Object.keys(highlights).join(",") : undefined}
+               sx={highlights ? {
+                   "--spread-diff-background": alpha(theme.palette.focus.main, 0.2),
+                   ".spread-card-title": { bgcolor: highlights.species || highlights.shiny || highlights.gigantamax ? DIFF_BACKGROUND : undefined },
+                   ".side-ball": { bgcolor: highlights.ball ? DIFF_BACKGROUND : undefined },
+                   ".side-item": { bgcolor: highlights.item ? DIFF_BACKGROUND : undefined },
+                   ".side-ability": { bgcolor: highlights.ability ? DIFF_BACKGROUND : undefined },
+                   ".side-nature": { bgcolor: highlights.nature ? DIFF_BACKGROUND : undefined },
+                   ".spread-card-subtitle": { bgcolor: highlights.forSingles || highlights.forDoubles || highlights.modifyMovesDoubles || highlights.specificTeamType ? DIFF_BACKGROUND : undefined },
+               } : undefined}
                aria-label={`${name} spread`} onClick={handleClick} onKeyDown={handleKeyDown} tabIndex={canOpen ? 0 : undefined}>
             {deleted && <div className="spread-deleted-overlay"><Button variant="contained" onClick={() => actions.restoreSpread(id)}>Restore</Button></div>}
             <div className="spread-card-content" inert={deleted}>
@@ -416,7 +450,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                         </div>
                     </div>
                     : <>
-                        {ball != null && ball !== BALL_RANDOM &&
+                        {ball != null && (ball !== BALL_RANDOM || highlights?.ball) &&
                             <span className="option-with-icon spread-side-value side-ball">
                                 <GameImage src={ballInfo?.icon ?? null} alt="" decorative width={ICON_SIZE} height={ICON_SIZE} />
                                 <OverflowText className="side-value-text" text={getLabel(catalog.balls, ball)} />
@@ -557,6 +591,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                     name={name}
                     catalog={catalog}
                     teamTypes={teamTypes}
+                    highlightedFields={highlights}
                     footer={editing ? <Stack alignItems="flex-end">{levelToggle}{megaToggle}</Stack> : null}
                 />
             </div>
@@ -573,6 +608,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
             <div className="spread-card-moves">
                 {editing
                     ? <MoveEditor catalog={catalog} fields={fields} onFieldCommit={onFieldCommit}
+                                  onReorder={(moves) => update((current) => ({ ...current, moves }))}
                                   onChange={(slot, move, type) => update((current) => setMove(current, slot, move, type))} />
                     : Array.from({ length: MAX_MOVES }, (_, slot) =>
                     {
@@ -581,7 +617,8 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                         const status = duplicate ? LEGALITY.ILLEGAL : getMoveLegality(catalog, fields.species, fields.moves[slot]).status;
                         const problem = duplicate ? DUPLICATE_MOVE : status === LEGALITY.ILLEGAL ? `${name} cannot learn this move.` : null;
                         const slotContent =
-                            <span className={`move-slot move-status-${status}`}>
+                            <span className={`move-slot move-status-${status}`} data-highlighted-field={highlights?.[`move${slot}`] ? `moves.${slot}` : undefined}
+                                style={highlights?.[`move${slot}`] ? { backgroundColor: DIFF_BACKGROUND } : undefined}>
                                 {option != null && <TypeIcon catalog={catalog} type={option.type} />}
                                 <span>{option?.name ?? "-"}</span>
                             </span>;

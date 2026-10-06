@@ -14,6 +14,8 @@ import UndoIcon from "@mui/icons-material/Undo";
 import AddIcon from "@mui/icons-material/Add";
 import ArrowLeftIcon from "@mui/icons-material/ArrowLeft";
 import ArrowRightIcon from "@mui/icons-material/ArrowRight";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 
 import { GROUP_MOVE_PREFIX, PAGE_SIZES, buildRows, canDropSpread, findPage, getGapTarget, getRowCapacity, groupSpreads, hasOrderChange, moveSpeciesGroup, moveSpread, paginateRows } from "../../shared/spread-layout.mjs";
 
@@ -58,9 +60,10 @@ const MIN_WIDENED_CAPACITY = 3;
  * @param {Function} props.onMove Moves this spread onto a neighbor.
  * @param {Function|null} props.onRevert Puts the spread back in its saved place, or nothing when it has not moved.
  * @param {Function} props.renderCard Renders the spread.
+ * @param {boolean} props.revealed Whether this spread was revealed outside the filters.
  * @returns {JSX.Element} The spread.
  */
-const MovableSpread = ({ item, name, dragReason, dropAllowed, moveReason, leftId, rightId, onMove, onRevert, renderCard }) =>
+const MovableSpread = ({ item, name, dragReason, dropAllowed, moveReason, leftId, rightId, onMove, onRevert, renderCard, revealed }) =>
 {
     const data = useMemo(() => ({ kind: DRAG_SPREAD, id: item.id, setId: item.setId, species: item.species }), [item]);
     const targetData = useMemo(() => ({ ...data, kind: DROP_SPREAD }), [data]);
@@ -78,7 +81,7 @@ const MovableSpread = ({ item, name, dragReason, dropAllowed, moveReason, leftId
         dragRef(element);
         dropRef(element);
     }, [dragRef, dropRef]);
-    const className = ["movable-spread", drag.isDragSource ? "is-dragging" : "", drop.isDropTarget && dropAllowed ? "is-drop-target" : ""];
+    const className = ["movable-spread", revealed ? "is-filter-revealed" : "", drag.isDragSource ? "is-dragging" : "", drop.isDropTarget && dropAllowed ? "is-drop-target" : ""];
 
     return (
         <div ref={ref} className={className.filter(Boolean).join(" ")}>
@@ -119,9 +122,11 @@ const MovableSpread = ({ item, name, dragReason, dropAllowed, moveReason, leftId
  * @param {boolean} props.placing Whether this group is waiting for its new place.
  * @param {Function} props.onMove Starts or cancels choosing a place.
  * @param {Function|null} props.onRevert Puts the group back in its saved place, or nothing when it has not moved.
+ * @param {boolean} props.expanded Whether filtered-out peers are shown.
+ * @param {Function|null} props.onToggle Toggles filtered-out peers when available.
  * @returns {JSX.Element} The heading.
  */
-const GroupHeader = ({ name, reason, placing, onMove, onRevert }) =>
+const GroupHeader = ({ name, reason, placing, onMove, onRevert, expanded, onToggle }) =>
     <div className="species-order-controls">
         <Typography variant="caption">{name}</Typography>
         <Tooltip title={reason || (placing ? "Cancel moving this group" : `Choose a new place for every ${name} spread`)}><span>
@@ -130,6 +135,13 @@ const GroupHeader = ({ name, reason, placing, onMove, onRevert }) =>
                 {placing ? "Cancel" : "Move"}
             </Button>
         </span></Tooltip>
+        {onToggle != null &&
+            <Tooltip title={expanded ? `Hide ${name} spreads outside the filters` : `Show all ${name} spreads in this spread set`}>
+                <Button size="small" startIcon={expanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                        aria-label={`${expanded ? "Less" : "More"} ${name} Spreads`} aria-expanded={expanded} onClick={onToggle}>
+                    {expanded ? "Less" : "More"}
+                </Button>
+            </Tooltip>}
         {onRevert != null &&
             <Tooltip title={`Put the ${name} group back in its saved place`}>
                 <Button size="small" color="warning" startIcon={<UndoIcon fontSize="small" />} aria-label={`Revert ${name} Group Order`} onClick={onRevert}>
@@ -249,6 +261,7 @@ function getSections(rows)
  * @component
  * @param {Object} props - The component props
  * @param {Array<{id: string, species: string, setId: string}>} props.spreads - The spreads to show, in source order.
+ * @param {Array<object>} [props.availableSpreads] All nonhidden spreads in current source order, before filtering.
  * @param {Function} props.renderCard - Returns the card for a spread ID.
  * @param {Function} props.getSetHeading - Returns a set's title and file for its section.
  * @param {number} props.pageSize - The most cards on a page, unless one species has more.
@@ -275,14 +288,32 @@ function getSections(rows)
  */
 const SpreadGrid = ({ spreads, renderCard, getSetHeading, pageSize, onPageSizeChange, resetKey, onClearFilters, getSpeciesName,
     activeSet, allEntries, orders, reveal, hiddenIds = NO_IDS, onOrder, onRevertOrder, movedGroups = NO_GROUPS, movedSpreadIds = NO_IDS,
-    onRevertGroup = null, onRevertSpread = null, onTransfer = null, getTransferProblem = null, onAdd = null, sets = NO_SETS }) =>
+    onRevertGroup = null, onRevertSpread = null, onTransfer = null, getTransferProblem = null, onAdd = null, sets = NO_SETS, availableSpreads = spreads }) =>
 {
     const containerRef = useRef(null);
     const width = useWidth(containerRef);
     const capacity = width > 0 ? getRowCapacity(width, MIN_CARD_WIDTH, CARD_GAP) : DEFAULT_CAPACITY;
     const [placing, setPlacing] = useState(null);
-    const items = useMemo(() => new Map(spreads.map((item) => [item.id, item])), [spreads]);
-    const groups = useMemo(() => groupSpreads(spreads), [spreads]);
+    // Show matching spreads, plus the filtered-out peers of any expanded species group that has a match
+    const [expansion, setExpansion] = useState({ resetKey, keys: new Set() });
+    const expandedKeys = expansion.resetKey === resetKey ? expansion.keys : NO_IDS;
+    const matchingIds = useMemo(() => new Set(spreads.map(({ id }) => id)), [spreads]);
+    const matchingGroups = useMemo(() => groupSpreads(spreads), [spreads]);
+    const availableGroups = useMemo(() => new Map(groupSpreads(availableSpreads.filter(({ id }) => !hiddenIds.has(id)))
+        .map((group) => [JSON.stringify([group.setId, group.species]), group])), [availableSpreads, hiddenIds]);
+    const displayedSpreads = useMemo(() => availableSpreads.filter((item) => !hiddenIds.has(item.id) && (matchingIds.has(item.id)
+        || (expandedKeys.has(JSON.stringify([item.setId, item.species])) && matchingGroups.some((group) => group.setId === item.setId && group.species === item.species)))),
+    [availableSpreads, hiddenIds, matchingIds, expandedKeys, matchingGroups]);
+    const items = useMemo(() => new Map(displayedSpreads.map((item) => [item.id, item])), [displayedSpreads]);
+    const groups = useMemo(() => groupSpreads(displayedSpreads), [displayedSpreads]);
+
+    /**
+     * Clears group expansions when the filters change.
+     */
+    useEffect(() =>
+    {
+        setExpansion({ resetKey, keys: new Set() });
+    }, [resetKey]);
 
     /**
      * Validates whole-group movement against each set's complete visible order.
@@ -460,6 +491,23 @@ const SpreadGrid = ({ spreads, renderCard, getSetHeading, pageSize, onPageSizeCh
     };
 
     /**
+     * Toggles a species' filtered-out peers and keeps its matching spread in view.
+     * @param {object} group The displayed species group.
+     * @returns {void} Nothing.
+     */
+    const toggleGroup = (group) =>
+    {
+        const key = JSON.stringify([group.setId, group.species]);
+        const keys = new Set(expandedKeys);
+        if (keys.has(key))
+            keys.delete(key);
+        else
+            keys.add(key);
+        setExpansion({ resetKey, keys });
+        setAnchor({ resetKey, id: group.ids.find((id) => matchingIds.has(id)) });
+    };
+
+    /**
      * Opens the page picker at the current page.
      */
     const openJump = () =>
@@ -607,15 +655,20 @@ const SpreadGrid = ({ spreads, renderCard, getSetHeading, pageSize, onPageSizeCh
                         const moving = placingHere && placingGroup.species === species;
                         const first = ids[0] === group.ids[0];
                         const groupMoved = movedGroups.get(row.setId)?.has(species) && onRevertGroup != null;
+                        const groupKey = JSON.stringify([row.setId, species]);
+                        const expanded = expandedKeys.has(groupKey);
+                        const hasMore = availableGroups.get(groupKey)?.ids.some((id) => !matchingIds.has(id));
                         return (
                             <div key={species} className={`species-segment${first ? " has-header" : ""}${moving ? " is-moving" : ""}`}
                                  style={{ gridColumn: `${start} / span ${ids.length}` }}>
                                 {first &&
                                     <GroupHeader name={getSpeciesName(species)} reason={reorderReasons.get(row.setId)} placing={moving}
                                                  onMove={() => setPlacing(moving ? null : { setId: row.setId, species, resetKey })}
+                                                 expanded={expanded} onToggle={hasMore || expanded ? () => toggleGroup(group) : null}
                                                  onRevert={groupMoved ? () => onRevertGroup(row.setId, species) : null} />}
                                 {ids.map((id) =>
                                     <MovableSpread key={id} item={items.get(id)} name={getSpeciesName(species)}
+                                                   revealed={!matchingIds.has(id)}
                                                    dragReason={allEntries.get(id)?.editable ? "" : UNEDITABLE_REASON}
                                                    moveReason={allEntries.get(id)?.editable ? getMoveReason(items.get(id)) : UNEDITABLE_REASON}
                                                    leftId={group.ids[group.ids.indexOf(id) - 1] ?? null}
@@ -653,7 +706,7 @@ const SpreadGrid = ({ spreads, renderCard, getSetHeading, pageSize, onPageSizeCh
             <span className="visually-hidden" aria-live="polite">{announcement}</span>
             <Stack direction="row" className="spread-grid-bar">
                 <Typography variant="body2" role="status">
-                    {spreads.length === 0 ? "No spreads" : `Showing ${firstShown + 1}-${firstShown + shownCount} of ${spreads.length} spreads`}
+                    {displayedSpreads.length === 0 ? "No spreads" : `Showing ${firstShown + 1}-${firstShown + shownCount} of ${displayedSpreads.length} spreads`}
                 </Typography>
                 {pagination}
                 <FormControl size="small" sx={{ minWidth: 100 }}>

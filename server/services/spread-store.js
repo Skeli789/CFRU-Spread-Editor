@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { StatusCode } = require("status-code-enum");
+const { matchEntries } = require("./spread-merge");
 
 const { ApiError } = require("../middleware/errors");
 const { readGameData } = require("./catalog");
@@ -64,6 +65,8 @@ const FILE_ROLLED_BACK = "rolledBack";
 const FILE_NOT_REPLACED = "notReplaced";
 const FILE_EXTERNALLY_MODIFIED = "externallyModified";
 const FILE_FAILED = "failed";
+const FILE_STAGED = "staged";
+const ARCHIVE_INVALID = "ARCHIVE_INVALID";
 
 const OPERATION_UPDATE = "update";
 const OPERATION_DELETE = "delete";
@@ -91,6 +94,7 @@ function hashBytes(bytes)
 {
     return crypto.createHash(HASH_ALGORITHM).update(bytes).digest("hex");
 }
+module.exports.hashBytes = hashBytes;
 
 /**
  * Decodes a source file and describes how it is written.
@@ -662,7 +666,7 @@ function wait(delayMs)
  * @param {string} [options.dataDirectory] Where backups, journals and the parse cache are kept.
  * @param {number} [options.retryDelayMs] How long to wait before retrying a blocked file replacement.
  * @param {object} [options.cache] The parse cache.
- * @returns {{loadSpreads: Function, saveSpreads: Function}} The store.
+ * @returns {{loadSpreads: Function, saveSpreads: Function, prepareEditorChanges: Function, prepareSpreadFiles: Function}} The store.
  */
 function createSpreadStore(
 {
@@ -961,9 +965,12 @@ function createSpreadStore(
      * @param {string} request.revision The snapshot revision the changes were made to.
      * @param {string} [request.gameId] The game, for ability comments.
      * @param {Array<object>} request.operations The changes.
+     * @param {object} [options] Internal options.
+     * @param {boolean} [options.dryRun] Whether to skip every write and also return the resulting state and sources.
+     * @param {Map<string, Buffer>} [options.sources] Effective source bytes to use instead of reading the repository.
      * @returns {Promise<object>} The new snapshot, IDs of new spreads and per-file results.
      */
-    async function performSave(workspace, { revision, gameId, operations })
+    async function performSave(workspace, { revision, gameId, operations }, { dryRun = false, sources } = {})
     {
         // Changes must be made to the snapshot the server holds
         const state = workspace.spreads;
@@ -974,8 +981,8 @@ function createSpreadStore(
         if (revision !== state.revision)
             throw new ApiError(StatusCode.ClientErrorConflict, "SAVE_CONFLICT", "These changes were made to an older copy of the spreads. Load the repositories again.");
 
-        // The files must not have changed outside the editor since they were loaded
-        const inputs = await readInputs(workspace);
+        // The files must not have changed outside the editor since they were loaded (dry runs use the supplied sources)
+        const inputs = sources ? new Map(sources) : await readInputs(workspace);
         const changedFiles = INPUT_FILES.filter((file) => (inputs.has(file) ? hashBytes(inputs.get(file)) : undefined) !== state.hashes.get(file));
         if (changedFiles.length > 0)
             throw new ApiError(StatusCode.ClientErrorConflict, "SAVE_CONFLICT", `${changedFiles.join(", ")} changed outside the editor. Load the repositories again to see those changes.`, { files: changedFiles });
@@ -1021,12 +1028,14 @@ function createSpreadStore(
         }
 
         if (staged.length === 0)
-            return { spreads: toPayload(state), createdIds: {}, files: [], backupId: null };
+            return { spreads: toPayload(state), createdIds: {}, files: [], backupId: null,
+                ...(dryRun ? { state, sources: inputs } : {}) };
 
+        // Dry runs skip the backup and commit
         let backupId;
         try
         {
-            backupId = await commit(workspace, staged);
+            backupId = dryRun ? null : await commit(workspace, staged);
         }
         catch (error)
         {
@@ -1056,7 +1065,8 @@ function createSpreadStore(
                 {
                     if (typeof item !== "string")
                         return idsByModel.get(item);
-                    createdIds[item] = `e${(state.nextId++).toString(36)}`;
+                    // Dry runs keep temporary IDs so later operations can still refer to them
+                    createdIds[item] = dryRun ? item : `e${(state.nextId++).toString(36)}`;
                     return createdIds[item];
                 }));
             });
@@ -1067,7 +1077,9 @@ function createSpreadStore(
 
             // The next load can reuse the parse that verified this save
             const { slot, inputs: cacheInputs } = getCacheEntry(workspace, fileState.path, fileState.hash, state.macrosHash);
-            await cache.set(CACHE_SPREAD_FILE, slot, cacheInputs, parsed);
+            if (!dryRun)
+                await cache.set(CACHE_SPREAD_FILE, slot, cacheInputs, parsed);
+            inputs.set(fileState.path, newBytes);
         }
 
         state.revision = getRevision(state.hashes);
@@ -1078,7 +1090,99 @@ function createSpreadStore(
             createdIds,
             files: staged.map(({ fileState }) => ({ path: fileState.path, status: FILE_SAVED })),
             backupId,
+            ...(dryRun ? { state, sources: inputs } : {}),
         };
+    }
+
+    /**
+     * Renders pending editor operations against an isolated snapshot without committing files.
+     * @param {object} workspace The owned workspace.
+     * @param {object} request The revision and pending save operations.
+     * @param {object} [context] A server-owned effective editor snapshot.
+     * @returns {Promise<object>} An isolated state and rendered source bytes.
+     */
+    async function prepareEditorChanges(workspace, request, context)
+    {
+        // Work on a copy so the held snapshot is never changed
+        const isolated = { ...workspace, spreads: structuredClone(context?.state ?? workspace.spreads) };
+        return performSave(isolated, { ...request, revision: context?.state.revision ?? request.revision },
+            { dryRun: true, sources: context?.sources });
+    }
+
+    /**
+     * Converts selected imported sources to ordinary unsaved editor operations.
+     * @param {object} workspace The owned workspace.
+     * @param {Map<string, Buffer>} files Selected source bytes.
+     * @param {string} revision The saved disk revision.
+     * @param {object} [context] The effective current editor state.
+     * @returns {Promise<object>} Draft operations and affected files, without writes.
+     */
+    async function prepareSpreadFiles(workspace, files, revision, context)
+    {
+        // Start from the saved state unless an editor context is supplied, then validate each file
+        const saved = await prepareEditorChanges(workspace, { revision, operations: [] });
+        const current = context ?? saved;
+        const inputs = new Map(current.sources);
+        for (const [file, bytes] of files)
+        {
+            if (!CFRU_SPREAD_FILES.includes(file) || !current.state.files.has(file))
+                throw new ApiError(StatusCode.ClientErrorUnprocessableEntity, ARCHIVE_INVALID, "Import can only stage existing CFRU spread headers.");
+            const decoded = decodeSource(bytes);
+            const parsed = parseSpreads(decoded.text, current.state.macros);
+            if (!decoded.lossless || !parsed.editable || parsed.diagnostics.some((diagnostic) => diagnostic.severity === SEVERITY_ERROR))
+                throw new ApiError(StatusCode.ClientErrorUnprocessableEntity, ARCHIVE_INVALID, "A spread file cannot be parsed reliably.");
+            inputs.set(file, bytes);
+        }
+
+        // Build the proposed state and diff each set against the current one
+        const proposed = await buildState(workspace, inputs, cache);
+        const operations = [];
+        for (const file of files.keys())
+        {
+            const oldSets = [...current.state.sets.values()].filter((set) => set.file === file);
+            const newSets = [...proposed.sets.values()].filter((set) => set.file === file);
+            if (oldSets.length !== newSets.length || oldSets.some((set, index) => set.model.name !== newSets[index].model.name))
+                invalid("Import cannot add, remove, or rename spread set declarations.");
+            for (const [setIndex, set] of oldSets.entries())
+            {
+                const before = set.model.entries;
+                const after = newSets[setIndex].model.entries;
+                const mapping = matchEntries(before, after);
+                // Emit updates and additions in incoming order
+                const retained = new Set(mapping.values());
+                const order = [];
+                for (const [index, entry] of after.entries())
+                {
+                    const oldIndex = mapping.get(index);
+                    if (oldIndex != null)
+                    {
+                        const entryId = set.entryIds[oldIndex];
+                        const fields = Object.fromEntries(SPREAD_FIELDS.map((field) => field.name).filter((field) => !isSameValue(entry.fields[field], before[oldIndex].fields[field]))
+                            .map((field) => [field, entry.fields[field]]));
+                        if (Object.keys(fields).length)
+                            operations.push({ type: OPERATION_UPDATE, entryId, fields });
+                        order.push(entryId);
+                    }
+                    else
+                    {
+                        const tempId = `new-${crypto.randomUUID()}`;
+                        operations.push({ type: OPERATION_ADD, tempId, setId: set.id, fields: entry.fields });
+                        order.push(tempId);
+                    }
+                }
+                // Delete unmatched spreads and restore the incoming order
+                const deleted = set.entryIds.filter((_, index) => !retained.has(index));
+                operations.push(...deleted.map((entryId) => ({ type: OPERATION_DELETE, entryId })));
+                if (order.join() !== set.entryIds.join())
+                    operations.push({ type: OPERATION_REORDER, setId: set.id, order: [...order, ...deleted] });
+            }
+        }
+
+        // Verify the operations apply cleanly and report the affected files
+        await prepareEditorChanges(workspace, { revision, operations }, current);
+        return { operations, revision, files: [...new Set(operations.map((operation) => operation.setId
+            ? current.state.sets.get(operation.setId)?.file : current.state.sets.get(current.state.entries.get(operation.entryId)?.setId)?.file))]
+            .filter(Boolean).map((path) => ({ path, status: FILE_STAGED })), backupId: null };
     }
 
     /**
@@ -1097,7 +1201,7 @@ function createSpreadStore(
         return current;
     }
 
-    return { loadSpreads, saveSpreads };
+    return { loadSpreads, saveSpreads, prepareEditorChanges, prepareSpreadFiles };
 }
 module.exports.createSpreadStore = createSpreadStore;
 
@@ -1127,3 +1231,30 @@ function saveSpreads(workspace, request)
     return defaultStore.saveSpreads(workspace, request);
 }
 module.exports.saveSpreads = saveSpreads;
+
+/**
+ * Prepares an effective editor state without filesystem writes.
+ * @param {object} workspace The owned workspace.
+ * @param {object} request Pending editor operations and saved revision.
+ * @param {object} [context] A previously prepared effective snapshot.
+ * @returns {Promise<object>} Isolated state and source bytes.
+ */
+function prepareEditorChanges(workspace, request, context)
+{
+    return defaultStore.prepareEditorChanges(workspace, request, context);
+}
+module.exports.prepareEditorChanges = prepareEditorChanges;
+
+/**
+ * Produces unsaved operations for selected imported headers.
+ * @param {object} workspace The owned workspace.
+ * @param {Map<string, Buffer>} files Selected sources.
+ * @param {string} revision The disk revision.
+ * @param {object} [context] An effective editor context.
+ * @returns {Promise<object>} Operations and staged-file summaries.
+ */
+function prepareSpreadFiles(workspace, files, revision, context)
+{
+    return defaultStore.prepareSpreadFiles(workspace, files, revision, context);
+}
+module.exports.prepareSpreadFiles = prepareSpreadFiles;

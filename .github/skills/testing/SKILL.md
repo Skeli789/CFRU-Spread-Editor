@@ -43,6 +43,7 @@ Use Yarn and the narrowest relevant suite. Test user-visible behavior and real s
 - Server `test` is `mocha`; `test-all` is `mocha tests/**/*.test.js`. Pass the full server-relative path, not just a nested file's basename. Use `test`, not `test-all`, for focused file selection.
 - In PowerShell, `$env:DEBUG_PRINT_LIMIT=0; yarn test src/tests/SpreadEditor.test.jsx --run` reduces verbose DOM diagnostics. Use semicolons or `Push-Location`/`Pop-Location`, not shell `&&` in PowerShell 5.1. Frontend commands belong at root because some source assertions use root-relative reads.
 - Larger runtime changes finish with both complete suites and the build. Report unrelated failures without unrelated fixes. Documentation-only changes need link/frontmatter/fact verification, not a claim that runtime tests were run.
+- Spread-file exchange tests live in `server/tests/endpoints/archives.test.js`, `src/tests/RepositorySetup.test.jsx`, and `src/tests/SpreadCard.test.jsx`. The key invariant is that no CFRU bytes, backups, or journals change before Save Changes. The setup suite spies on Axios before resetting it so its request mocks stay usable with the current toolchain.
 
 ## Behavior and user decisions
 

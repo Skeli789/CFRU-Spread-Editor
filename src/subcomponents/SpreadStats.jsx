@@ -34,6 +34,7 @@ const REPEAT_MAX_STEPS = 8;
 const VIEW_DIVIDER_OPACITY = 0.08;
 const RAISED_LABEL = "Raised by nature";
 const LOWERED_LABEL = "Lowered by nature";
+const DIFF_BACKGROUND = "var(--spread-diff-background)";
 const RESET_EVS_TIP = "Reset all EVs to 0";
 const RESET_IVS_TIP = "Reset all IVs to 31, keeping unused attacking IVs at 0 and Speed at 0 for Gyro Ball, Trick Room or a Doubles Trick Room team";
 
@@ -228,9 +229,10 @@ const StepperInput = ({ label, canLower, canRaise, onStep, children }) =>
  * @param {object} [props.catalog] - The game catalog, for working out which IVs a reset keeps at 0.
  * @param {Array<{name: string, value: number|null}>} [props.teamTypes=[]] - The snapshot's resolved team enum.
  * @param {React.ReactNode} [props.footer] - Controls shown at the right of the Total row.
+ * @param {object} [props.highlightedFields] EV and IV fields highlighted in a comparison.
  * @returns {JSX.Element} The stat table.
  */
-const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange, name, catalog = null, teamTypes = [], footer = null }) =>
+const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange, name, catalog = null, teamTypes = [], footer = null, highlightedFields = null }) =>
 {
     const theme = useTheme();
     const nature = getNatureEffect(getFieldSymbol(fields, "nature"));
@@ -353,7 +355,9 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
                                     <Tooltip title={LOWERED_LABEL}><span role="img" aria-label={LOWERED_LABEL} className="nature-down"><ArrowDownwardIcon fontSize="inherit" /></span></Tooltip>}
                             </th>
                             <td>{baseStats?.[stat] ?? UNKNOWN_STAT}</td>
-                            <td style={!editing && evInvalid ? { color: theme.palette.error.main } : undefined}>
+                            <td data-highlighted-field={highlightedFields?.[EV_FIELDS[stat]] ? EV_FIELDS[stat] : undefined}
+                                style={{ color: !editing && evInvalid ? theme.palette.error.main : undefined,
+                                    backgroundColor: highlightedFields?.[EV_FIELDS[stat]] ? DIFF_BACKGROUND : undefined }}>
                                 {editing
                                     ? <StepperInput label={`${label} EVs`} onStep={(direction) => step(stat, direction)}
                                                     canLower={stepEv(fields, stat, DIRECTION_DOWN, littleCup) != null} canRaise={stepEv(fields, stat, DIRECTION_UP, littleCup) != null}>
@@ -363,7 +367,8 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
                                     </StepperInput>
                                     : ev}
                             </td>
-                            <td>
+                            <td data-highlighted-field={highlightedFields?.[IV_FIELDS[stat]] ? IV_FIELDS[stat] : undefined}
+                                style={highlightedFields?.[IV_FIELDS[stat]] ? { backgroundColor: DIFF_BACKGROUND } : undefined}>
                                 {editing
                                     ? <StepperInput label={`${label} IV`} onStep={(direction) => stepIv(stat, direction)}
                                                     canLower={!Number.isInteger(iv) || iv > 0} canRaise={!Number.isInteger(iv) || iv < MAX_IV}>

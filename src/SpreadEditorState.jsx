@@ -45,6 +45,7 @@ const API_BASE = `${config.devServer}/api`;
 const SESSION_HEADER = "X-Session-Token";
 const MAX_REQUEST_ATTEMPTS = 2;
 const ARCHIVE_FILENAME = "spread-editor-reqs.zip";
+const SPREAD_ARCHIVE_FILENAME = "spread-files.zip";
 const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const ARCHIVE_CONTENT_TYPE = "application/zip";
 const PROGRESS_POLL_INTERVAL = 250;
@@ -64,7 +65,10 @@ const OPERATION_UPDATE = "update";
 const OPERATION_DELETE = "delete";
 const OPERATION_ADD = "add";
 const OPERATION_REORDER = "reorder";
+const FILE_STAGED = "staged";
 const MOVES_FIELD = "moves";
+const PREPARING_CURRENT_MESSAGE = "Preparing Current Spreads...";
+const INCOMING_SPECIES_UNAVAILABLE_MESSAGE = "An incoming species is unavailable in this game's catalog.";
 const EMPTY_MOVE = 0;
 const MOVE_NONE = "MOVE_NONE";
 const EMPTY_INDEX = Object.freeze({ entries: new Map(), sets: new Map() });
@@ -106,6 +110,8 @@ const ACTION =
     REPLACE_WORKSPACE: "replaceWorkspace",
     ARCHIVE_START: "archiveStart",
     ARCHIVE_END: "archiveEnd",
+    ARCHIVE_RESET: "archiveReset",
+    SPREAD_IMPORT_SUCCESS: "spreadImportSuccess",
     PROGRESS: "progress",
 };
 
@@ -637,6 +643,33 @@ function isSameSpreads(a, b)
 }
 
 /**
+ * Builds pending operations shared by explicit saves and read-only import comparisons.
+ *
+ * @param {object} state The current state.
+ * @returns {Array<object>} Pending update, delete, add, and reorder operations.
+ */
+function getPendingOperations(state)
+{
+    // Anchor each new spread after its nearest surviving predecessor
+    const { drafts, deleted, spreadIndex, newEntries, orders } = state;
+    const additions = Object.entries(newEntries).map(([tempId, entry]) =>
+    {
+        const order = orders[entry.setId];
+        const preceding = order.slice(0, order.indexOf(tempId)).filter((id) => !newEntries[id] && !deleted.has(id));
+        return { type: OPERATION_ADD, tempId, setId: entry.setId, afterEntryId: preceding.at(-1) ?? null, fields: drafts[tempId] ?? entry.fields };
+    });
+    // Report only sets whose order differs from the default
+    const reorders = Object.entries(orders).filter(([setId, order]) =>
+        getDefaultOrder(spreadIndex.sets.get(setId), additions.filter((addition) => addition.setId === setId), deleted).join() !== order.join())
+        .map(([setId, order]) => ({ type: OPERATION_REORDER, setId, order }));
+
+    // Combine updates, deletes, additions and reorders
+    return [...Object.entries(drafts).filter(([id]) => !deleted.has(id) && !newEntries[id]).map(([entryId, fields]) =>
+        ({ type: OPERATION_UPDATE, entryId, fields: getChangedFields(fields, spreadIndex.entries.get(entryId).fields) })),
+        ...[...deleted].map((entryId) => ({ type: OPERATION_DELETE, entryId })), ...additions, ...reorders];
+}
+
+/**
  * Updates editor state.
  *
  * @param {object} state The current state.
@@ -719,6 +752,44 @@ function reducer(state, action)
             return { ...state, storageUnavailable: true };
         case ACTION.ARCHIVE_START:
             return { ...state, downloading: true, archiveError: null };
+        case ACTION.ARCHIVE_RESET:
+            return { ...state, archiveError: null, archiveProgress: null };
+        case ACTION.SPREAD_IMPORT_SUCCESS:
+        {
+            // Replay each staged operation through the ordinary editing actions
+            let next = state;
+            for (const operation of action.result.operations)
+            {
+                if (operation.type === OPERATION_UPDATE)
+                    next = reducer(next, { type: ACTION.APPLY_CHANGES, changes: [{ id: operation.entryId, fields: operation.fields }] });
+                else if (operation.type === OPERATION_DELETE)
+                    next = reducer(next, { type: ACTION.DELETE_SPREAD, id: operation.entryId });
+                else if (operation.type === OPERATION_ADD)
+                {
+                    next = reducer(next, { type: ACTION.ADD_SPREAD, setId: operation.setId,
+                        spreads: [{ id: operation.tempId, fields: operation.fields }], edit: false });
+
+                    // Place the addition at its anchor instead of the default species position
+                    const order = next.orders[operation.setId].filter((id) => id !== operation.tempId);
+                    const position = operation.beforeEntryId ? order.indexOf(operation.beforeEntryId)
+                        : operation.afterEntryId ? order.indexOf(operation.afterEntryId) + 1 : order.length;
+                    order.splice(position, 0, operation.tempId);
+                    next = { ...next, orders: { ...next.orders, [operation.setId]: order } };
+                }
+                else if (operation.type === OPERATION_REORDER)
+                {
+                    // Keep spreads missing from the order at the end
+                    const order = operation.order.filter((id) => next.spreadIndex.entries.has(id));
+                    for (const id of next.orders[operation.setId] ?? next.spreadIndex.sets.get(operation.setId).entryIds)
+                    {
+                        if (!order.includes(id))
+                            order.push(id);
+                    }
+                    next = reducer(next, { type: ACTION.ORDER_SET, setId: operation.setId, order });
+                }
+            }
+            return { ...next, editing: new Set(), saveError: null };
+        }
         case ACTION.ARCHIVE_END:
             return { ...state, downloading: false, archiveError: action.error ?? null,
                 archiveProgress: action.error ? state.archiveProgress : { ...state.archiveProgress, percentage: 100 } };
@@ -811,7 +882,7 @@ function reducer(state, action)
                 || !action.order.every((id) => ids.includes(id)))
                 return state;
 
-            const moves = [...new Set([...(state.orderMoves[action.setId] ?? []), ...action.moved])];
+            const moves = [...new Set([...(state.orderMoves[action.setId] ?? []), ...(action.moved ?? [])])];
             return { ...state, ...withOrder(state, action.setId, action.order, moves) };
         }
         case ACTION.REVERT_ORDER:
@@ -1178,7 +1249,7 @@ export const SpreadEditorProvider = ({ children }) =>
             {
                 ...options,
                 params: { ...options.params, progressId },
-                ...(route === "/workspaces/import" ? { onUploadProgress: (event) =>
+                ...(route === "/workspaces/import" || route.endsWith("/spread-files/import") ? { onUploadProgress: (event) =>
                 {
                     const total = event.total || body.size;
                     if (total > 0 && !serverStage)
@@ -1357,9 +1428,11 @@ export const SpreadEditorProvider = ({ children }) =>
     /**
      * Downloads the saved source files, recovering a workspace lost after a server restart.
      *
+     * @param {boolean} [spreadsOnly] Whether to export only spread headers.
+     * @param {string} [exportName] An optional spread-export baseline name.
      * @returns {Promise<void>} Resolves after download or visible error feedback.
      */
-    const downloadArchive = useCallback(async () =>
+    const downloadArchive = useCallback(async (spreadsOnly = false, exportName = "") =>
     {
         const current = stateRef.current;
         if (current.phase !== EDITOR_PHASE.READY || current.saving || archiveBusyRef.current)
@@ -1369,13 +1442,22 @@ export const SpreadEditorProvider = ({ children }) =>
         dispatch({ type: ACTION.ARCHIVE_START });
         let url;
         let anchor;
+        const endpoint = spreadsOnly === true ? "spread-files/export" : "archive";
+        const body = { gameId: current.gameId, ...(spreadsOnly === true && exportName.trim() ? { name: exportName.trim() } : {}) };
         try
         {
             let workspace = current.workspace;
             let blob;
+
+            /**
+             * Requests the archive from a workspace.
+             * @param {object} target The workspace to export.
+             * @returns {Promise<Blob>} The ZIP.
+             */
+            const requestDownload = (target) => trackedPost(`/workspaces/${target.workspaceId}/${endpoint}`, body, "archiveProgress", "Preparing download...", { responseType: "blob" });
             try
             {
-                blob = await trackedPost(`/workspaces/${workspace.workspaceId}/archive`, { gameId: current.gameId }, "archiveProgress", "Preparing download...", { responseType: "blob" });
+                blob = await requestDownload(workspace);
             }
             catch (error)
             {
@@ -1383,12 +1465,12 @@ export const SpreadEditorProvider = ({ children }) =>
                     throw error;
                 workspace = await trackedPost("/workspaces/load", { paths: loadedPathsRef.current }, "archiveProgress", "Checking repositories...");
                 dispatch({ type: ACTION.REPLACE_WORKSPACE, workspace: { ...workspace, spreads: current.workspace.spreads } });
-                blob = await trackedPost(`/workspaces/${workspace.workspaceId}/archive`, { gameId: current.gameId }, "archiveProgress", "Preparing download...", { responseType: "blob" });
+                blob = await requestDownload(workspace);
             }
             url = URL.createObjectURL(blob);
             anchor = document.createElement("a");
             anchor.href = url;
-            anchor.download = ARCHIVE_FILENAME;
+            anchor.download = spreadsOnly === true ? SPREAD_ARCHIVE_FILENAME : ARCHIVE_FILENAME;
             document.body.appendChild(anchor);
             anchor.click();
             dispatch({ type: ACTION.ARCHIVE_END });
@@ -1407,6 +1489,181 @@ export const SpreadEditorProvider = ({ children }) =>
             archiveBusyRef.current = false;
         }
     }, [trackedPost]);
+
+    /**
+     * Stages preview operations synchronously without contacting the server.
+     * @param {object|Array<object>} comparison One or more comparisons and their prepared operations.
+     * @param {string} editorOperationKey The expected current pending operations.
+     * @returns {object|boolean} The staged result, or false if the preview is stale.
+     */
+    const acceptSpreadComparison = useCallback((comparison, editorOperationKey) =>
+    {
+        // Refuse while busy or when the editor changed since the preview
+        const current = stateRef.current;
+        if (current.phase !== EDITOR_PHASE.READY || current.saving || archiveBusyRef.current)
+            return false;
+        try
+        {
+            if (JSON.stringify(getPendingOperations(current)) !== editorOperationKey)
+                throw { message: "The editor changed after this preview. Preview the ZIP again." };
+            // Validate each comparison and stage its operations in order
+            const comparisons = Array.isArray(comparison) ? comparison : [comparison];
+            let next = current;
+            const operations = [];
+            for (const row of comparisons)
+            {
+                if (!Array.isArray(row.operations))
+                    throw { message: "This preview does not contain local edits. Preview the ZIP again." };
+                if (row.operations.some((operation) => operation.type === OPERATION_ADD && !current.catalog?.species?.[operation.fields.species]))
+                    throw { message: INCOMING_SPECIES_UNAVAILABLE_MESSAGE };
+                // Anchor grouped additions to their already staged neighbors to keep incoming order
+                const edits = row.operations.map((operation) =>
+                {
+                    if (operation.type !== OPERATION_ADD || !row.additionOrder)
+                        return operation;
+                    const position = row.additionOrder.indexOf(operation.tempId);
+                    const preceding = row.additionOrder.slice(0, position).findLast((id) => next.newEntries[id]);
+                    const following = row.additionOrder.slice(position + 1).find((id) => next.newEntries[id]);
+                    return { ...operation, ...(preceding ? { afterEntryId: preceding } : following ? { beforeEntryId: following } : {}) };
+                });
+                next = reducer(next, { type: ACTION.SPREAD_IMPORT_SUCCESS, result: { operations: edits } });
+                operations.push(...edits);
+            }
+            // Publish the staged state immediately so a following accept sees it
+            const result = { operations, files: [...new Set(comparisons.map((row) => row.file))].map((path) => ({ path, status: FILE_STAGED })) };
+            stateRef.current = next;
+            dispatch({ type: ACTION.SPREAD_IMPORT_SUCCESS, result });
+            dispatch({ type: ACTION.ARCHIVE_RESET });
+            return { ...result, editorOperationKey: JSON.stringify(getPendingOperations(next)) };
+        }
+        catch (error)
+        {
+            dispatch({ type: ACTION.ARCHIVE_END, error: { message: error.message } });
+            return false;
+        }
+    }, []);
+
+    /**
+     * Uploads replacement spread headers and stages unsaved editor operations.
+     * @param {File} file The chosen ZIP.
+     * @param {object} [merge] Optional { baselineId } for a smart-import preview.
+     * @returns {Promise<boolean|object>} The preview/import result, or false on failure.
+     */
+    const importSpreadFiles = useCallback(async (file, merge = {}) =>
+    {
+        // Refuse while busy and validate the chosen file
+        const current = stateRef.current;
+        if (current.phase !== EDITOR_PHASE.READY || current.saving || archiveBusyRef.current)
+            return false;
+        if (!file || !/\.zip$/i.test(file.name) || file.size === 0 || file.size > MAX_ARCHIVE_BYTES)
+        {
+            dispatch({ type: ACTION.ARCHIVE_END, error: { message: "Choose a non-empty ZIP file no larger than 128 MiB." } });
+            return false;
+        }
+        archiveBusyRef.current = true;
+        dispatch({ type: ACTION.ARCHIVE_START });
+        try
+        {
+            // Send the pending edits as the current snapshot, then upload the ZIP (reloading once if the server restarted)
+            let workspace = current.workspace;
+            let result;
+            const pendingOperations = getPendingOperations(current);
+            const editorOperationKey = JSON.stringify(pendingOperations);
+            const options = { headers: { "Content-Type": ARCHIVE_CONTENT_TYPE },
+                params: { revision: workspace.spreads.revision, ...(merge.baselineId ? { baselineId: merge.baselineId } : {}) } };
+
+            /**
+             * Posts the current editor context, then uploads the ZIP.
+             * @param {object} target The workspace to import into.
+             * @returns {Promise<object>} The import response.
+             */
+            const requestImport = async (target) =>
+            {
+                const context = await trackedPost(`/workspaces/${target.workspaceId}/spread-files/current`,
+                    { revision: target.spreads.revision, gameId: current.gameId, operations: pendingOperations }, "archiveProgress", PREPARING_CURRENT_MESSAGE);
+                options.params.currentId = context.currentId;
+                return trackedPost(`/workspaces/${target.workspaceId}/spread-files/import`, file, "archiveProgress", "Uploading ZIP...", options);
+            };
+
+            try
+            {
+                result = await requestImport(workspace);
+            }
+            catch (error)
+            {
+                if (error.code !== ERROR_WORKSPACE_NOT_FOUND)
+                    throw error;
+                workspace = await trackedPost("/workspaces/load", { paths: loadedPathsRef.current }, "archiveProgress", "Checking repositories...");
+                if (!isSameSpreads(current.workspace.spreads, workspace.spreads))
+                    throw { message: "The server restarted and the spread files changed. Load the repositories again before importing." };
+                dispatch({ type: ACTION.REPLACE_WORKSPACE, workspace });
+                result = await requestImport(workspace);
+            }
+            // Smart import returns a preview to review
+            if (merge.baselineId)
+            {
+                if (!result?.previewId || !Array.isArray(result.changes) || !Array.isArray(result.conflicts))
+                    throw { message: "The editor server returned an unexpected merge preview." };
+                dispatch({ type: ACTION.ARCHIVE_END });
+                return { ...result, editorOperationKey };
+            }
+            // Overwrite import stages the returned operations as unsaved edits
+            if (!Array.isArray(result?.operations) || result.revision !== workspace.spreads.revision)
+                throw { message: "The editor server returned an unexpected import response. Load the repositories again." };
+            if (JSON.stringify(getPendingOperations(stateRef.current)) !== editorOperationKey)
+                throw { message: "The editor changed while importing. Preview the ZIP again." };
+            if (result.operations.some((operation) => operation.type === OPERATION_ADD && !current.catalog?.species?.[operation.fields.species]))
+                throw { message: INCOMING_SPECIES_UNAVAILABLE_MESSAGE };
+            dispatch({ type: ACTION.SPREAD_IMPORT_SUCCESS, result });
+            dispatch({ type: ACTION.ARCHIVE_END });
+            return { ...result, editorOperationKey: JSON.stringify(getPendingOperations(reducer(current, { type: ACTION.SPREAD_IMPORT_SUCCESS, result }))) };
+        }
+        catch (error)
+        {
+            if (error.code !== ERROR_OPERATION_CANCELLED)
+                dispatch({ type: ACTION.ARCHIVE_END, error: { code: error.code, message: error.message ?? "Could not import the spread files. Try again." } });
+            return false;
+        }
+        finally
+        {
+            archiveBusyRef.current = false;
+        }
+    }, [trackedPost]);
+
+    /**
+     * Lists repository-scoped export dates, recovering a workspace lost after restart.
+     * @returns {Promise<Array<object>>} Retained exports, newest first.
+     */
+    const listSpreadExports = useCallback(async () =>
+    {
+        // Request the history, reloading the workspace once if the server restarted
+        const current = stateRef.current;
+        let workspace = current.workspace;
+        let result;
+
+        /**
+         * Requests the export history from a workspace.
+         * @param {object} target The workspace to query.
+         * @returns {Promise<object>} The export history response.
+         */
+        const requestExports = (target) => post(`/workspaces/${target.workspaceId}/spread-files/exports`, {});
+        try
+        {
+            result = await requestExports(workspace);
+        }
+        catch (error)
+        {
+            if (error.code !== ERROR_WORKSPACE_NOT_FOUND)
+                throw error;
+            workspace = await post("/workspaces/load", { paths: loadedPathsRef.current });
+            dispatch({ type: ACTION.REPLACE_WORKSPACE, workspace: { ...workspace, spreads: current.workspace.spreads } });
+            result = await requestExports(workspace);
+        }
+        // Reject malformed history entries
+        if (!Array.isArray(result?.exports) || result.exports.some((entry) => typeof entry.id !== "string" || !Number.isFinite(Date.parse(entry.exportedAt))))
+            throw { message: "The editor server returned an unexpected export history." };
+        return result.exports;
+    }, [post]);
 
     /**
      * Opens the native folder dialog for a repository.
@@ -1464,20 +1721,7 @@ export const SpreadEditorProvider = ({ children }) =>
         if (saving || archiveBusyRef.current || findSaveProblems(Object.fromEntries(Object.entries(drafts).filter(([id]) => !deleted.has(id))), spreadIndex.entries, catalog).length > 0)
             return false;
 
-        const additions = Object.entries(newEntries).map(([tempId, entry]) =>
-        {
-            const order = orders[entry.setId];
-            const preceding = order.slice(0, order.indexOf(tempId)).filter((id) => !newEntries[id] && !deleted.has(id));
-            return { type: OPERATION_ADD, tempId, setId: entry.setId, afterEntryId: preceding.at(-1) ?? null, fields: drafts[tempId] };
-        });
-
-        // Orders list deleted spreads too, and are only sent when adding after anchors would not give them
-        const reorders = Object.entries(orders).filter(([setId, order]) =>
-            getDefaultOrder(spreadIndex.sets.get(setId), additions.filter((addition) => addition.setId === setId), deleted).join() !== order.join())
-            .map(([setId, order]) => ({ type: OPERATION_REORDER, setId, order }));
-        const operations = [...Object.entries(drafts).filter(([id]) => !deleted.has(id) && !newEntries[id]).map(([entryId, fields]) =>
-            ({ type: OPERATION_UPDATE, entryId, fields: getChangedFields(fields, spreadIndex.entries.get(entryId).fields) })),
-            ...[...deleted].map((entryId) => ({ type: OPERATION_DELETE, entryId })), ...additions, ...reorders];
+        const operations = getPendingOperations(stateRef.current);
         const request = () => post(`/workspaces/${workspace.workspaceId}/save`, { revision: workspace.spreads.revision, gameId, operations });
         dispatch({ type: ACTION.SAVE_START });
 
@@ -1561,6 +1805,7 @@ export const SpreadEditorProvider = ({ children }) =>
         setEditing: (id, editing) => dispatch({ type: ACTION.SET_EDITING, id, editing }),
         setPreview: (preview) => dispatch({ type: ACTION.SET_PREVIEW, preview }),
         clearSaveError: () => dispatch({ type: ACTION.CLEAR_SAVE_ERROR }),
+        clearArchiveFeedback: () => dispatch({ type: ACTION.ARCHIVE_RESET }),
     }), [loadSmogonSets]);
 
     const movedIds = useMemo(() => findMovedIds({ orders: state.orders, orderMoves: state.orderMoves, spreadIndex: state.spreadIndex }),
@@ -1585,13 +1830,16 @@ export const SpreadEditorProvider = ({ children }) =>
         setPath: (kind, pathValue) => dispatch({ type: ACTION.SET_PATH, kind, value: pathValue }),
         browse,
         importArchive,
+        importSpreadFiles,
+        acceptSpreadComparison,
+        listSpreadExports,
         downloadArchive,
         loadRepositories: () => loadRepositories(state.paths, state.gameId),
         selectGame: (gameId) => selectGame(state.workspace, gameId),
         changeRepositories: () => dispatch({ type: ACTION.CHANGE_REPOSITORIES }),
         changeGame: () => dispatch({ type: ACTION.CHANGE_GAME }),
         cancelChange: () => dispatch({ type: ACTION.CANCEL_CHANGE, paths: loadedPathsRef.current ?? state.paths }),
-    }), [state, actions, movedIds, orderMoves, transferredIds, saveProblems, saveChanges, browse, importArchive, downloadArchive, loadRepositories, selectGame]);
+    }), [state, actions, movedIds, orderMoves, transferredIds, saveProblems, saveChanges, browse, importArchive, importSpreadFiles, acceptSpreadComparison, listSpreadExports, downloadArchive, loadRepositories, selectGame]);
 
     return (
         <SpreadEditorContext.Provider value={value}>

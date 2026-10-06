@@ -2,7 +2,8 @@ const express = require("express");
 const { StatusCode } = require("status-code-enum");
 const { ApiError } = require("../middleware/errors");
 const { requireSession } = require("../middleware/security");
-const { ARCHIVE_CONTENT_TYPE, MAX_COMPRESSED_BYTES, importArchive } = require("../services/archives");
+const { ARCHIVE_CONTENT_TYPE, MAX_COMPRESSED_BYTES, importArchive, importSpreadFiles } = require("../services/archives");
+const { getWorkspace } = require("../services/repositories");
 const { registerRequestProgress } = require("../middleware/progress");
 const { PROGRESS_LABELS } = require("../services/progress");
 
@@ -95,6 +96,19 @@ router.post("/api/workspaces/import", requireSession, trackUpload, requireZipBod
         const snapshot = await importArchive(req.body, req.operationProgress?.update);
         req.operationProgress?.complete();
         res.status(StatusCode.SuccessOK).send(snapshot);
+    });
+
+/**
+ * Validates a spread-only ZIP and returns staged operations or a smart-import preview without writing files.
+ * @route POST /api/workspaces/:id/spread-files/import
+ */
+router.post("/api/workspaces/:id/spread-files/import", requireSession, trackUpload, requireZipBody,
+    express.raw({ type: ARCHIVE_CONTENT_TYPE, limit: MAX_COMPRESSED_BYTES, inflate: false }), async (req, res) =>
+    {
+        req.stopProgressUpload?.();
+        const result = await importSpreadFiles(getWorkspace(req.params.id), req.body, req.query.revision, req.operationProgress?.update, req.query.baselineId, req.query.currentId);
+        req.operationProgress?.complete();
+        res.status(StatusCode.SuccessOK).send(result);
     });
 
 module.exports = router;

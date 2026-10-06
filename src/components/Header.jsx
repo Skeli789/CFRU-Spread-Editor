@@ -5,19 +5,25 @@
 
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Accordion, AccordionDetails, AccordionSummary, Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Menu, MenuItem, Stack, Typography } from "@mui/material";
+import { Accordion, AccordionDetails, AccordionSummary, Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Menu, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MenuIcon from "@mui/icons-material/Menu";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
+import DownloadIcon from "@mui/icons-material/Download";
 
 import DarkModeButton from "../subcomponents/DarkModeButton";
 import OperationProgress from "../subcomponents/OperationProgress";
 import { EDITOR_PHASE, useSpreadEditor } from "../SpreadEditorState";
 import { UnsavedChangesDialog } from "./SpreadDialogs";
+import SpreadFileImportDialog from "./SpreadFileImportDialog";
 
 import "../styles/HeaderFooter.css";
 
 const UNKNOWN_SOURCE = "Game catalog";
+const REQUIRED_DOWNLOAD_LABEL = "Download Required Files";
+const SPREAD_EXPORT_LABEL = "Export Spread Files";
+const SPREAD_IMPORT_LABEL = "Import Spread Files";
+const MAX_EXPORT_NAME_LENGTH = 128;
 
 
 /**
@@ -58,7 +64,9 @@ const Header = ({ darkMode, toggleParentDarkMode }) =>
     const { state, dirtyCount, saveProblems, saveChanges, discardChanges } = editor;
     const [menuAnchor, setMenuAnchor] = useState(null);
     const [showWarnings, setShowWarnings] = useState(false);
-    const [showDownload, setShowDownload] = useState(false);
+    const [showDownload, setShowDownload] = useState(null);
+    const [exportName, setExportName] = useState("");
+    const [showImport, setShowImport] = useState(false);
     const [pendingAction, setPendingAction] = useState(null);
     const ready = state.phase === EDITOR_PHASE.READY;
     const diagnostics = ready ? [...(state.workspace?.diagnostics ?? []), ...(state.catalog?.diagnostics ?? [])] : [];
@@ -71,8 +79,8 @@ const Header = ({ darkMode, toggleParentDarkMode }) =>
      */
     useEffect(() =>
     {
-        if (showDownload)
-            downloadArchive();
+        if (showDownload && showDownload !== SPREAD_EXPORT_LABEL)
+            downloadArchive(false);
     }, [showDownload, downloadArchive]);
 
     /**
@@ -109,7 +117,19 @@ const Header = ({ darkMode, toggleParentDarkMode }) =>
                     <Menu anchorEl={menuAnchor} open={menuAnchor != null} onClose={() => setMenuAnchor(null)}>
                         <MenuItem disabled={busy} onClick={() => chooseAction(editor.changeGame)}>Change Game</MenuItem>
                         <MenuItem disabled={busy} onClick={() => chooseAction(editor.changeRepositories)}>Change Repositories</MenuItem>
-                        <MenuItem disabled={busy} onClick={() => chooseAction(() => setShowDownload(true))}>Download Required Files</MenuItem>
+                        <MenuItem disabled={busy} onClick={() => chooseAction(() => setShowDownload(REQUIRED_DOWNLOAD_LABEL))}>{REQUIRED_DOWNLOAD_LABEL}</MenuItem>
+                        <MenuItem disabled={busy} onClick={() => chooseAction(() =>
+                        {
+                            setExportName("");
+                            editor.clearArchiveFeedback();
+                            setShowDownload(SPREAD_EXPORT_LABEL);
+                        })}>{SPREAD_EXPORT_LABEL}</MenuItem>
+                        <MenuItem disabled={busy} onClick={() =>
+                        {
+                            setMenuAnchor(null);
+                            editor.clearArchiveFeedback();
+                            setShowImport(true);
+                        }}>{SPREAD_IMPORT_LABEL}</MenuItem>
                         {diagnostics.length > 0 && <MenuItem onClick={() => { setMenuAnchor(null); setShowWarnings(true); }}>View Load Warnings</MenuItem>}
                     </Menu>
                     <Dialog open={showWarnings} onClose={() => setShowWarnings(false)} aria-labelledby="load-warnings-title" fullWidth maxWidth="sm" scroll="paper">
@@ -129,24 +149,32 @@ const Header = ({ darkMode, toggleParentDarkMode }) =>
                         </DialogContent>
                         <DialogActions><Button onClick={() => setShowWarnings(false)}>Close</Button></DialogActions>
                     </Dialog>
-                    <Dialog open={showDownload} onClose={() => !state.downloading && setShowDownload(false)}
+                    <Dialog open={showDownload != null} onClose={() => !state.downloading && setShowDownload(null)}
                             aria-labelledby="archive-download-title" fullWidth maxWidth="sm">
-                        <DialogTitle id="archive-download-title">Download Required Files</DialogTitle>
+                        <DialogTitle id="archive-download-title">{showDownload}</DialogTitle>
                         <DialogContent>
                             <Stack spacing={2}>
                                 <Typography variant="body2">
-                                    The ZIP contains saved source files, not unsaved drafts. Uploaded archives are edited in a local cached copy.
-                                    Saves only update that cache; re-download the ZIP to transfer your saved changes elsewhere.
+                                    {showDownload === SPREAD_EXPORT_LABEL ? "The ZIP contains your saved CFRU spread files."
+                                        : "The ZIP contains saved source files, not unsaved drafts. Uploaded archives are edited in a local cached copy. Saves only update that cache; re-download the ZIP to transfer your saved changes elsewhere."}
                                 </Typography>
+                                {showDownload === SPREAD_EXPORT_LABEL && <TextField label="Export Name" value={exportName}
+                                    onChange={(event) => setExportName(event.target.value)} disabled={state.downloading} autoFocus fullWidth
+                                    slotProps={{ htmlInput: { maxLength: MAX_EXPORT_NAME_LENGTH } }} />}
                                 <OperationProgress progress={state.archiveProgress} />
                                 {state.archiveError && <Alert severity="error">{state.archiveError.message}</Alert>}
                             </Stack>
                         </DialogContent>
                         <DialogActions>
-                            <Button disabled={state.downloading} onClick={() => setShowDownload(false)}>Close</Button>
-                            {state.archiveError && <Button disabled={state.downloading || state.saving} onClick={downloadArchive}>Retry</Button>}
+                            <Button disabled={state.downloading} onClick={() => setShowDownload(null)}>Close</Button>
+                            {showDownload === SPREAD_EXPORT_LABEL && !state.archiveError && <Button variant="outlined" color="focus"
+                                startIcon={<DownloadIcon />} disabled={state.downloading || state.saving}
+                                onClick={() => downloadArchive(true, exportName)}>Export</Button>}
+                            {state.archiveError && <Button startIcon={<DownloadIcon />} disabled={state.downloading || state.saving}
+                                onClick={() => downloadArchive(showDownload === SPREAD_EXPORT_LABEL, exportName)}>Retry</Button>}
                         </DialogActions>
                     </Dialog>
+                    <SpreadFileImportDialog open={showImport} onClose={() => setShowImport(false)} />
                     <UnsavedChangesDialog open={pendingAction != null} count={dirtyCount} saving={state.saving} canSave={saveProblems.length === 0}
                                           error={state.saveError} onCancel={() => setPendingAction(null)}
                                           onDiscard={() => { discardChanges(); pendingAction(); setPendingAction(null); }}
