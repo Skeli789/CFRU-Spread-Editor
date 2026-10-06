@@ -2,8 +2,11 @@ import React from "react";
 import { readFileSync } from "node:fs";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
+import { Autocomplete, Paper, TextField, ThemeProvider } from "@mui/material";
+import userEvent from "@testing-library/user-event";
 
 import App from "../App";
+import { APP_THEME, DARK_APP_THEME, createRankedFilterOptions } from "../Theme";
 import PrivacyPolicy from "../components/PrivacyPolicy";
 import TermsOfService from "../components/TermsOfService";
 
@@ -21,6 +24,35 @@ test("renders app", () =>
 {
     const { getByTestId } = render(<App />);
     expect(getByTestId("spread-editor-page")).toBeInTheDocument();
+});
+
+test.each([APP_THEME, DARK_APP_THEME])("autocomplete ranks prefixes first and Enter selects the first result in either theme", async (theme) =>
+{
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ThemeProvider theme={theme}>
+        <Autocomplete autoHighlight options={["Great Ball", "Ultra Ball", "Ball", "Ball Capsule", "Potion"]}
+            onChange={onChange} renderInput={(params) => <TextField {...params} label="Search" />} />
+    </ThemeProvider>);
+
+    const input = screen.getByRole("combobox", { name: "Search" });
+    await user.type(input, "bAlL");
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["Ball", "Ball Capsule", "Great Ball", "Ultra Ball"]);
+    await user.keyboard("{Enter}");
+    expect(input).toHaveValue("Ball");
+    expect(onChange.mock.calls[0][1]).toBe("Ball");
+});
+
+test("ranked autocomplete filters preserve normalization, empty searches and custom searchable text", () =>
+{
+    const options = [{ name: "Cafe Special", date: "2026" }, { name: "Special Cafe", date: "2025" }, { name: "Cafeteria", date: "2024" }];
+    const filter = createRankedFilterOptions({ stringify: (option) => `${option.name} ${option.date}` });
+    const state = { inputValue: "  CAFÉ  ", getOptionLabel: (option) => option.name };
+
+    expect(filter(options, state)).toEqual([options[0], options[2], options[1]]);
+    expect(filter(options, { ...state, inputValue: " " })).toEqual(options);
+    expect(filter(options, { ...state, inputValue: "2025" })).toEqual([options[1]]);
+    expect(filter(options, { ...state, inputValue: "missing" })).toEqual([]);
 });
 
 test("privacy policy explains local hosting, stored data, and removal", () =>
@@ -81,12 +113,12 @@ test("terms explain local-only use, license rights, and qualified disclaimers", 
     expect(screen.getByText(/Terms may be updated with future app versions/)).toHaveTextContent("there is no account to close");
 });
 
-test("uses the red light theme and persists a dark mode toggle", () =>
+test("uses the softened maroon light theme and persists a dark mode toggle", () =>
 {
     const { getByTestId } = render(<App />);
     const app = document.documentElement;
-    expect(app.style.getPropertyValue("--theme")).toBe("#ff0000");
-    expect(app.style.getPropertyValue("--app-background")).toBe("#f8f9fa");
+    expect(app.style.getPropertyValue("--theme")).toBe("#800000");
+    expect(app.style.getPropertyValue("--app-background")).toBe("#e8edf1");
     expect(app.style.getPropertyValue("--focus")).toBe("#1976d2");
 
     fireEvent.click(getByTestId("dark-mode-button"));
@@ -97,7 +129,25 @@ test("uses the red light theme and persists a dark mode toggle", () =>
 
     fireEvent.click(getByTestId("dark-mode-button"));
     expect(localStorage.getItem("darkMode")).toBe("false");
-    expect(app.style.getPropertyValue("--theme")).toBe("#ff0000");
+    expect(app.style.getPropertyValue("--theme")).toBe("#800000");
+    expect(app.style.getPropertyValue("--app-background")).toBe("#e8edf1");
+});
+
+test.each([
+    { theme: APP_THEME, paper: "#f1f4f6", card: "#dae6f0" },
+    { theme: DARK_APP_THEME, paper: "#2f2f2f", card: "#2f2f2f" },
+])("spread previews are tinted but editing cards match dialog paper in $theme.palette.mode mode", ({ theme, paper, card }) =>
+{
+    render(<ThemeProvider theme={theme}>
+        <Paper data-testid="plain-paper">Dialog Surface</Paper>
+        <Paper component="article" className="spread-card">Spread Preview</Paper>
+        <Paper component="article" className="spread-card spread-card-editing">Edit Spread</Paper>
+    </ThemeProvider>);
+
+    expect(screen.getByTestId("plain-paper")).toHaveStyle({ backgroundColor: paper });
+    expect(screen.getByText("Spread Preview")).toHaveStyle({ backgroundColor: card });
+    expect(screen.getByText("Edit Spread")).toHaveStyle({ backgroundColor: paper });
+    expect(theme.palette.primary.main).toBe("#800000");
 });
 
 test("uses a saved preference instead of the system preference", () =>
@@ -106,7 +156,8 @@ test("uses a saved preference instead of the system preference", () =>
     vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
 
     render(<App />);
-    expect(document.documentElement.style.getPropertyValue("--theme")).toBe("#ff0000");
+    expect(document.documentElement.style.getPropertyValue("--theme")).toBe("#800000");
+    expect(document.documentElement.style.getPropertyValue("--app-background")).toBe("#e8edf1");
 });
 
 test("follows system preference changes when there is no saved preference", () =>
@@ -124,7 +175,8 @@ test("follows system preference changes when there is no saved preference", () =
     expect(app.style.getPropertyValue("--app-background")).toBe("#262626");
 
     act(() => onChange({ matches: false }));
-    expect(app.style.getPropertyValue("--theme")).toBe("#ff0000");
+    expect(app.style.getPropertyValue("--theme")).toBe("#800000");
+    expect(app.style.getPropertyValue("--app-background")).toBe("#e8edf1");
     unmount();
     expect(removeEventListener).toHaveBeenCalledWith("change", onChange);
 });

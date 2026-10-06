@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, Autocomplete, Button, createFilterOptions, Dialog, DialogActions, DialogContent, DialogTitle,
+import { Alert, Autocomplete, Button, Dialog, DialogActions, DialogContent, DialogTitle,
     Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
 import CheckIcon from "@mui/icons-material/Check";
+import { createRankedFilterOptions } from "../Theme";
 import { useSpreadEditor } from "../SpreadEditorState";
 import OperationProgress from "../subcomponents/OperationProgress";
 import SpreadFileReview from "./SpreadFileReview";
@@ -18,7 +19,7 @@ const CHOICE_CURRENT = "current";
 const CHOICE_INCOMING = "incoming";
 const DATE_LOCALE = "en";
 const BULK_LABELS = { [CHOICE_CURRENT]: "Keep All Current", [CHOICE_INCOMING]: "Keep All Incoming" };
-const FILTER_EXPORTS = createFilterOptions({ stringify: (entry) => `${getExportLabel(entry)} ${formatExportDate(entry.exportedAt)}` });
+const FILTER_EXPORTS = createRankedFilterOptions({ stringify: (entry) => `${getExportLabel(entry)} ${formatExportDate(entry.exportedAt)}` });
 
 
 /**

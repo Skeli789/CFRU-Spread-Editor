@@ -16,6 +16,7 @@ The grid keeps cards in view mode; one modal card edits current provider fields.
 - [src/SpreadEditorPage.jsx](../../../src/SpreadEditorPage.jsx) and [src/SpreadEditorState.jsx](../../../src/SpreadEditorState.jsx): modal lifecycle, pending fields, drafts, delete/restore, and validation problems.
 - [shared/spread-model.mjs](../../../shared/spread-model.mjs), [shared/pokemon-mechanics.mjs](../../../shared/pokemon-mechanics.mjs), and [shared/catalog.mjs](../../../shared/catalog.mjs): source-preserving setters, stats/level/Mega mechanics, and legality.
 - [src/styles/SpreadEditorPage.css](../../../src/styles/SpreadEditorPage.css): card grids, chip rows, edit container query, stats, and disabled/deleted styling.
+- [src/Theme.jsx](../../../src/Theme.jsx): maroon accents in both modes, softened light page/paper surfaces, and class-scoped spread card backgrounds.
 
 ## Data flow
 
@@ -26,6 +27,7 @@ The grid keeps cards in view mode; one modal card edits current provider fields.
 
 ## Behavior and user decisions
 
+- Light mode uses maroon accents (`#800000`), a cool gray page (`#e8edf1`), softened paper (`#f1f4f6`), and faded blue spread previews (`#dae6f0`). The theme's `MuiPaper` override targets `.spread-card:not(.spread-card-editing)` for view and read-only previews. Editing cards use the normal paper color to blend into the dialog rather than forming a tinted inner box. Dark card surfaces stay `#2f2f2f`; blue focus and changed-field highlights remain unchanged. Theme coverage lives in `src/tests/App.test.jsx`.
 - Editable nondeleted view cards open by clicking outside buttons/links/inputs or by Enter/Space on the focused article. Locked, placeholder, editing, and deleted cards do not get interactive card hover/focus behavior.
 - View side order is sprite, nonrandom ball, item, source ability, optional bold `[M]` ability, then nature. Random Ball is omitted. Truncated side values receive MUI tooltips only when overflow is measured.
 - View title includes Shiny/Gigantamax symbols, species, type icons, optional Mega type arrow/icons, diagnostics, lock, and a green NEW symbol for ordinary unsaved additions. Transfers do not show NEW. The species tooltip identifies file and source line.

@@ -3,7 +3,7 @@
  */
 
 import { alpha, createTheme } from '@mui/material/styles';
-import { autocompleteClasses, formLabelClasses, inputClasses, listItemButtonClasses, menuItemClasses, outlinedInputClasses, tableRowClasses } from '@mui/material';
+import { autocompleteClasses, createFilterOptions, formLabelClasses, inputClasses, listItemButtonClasses, menuItemClasses, outlinedInputClasses, tableRowClasses } from '@mui/material';
 
 // Focused fields and chosen entries use Material UI's standard blue rather than the red theme color
 const FOCUS_COLORS = { light: "#1976d2", dark: "#90caf9" };
@@ -14,10 +14,33 @@ const FOCUS_PALETTES =
 };
 const SELECTED_OPACITY = 0.16;
 const SELECTED_HOVER_OPACITY = 0.24;
-const BACKGROUND_COLORS = { light: "#f8f9fa", dark: "#262626" };
-const PAPER_COLORS = { light: "#ffffff", dark: "#2f2f2f" };
-const PRIMARY_COLORS = { light: { main: "#ff0000" }, dark: { main: "#800000", light: "#e57373" } };
+const BACKGROUND_COLORS = { light: "#e8edf1", dark: "#262626" };
+const PAPER_COLORS = { light: "#f1f4f6", dark: "#2f2f2f" };
+const SPREAD_CARD_COLORS = { light: "#dae6f0", dark: PAPER_COLORS.dark };
+const PRIMARY_COLORS = { light: { main: "#800000" }, dark: { main: "#800000", light: "#e57373" } };
 const OUTLINE_OPACITY = 0.5;
+
+
+/**
+ * Creates an autocomplete filter placing prefix matches before other substring matches.
+ *
+ * @param {object} [config] Material UI filter configuration.
+ * @returns {Function} The ranked option filter.
+ */
+export function createRankedFilterOptions(config = {})
+{
+    const filterPrefixes = createFilterOptions({ ...config, trim: true, matchFrom: "start" });
+    const filterMatches = createFilterOptions({ ...config, trim: true, matchFrom: "any" });
+
+    return (options, state) =>
+    {
+        const prefixes = filterPrefixes(options, state);
+        const prefixSet = new Set(prefixes);
+        return [...prefixes, ...filterMatches(options, state).filter((option) => !prefixSet.has(option))];
+    };
+}
+
+const FILTER_AUTOCOMPLETE_OPTIONS = createRankedFilterOptions();
 
 
 /**
@@ -69,6 +92,13 @@ function createAppTheme(mode)
     },
     components:
     {
+        MuiPaper:
+        {
+            styleOverrides:
+            {
+                root: { "&.spread-card:not(.spread-card-editing)": { backgroundColor: SPREAD_CARD_COLORS[mode] } },
+            },
+        },
         MuiButton:
         {
             styleOverrides:
@@ -114,7 +144,11 @@ function createAppTheme(mode)
         MuiAutocomplete:
         {
             // Its buttons are already labelled, and their native titles would show browser tooltips
-            defaultProps: { slotProps: { popupIndicator: { title: undefined }, clearIndicator: { title: undefined } } },
+            defaultProps:
+            {
+                filterOptions: FILTER_AUTOCOMPLETE_OPTIONS,
+                slotProps: { popupIndicator: { title: undefined }, clearIndicator: { title: undefined } },
+            },
             styleOverrides:
             {
                 option:
