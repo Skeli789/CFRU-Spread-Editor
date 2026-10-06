@@ -122,8 +122,8 @@ const FIXED_DAMAGE_EFFECTS = new Set(
     "EFFECT_MEMENTO",
 ]);
 
-// Foul Play uses the target's Attack and Body Press uses the user's Defense
-const OTHER_STAT_MOVES = new Set(["MOVE_FOULPLAY", "MOVE_BODYPRESS"]);
+// These moves use the target's Attack, the user's Defense or damage taken instead of attacking stats
+const OTHER_STAT_MOVES = new Set(["MOVE_FOULPLAY", "MOVE_BODYPRESS", "MOVE_METALBURST", "MOVE_COMEUPPANCE"]);
 
 // CFRU picks these moves' category from the user's higher attacking stat
 const SPLIT_CHANGING_MOVES = new Set(["MOVE_PHOTONGEYSER", "MOVE_LIGHT_THAT_BURNS_THE_SKY", "MOVE_SHELLSIDEARM"]);

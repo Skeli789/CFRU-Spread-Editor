@@ -540,6 +540,33 @@ describe("Hidden Power", () =>
 
 describe("IV auto-fix", () =>
 {
+    it.each(["MOVE_METALBURST", "MOVE_COMEUPPANCE"])("does not require attacking IVs for %s", (move) =>
+    {
+        const details = { split: "SPLIT_PHYSICAL", power: 1, effect: 0 };
+        const catalog = { ...CATALOG, moves: { ...CATALOG.moves, [move]: details } };
+        const fields = createFields({ moves: [move, "MOVE_PROTECT", 0, 0], atkIv: 0, spAtkIv: 0 });
+
+        expect(getMoveStatUse(move, details)).toEqual({ atk: STAT_USE.UNUSED, spAtk: STAT_USE.UNUSED });
+        expect(getIvAutoFix(catalog, fields).changes).toEqual({});
+        expect(getIvAutoFix(catalog, { ...fields, atkIv: 31, spAtkIv: 31 }).changes).toEqual({ atkIv: 0, spAtkIv: 0 });
+        expect(getResetIvs(catalog, fields)).toMatchObject({ atkIv: 0, spAtkIv: 0 });
+        expect(planIvAutoFix(catalog, [{ id: move, fields }]).changes).toEqual([]);
+        expect(getIvAutoFix(catalog, { ...fields, moves: [move, "MOVE_EARTHQUAKE", 0, 0] }).changes).toEqual({ atkIv: 31 });
+        expect(getIvAutoFix(catalog, { ...fields, moves: [move, "MOVE_FLAMETHROWER", 0, 0] }).changes).toEqual({ spAtkIv: 31 });
+
+        for (const type of HIDDEN_POWER_TYPES)
+        {
+            const hiddenPowerFields = createFields(
+            {
+                ...optimizeHiddenPowerIvs(createFields(), type),
+                moves: [move, MOVE_HIDDEN_POWER, 0, 0],
+            });
+            const fixed = { ...hiddenPowerFields, ...getIvAutoFix(catalog, hiddenPowerFields).changes };
+            expect([0, 1]).toContain(fixed.atkIv);
+            expect(getHiddenPowerType(fixed)).toBe(type);
+        }
+    });
+
     it("ignores Foul Play, Body Press, fixed damage and status moves", () =>
     {
         const fields = createFields({ moves: ["MOVE_FOULPLAY", "MOVE_BODYPRESS", "MOVE_SEISMICTOSS", "MOVE_PROTECT"] });
