@@ -56,7 +56,7 @@ const SPECIES_PREVIEW_SIZE = 96;
 const TAB_SPECIES = "species";
 const TAB_IMPORT = "import";
 const RAID_RUSH_CATEGORY = "raidRush";
-const SPECIES_ETERNAMAX = "SPECIES_ETERNATUS_ETERNAMAX";
+const RAID_RUSH_ONLY_SPECIES = new Set(["SPECIES_ETERNATUS_ETERNAMAX", "SPECIES_ZYGARDE_COMPLETE"]);
 const IMPORT_MIN_ROWS = 8;
 const IMPORT_MAX_ROWS = 16;
 const IMPORT_PROBLEMS_TITLE_ID = "import-problems-title";
@@ -193,7 +193,7 @@ export const AddSpreadDialog = ({ sets, defaultSetId, defaultSpecies, catalog, p
 
     const selectedSet = sets.find((set) => set.id === setId) ?? null;
     const speciesOptions = useMemo(() => Object.entries(catalog.species).filter(([value]) =>
-        value === SPECIES_ETERNAMAX ? selectedSet?.category === RAID_RUSH_CATEGORY : !isBattleOnlySpecies(catalog, value))
+        RAID_RUSH_ONLY_SPECIES.has(value) ? selectedSet?.category === RAID_RUSH_CATEGORY : !isBattleOnlySpecies(catalog, value))
         .map(([value, info], index) => ({ value, name: getSpeciesFormName(catalog, value), info, index }))
         .sort((first, second) => first.name.localeCompare(second.name) || first.index - second.index), [catalog, selectedSet?.category]);
     const [species, setSpecies] = useState(() => speciesOptions.find((option) => option.value === defaultSpecies) ?? null);

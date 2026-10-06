@@ -275,6 +275,36 @@ describe("Learnsets", () =>
         expect(buildLearnsets(options).learnsets.SPECIES_MINIOR_SHIELD.status).to.equal("missing");
     });
 
+    it("should share Zygarde level, egg, TM and tutor moves between its 50%, 10% and Complete forms", () =>
+    {
+        const forms = ["SPECIES_ZYGARDE", "SPECIES_ZYGARDE_10", "SPECIES_ZYGARDE_COMPLETE"];
+        const dpe = parseDpeSources(getDpeSources());
+        const species = Object.fromEntries(forms.map((target) => [target, { types: ["TYPE_DRAGON", "TYPE_GROUND"], dex: "NATIONAL_DEX_ZYGARDE" }]));
+        for (const target of forms)
+            dpe.levelUp[target] = [{ move: "MOVE_TACKLE", level: 1 }];
+        dpe.levelUp.SPECIES_ZYGARDE_10.push({ move: "MOVE_SWIFT", level: 10 });
+        dpe.levelUp.SPECIES_ZYGARDE_COMPLETE.push({ move: "MOVE_POUND", level: 10 });
+        dpe.eggMoves.SPECIES_ZYGARDE = ["MOVE_BITE"];
+        dpe.tmCompatibility.push({ file: "1.txt", number: 1, moveName: null, species: ["SPECIES_ZYGARDE"] });
+        dpe.tutorCompatibility.push({ file: "1.txt", number: 1, moveName: null, species: ["SPECIES_ZYGARDE_10"] });
+        const gameMoves = ["MOVE_TACKLE", "MOVE_SWIFT", "MOVE_POUND", "MOVE_BITE", "MOVE_FOCUSPUNCH", "MOVE_MEGAPUNCH", "MOVE_DRACOMETEOR"];
+        const options = { dpe, species, moveNames: {}, gameMoves, cfruMacros: new Map() };
+        const { learnsets } = buildLearnsets(options);
+        const catalog = { name: "Fixture", learnsets, moves: Object.fromEntries(gameMoves.map((move) => [move, {}])) };
+        for (const target of forms)
+        {
+            expect(learnsets[target].status).to.equal("complete");
+            expect(Object.keys(learnsets[target].moves)).to.have.members(gameMoves.filter((move) => move !== "MOVE_DRACOMETEOR"));
+            for (const move of gameMoves.filter((candidate) => candidate !== "MOVE_DRACOMETEOR"))
+                expect(getMoveLegality(catalog, target, move).status).to.equal(LEGALITY.ALLOWED);
+            expect(getMoveLegality(catalog, target, "MOVE_DRACOMETEOR").status).to.equal(LEGALITY.UNKNOWN);
+        }
+        expect(learnsets.SPECIES_ZYGARDE_COMPLETE.moves).to.deep.include({ MOVE_FOCUSPUNCH: ["form"], MOVE_MEGAPUNCH: ["form"], MOVE_BITE: ["form"] });
+        expect(learnsets.SPECIES_ZYGARDE.moves.MOVE_POUND).to.deep.equal(["form"]);
+        delete dpe.levelUp.SPECIES_ZYGARDE_COMPLETE;
+        expect(buildLearnsets(options).learnsets.SPECIES_ZYGARDE_COMPLETE.status).to.equal("missing");
+    });
+
     it("should grant Pop Star Fleur Cannon only in active Unbound builds while retaining existing moves", () =>
     {
         const gameMoves = [...COSPLAY_GAME_MOVES, "MOVE_FLEURCANNON"];

@@ -6,7 +6,7 @@ import { vi } from "vitest";
 
 import App from "../App";
 import { DRAFTS_STORAGE_KEY, DRAFTS_VERSION, SETTINGS_STORAGE_KEY, SETTINGS_VERSION } from "../SpreadEditorState";
-import { FRONTIER_SET, LITTLE_CUP_SET, PALMER_SET, PATHS, SAVE_ROUTE, createCatalog, createFields, createSpreads, createWorkspace, mockServer } from "./EditorFixtures";
+import { FRONTIER_SET, LITTLE_CUP_SET, PALMER_SET, PATHS, SAVE_ROUTE, createCatalog, createFields, createSpreads, createWorkspace, createZygardeCatalog, mockServer } from "./EditorFixtures";
 
 vi.mock("axios", () => ({ default: { post: vi.fn() } }));
 
@@ -98,9 +98,9 @@ describe("Adding and reordering spreads", () =>
 
     afterEach(() => cleanup());
 
-    test("offers Eternamax only for Raid Rush and blocks it after changing destination", async () =>
+    test.each(["Eternamax Eternatus", "Zygarde Complete"])("offers %s only for Raid Rush and blocks it after changing destination", async (name) =>
     {
-        const catalog = createCatalog();
+        const catalog = createZygardeCatalog();
         catalog.species.SPECIES_ETERNATUS = { ...catalog.species.SPECIES_GARCHOMP, name: "Eternatus", showdownName: "Eternatus", megas: [] };
         catalog.species.SPECIES_ETERNATUS_ETERNAMAX = { ...catalog.species.SPECIES_ETERNATUS, name: "Eternamax Eternatus", showdownName: "Eternatus-Eternamax" };
         const spreads = createSpreads();
@@ -111,6 +111,9 @@ describe("Adding and reordering spreads", () =>
         const speciesInput = within(dialog).getByRole("combobox", { name: "Species" });
         await user.click(speciesInput);
         expect(screen.queryByRole("option", { name: "Eternamax Eternatus" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: "Zygarde Complete" })).not.toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "Zygarde" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "Zygarde 10%" })).toBeInTheDocument();
         await user.keyboard("{Escape}");
         const setInput = within(dialog).getByRole("combobox", { name: "Spread Set" });
         await user.clear(setInput);
@@ -118,7 +121,8 @@ describe("Adding and reordering spreads", () =>
         await user.click(await screen.findByRole("option", { name: /Raid Rush Easy Spreads/ }));
         await user.click(speciesInput);
         expect(screen.queryByRole("option", { name: /Mega Charizard/ })).not.toBeInTheDocument();
-        await user.click(await screen.findByRole("option", { name: "Eternamax Eternatus" }));
+        expect(screen.queryByRole("option", { name: "Mega Zygarde" })).not.toBeInTheDocument();
+        await user.click(await screen.findByRole("option", { name }));
         expect(within(dialog).getByRole("button", { name: "Add", exact: true })).toBeEnabled();
         await user.clear(setInput);
         await user.type(setInput, "Frontier");
