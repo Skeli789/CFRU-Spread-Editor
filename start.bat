@@ -14,7 +14,7 @@ echo Both client and server are starting in separate windows.
 
 REM Wait for both client and server to be reachable before opening browser
 set "CLIENT_URL=http://localhost:3000"
-set "SERVER_URL=http://localhost:3001/api/data"
+set "SERVER_URL=http://localhost:3001/api/health/"
 
 echo.
 echo Waiting for client (%CLIENT_URL%) and server (%SERVER_URL%) to become available...

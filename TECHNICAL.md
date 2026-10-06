@@ -17,13 +17,13 @@ Keep two terminals running:
 | Client preview | Editor root | `yarn serve` |
 | Local API | Server directory | `yarn start` |
 
-Open http://localhost:3000. The client uses port 3000 with strict port selection; the API defaults to port 3001 and binds to `127.0.0.1`. Stop both terminal processes to stop the app.
+Open http://localhost:3000. The client uses port 3000 with strict port selection; the API defaults to port 3001 without an explicit host binding. Stop both terminal processes to stop the app.
 
 ### Launcher limitations
 
 [start.bat](start.bat) and [start.sh](start.sh) launch these services in separate terminal windows.
 
-- **Windows:** the current batch launcher waits on an obsolete `/api/data` readiness URL, so its automatic browser opening may never finish even when both services are ready. Open http://localhost:3000 manually or use the two-terminal steps above.
+- **Windows:** the batch launcher waits for the client and `/api/health/` before opening the browser. If either service fails to start, it keeps waiting; check the Client and Server windows for errors.
 - **macOS/Linux:** the Bash launcher requires a supported desktop terminal emulator and checks ports, not API health. Its macOS Terminal and xterm branches embed an unquoted working-directory path in `cd`, so paths containing spaces fail. Use a folder path without spaces or the two-terminal steps above.
 
 ## Develop locally

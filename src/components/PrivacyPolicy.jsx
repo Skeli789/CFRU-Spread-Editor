@@ -145,7 +145,7 @@ const PrivacyPolicy = () =>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="body1" component="p" sx={{ lineHeight: 1.8, mb: 2 }}>
-                    The API binds to the loopback address and checks local hosts, allowed browser origins,
+                    The API checks local hosts, allowed browser origins,
                     and session tokens for protected requests. These safeguards are intended for use on
                     your own computer, not public hosting or shared-user access. Do not expose the app through
                     port forwarding, public tunnels, or a LAN server. Local data is not encrypted by the app;

@@ -81,7 +81,8 @@ test("privacy policy discloses external requests and local security limitations"
     expect(requests).toHaveTextContent("data.pkmn.cc");
     expect(screen.getByText(/These providers receive normal network request information/)).toHaveTextContent("public IP address");
     expect(screen.getByText(/These providers receive normal network request information/)).toHaveTextContent("does not send repository files, local paths, or spread edits");
-    expect(screen.getByText(/The API binds to the loopback address/)).toHaveTextContent("Local data is not encrypted by the app");
+    expect(screen.getByText(/The API checks local hosts/)).toHaveTextContent("Local data is not encrypted by the app");
+    expect(screen.queryByText(/The API binds to/)).not.toBeInTheDocument();
     expect(screen.getByText(/Raise questions with the maintainers/)).toHaveTextContent("Issues and attachments may be public");
 });
 
