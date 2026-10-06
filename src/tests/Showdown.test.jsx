@@ -318,9 +318,9 @@ describe("Showdown adapter", () =>
         expect(applyOverwrite(CATALOG, current, incoming, { teamTypes: TEAM_TYPES, saved: createFields({ specificTeamType: 0 }) }).fields.specificTeamType).toBe(0);
     });
 
-    it("parses the real Raid Rush text without discarding later sets", () =>
+    it("parses the sample Showdown spreads without discarding later sets", () =>
     {
-        const text = readFileSync("Raid Rush.txt", "utf8");
+        const text = readFileSync("src/tests/data/sample-showdown-spreads.txt", "utf8");
         const parsed = parseShowdownText(text);
         expect(parsed.errors).toEqual([]);
         expect(parsed.sets.length).toBeGreaterThan(6);

@@ -348,12 +348,12 @@ async function validateRepositoryPath(kind, rawPath, onCheck)
     if (inputPath.length > MAX_PATH_LENGTH || inputPath.includes("\0"))
         return fieldError("PATH_INVALID", "This path is not valid.");
 
-    if (!path.isAbsolute(inputPath))
-        return fieldError("PATH_NOT_ABSOLUTE", "Enter a full folder path, such as C:\\Code\\Repository.");
-
     // Network and device paths could make the server contact remote hosts.
     if (/^[\\/]{2}/.test(inputPath))
         return fieldError("PATH_UNSUPPORTED", "Network and device paths are not supported. Use a local folder.");
+
+    if (!path.isAbsolute(inputPath))
+        return fieldError("PATH_NOT_ABSOLUTE", "Enter a full folder path, such as C:\\Code\\Repository.");
 
     // Resolve the folder itself, following any links the user chose deliberately
     let root;
@@ -589,7 +589,7 @@ function createFolderPicker({ platform = process.platform, runProcess = (...args
 
         // Pass the start folder only when it is a plain local path
         const validStart = typeof startPath === "string" && startPath.length <= MAX_PATH_LENGTH
-            && path.isAbsolute(startPath) && !/^[\\/]{2}/.test(startPath) && !startPath.includes("\0");
+            && path.win32.isAbsolute(startPath) && !/^[\\/]{2}/.test(startPath) && !startPath.includes("\0");
         const env =
         {
             ...process.env,

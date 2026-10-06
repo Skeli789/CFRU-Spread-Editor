@@ -96,7 +96,7 @@ Showdown text exchange is a browser-side adapter for the selected game catalog, 
 
 ## Tests and commands
 
-- From the workspace root: `yarn test src/tests/Showdown.test.jsx --run` covers syntax/limits, defaults, names/forms, abilities, stat mapping, Hidden Power, export representability/placeholders, and overwrite preservation. Its existing text-fixture test reads [Raid Rush.txt](../../../Raid%20Rush.txt); keep that fixture available when running the suite.
+- From the workspace root: `yarn test src/tests/Showdown.test.jsx --run` covers syntax/limits, defaults, names/forms, abilities, stat mapping, Hidden Power, export representability/placeholders, and overwrite preservation. Its text-fixture test reads the tracked [sample-showdown-spreads.txt](../../../src/tests/data/sample-showdown-spreads.txt).
 - From the workspace root: `yarn test src/tests/ShowdownDialogs.test.jsx --run` covers copy, filter export, per-card actions, terse problem bullets, unsupported fields, skipped/trimmed exports, overwrite no-op/multiple-set behavior, and Add defaults.
 - From the workspace root: `yarn test src/tests/AddReorder.test.jsx --run` covers importing multiple sets, skipped invalid sets, base-form conversion, insertion order, draft/save operations, and related Add behavior. [SpreadEditor.test.jsx](../../../src/tests/SpreadEditor.test.jsx) covers draft persistence and save failures: `yarn test src/tests/SpreadEditor.test.jsx --run`.
 - From the server directory: `yarn test tests/services/showdown.test.js` compares standard import/export syntax with `pokemon-showdown` and checks compact resolution warnings. This is parser compatibility coverage, not simulator legality validation for every catalog.

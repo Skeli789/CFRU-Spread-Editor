@@ -36,7 +36,9 @@ jobs:
         uses: ./.github/actions/build_and_release_setup_env
 
       - name: Install dependencies
-        run: cd server && yarn install --frozen-lockfile
+        run: |
+          yarn install --frozen-lockfile
+          yarn --cwd server install --frozen-lockfile
 
       - name: Run tests
         run: cd server && yarn test-all
