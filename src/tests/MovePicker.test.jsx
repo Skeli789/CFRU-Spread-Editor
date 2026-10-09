@@ -236,6 +236,36 @@ describe("Move options", () =>
         expect(getChooserRows(CATALOG, learnable, NO_FILTERS).findIndex((row) => !row.learnable)).toBe(learnable.options.length);
     });
 
+    it.each([
+        { type: "TYPE_GROUND" },
+        { split: "SPLIT_STATUS" },
+        { target: "MOVE_TARGET_BOTH" },
+    ])("retains searched learnable moves excluded by $type $split $target", (filter) =>
+    {
+        const learnable = getLearnableMoveOptions(CATALOG, "SPECIES_CHARIZARD");
+        const rows = getChooserRows(CATALOG, learnable, { ...NO_FILTERS, ...filter, search: "dr" });
+
+        expect(rows.map((row) => [row.option.name, row.learnable, row.filteredOut])).toEqual([
+            ["Dragon Claw", true, true], ["Hidden Power [Dragon]", true, true],
+        ]);
+        expect(getChooserRows(CATALOG, learnable, { ...NO_FILTERS, ...filter }).every((row) => !row.filteredOut)).toBe(true);
+        expect(getChooserRows(CATALOG, learnable, { ...NO_FILTERS, ...filter, search: "   " }).every((row) => !row.filteredOut)).toBe(true);
+    });
+
+    it("groups matching learnable moves before filtered-out learnable moves and unlearnable results", () =>
+    {
+        const learnable = getLearnableMoveOptions(CATALOG, "SPECIES_CHARIZARD");
+        const rows = getChooserRows(CATALOG, learnable, { ...NO_FILTERS, search: "dr", type: "TYPE_DRAGON", split: "SPLIT_PHYSICAL" });
+        expect(rows.map((row) => [row.option.name, row.filteredOut])).toEqual([
+            ["Dragon Claw", false], ["Hidden Power [Dragon]", true],
+        ]);
+
+        const grassRows = getChooserRows(CATALOG, learnable, { ...NO_FILTERS, search: "dr", type: "TYPE_GRASS" });
+        expect(grassRows.map((row) => [row.option.name, row.learnable, row.filteredOut])).toEqual([
+            ["Dragon Claw", true, true], ["Hidden Power [Dragon]", true, true], ["Giga Drain", false, false],
+        ]);
+    });
+
     it("never offers Struggle even when present in the catalog", () =>
     {
         const catalog = { ...CATALOG, moves: { ...CATALOG.moves, MOVE_STRUGGLE: { ...CATALOG.moves.MOVE_FLY, name: "Struggle" } } };
@@ -467,6 +497,35 @@ describe("Choose Moves dialog", () =>
         await user.click(within(dialog).getByRole("checkbox", { name: "Other Powers" }));
         expect(within(earthquake).getByText("200")).toBeInTheDocument();
         expect(within(earthquake).getByText("140")).toBeInTheDocument();
+    });
+
+    it.each(["click", "Enter"])("selects a searched filtered-out learnable move with %s without clearing filters", async (selection) =>
+    {
+        const { user, onChange } = renderEditor();
+        const dialog = await openChooser(user);
+        const type = within(dialog).getByRole("combobox", { name: "Type" });
+        await user.click(type);
+        await user.click(await screen.findByRole("option", { name: "Ground" }));
+        expect(within(dialog).queryByText("Moves Charizard can learn that have been filtered out")).not.toBeInTheDocument();
+
+        const slot = within(dialog).getByRole("textbox", { name: "Move 1" });
+        await user.clear(slot);
+        await user.type(slot, "air");
+        expect(getRowNames(dialog)).toEqual(["Air Slash"]);
+        expect(within(dialog).getByText("Moves Charizard can learn that have been filtered out")).toBeInTheDocument();
+        expect(within(dialog).queryByText("Moves Charizard can't learn")).not.toBeInTheDocument();
+        expect(within(dialog).getByRole("status")).toHaveTextContent("1 move");
+        expect(dialog.querySelector("[data-move-key='MOVE_AIRSLASH']")).not.toHaveClass("move-illegal");
+
+        if (selection === "click")
+            await user.click(within(dialog).getByRole("button", { name: "Air Slash" }));
+        else
+            await user.keyboard("{Enter}");
+
+        expect(onChange).toHaveBeenLastCalledWith(0, "MOVE_AIRSLASH", null);
+        expect(type).toHaveValue("Ground");
+        expect(within(dialog).getByRole("textbox", { name: "Move 2" })).toHaveFocus();
+        expect(within(dialog).queryByText("Moves Charizard can learn that have been filtered out")).not.toBeInTheDocument();
     });
 
     it("shows category symbols and names, formats Both Foes, and clears every filter", async () =>

@@ -270,13 +270,13 @@ export function getMoveOption(catalog, fields, move)
 }
 
 /**
- * Returns the moves the Choose Moves dialog lists: those the species can learn first, then the rest. Each part
+ * Returns the chooser's matching learnable moves, searched learnable moves excluded by filters, then the rest. Each part
  * lists moves starting with the search before those only containing it, then follows the chosen column.
  *
  * @param {object} catalog The game catalog.
  * @param {{options: Array<object>}} learnable The learnable moves.
  * @param {object} filters The search text, the type, split and target or null for any, and the sort.
- * @returns {Array<{option: object, learnable: boolean}>} The moves.
+ * @returns {Array<{option: object, learnable: boolean, filteredOut: boolean}>} The moves.
  */
 export function getChooserRows(catalog, learnable, { search, type, split, target, sort })
 {
@@ -286,16 +286,21 @@ export function getChooserRows(catalog, learnable, { search, type, split, target
     for (const option of getMoveOptions(catalog))
     {
         const rank = getSearchRank(option.name, search);
-        if (rank == null || (type != null && option.type !== type) || (split != null && option.split !== split) || (target != null && option.target !== target))
+        if (rank == null)
             continue;
 
-        rows.push({ option, learnable: learnableKeys.has(option.key), rank, value: getSortValue(option, sort.key, catalog) });
+        const canLearn = learnableKeys.has(option.key);
+        const filteredOut = (type != null && option.type !== type) || (split != null && option.split !== split) || (target != null && option.target !== target);
+        if (filteredOut && (!canLearn || search.trim() === ""))
+            continue;
+
+        rows.push({ option, learnable: canLearn, filteredOut, rank, value: getSortValue(option, sort.key, catalog) });
     }
 
     // Unknown values sort last in both directions, and equal values stay in name order
     rows.sort((a, b) =>
     {
-        const group = b.learnable - a.learnable || a.rank - b.rank;
+        const group = b.learnable - a.learnable || a.filteredOut - b.filteredOut || a.rank - b.rank;
         if (group !== 0)
             return group;
         if (a.value == null || b.value == null)
@@ -305,7 +310,7 @@ export function getChooserRows(catalog, learnable, { search, type, split, target
         return difference * direction || a.option.name.localeCompare(b.option.name);
     });
 
-    return rows.map((row) => ({ option: row.option, learnable: row.learnable }));
+    return rows.map((row) => ({ option: row.option, learnable: row.learnable, filteredOut: row.filteredOut }));
 }
 
 /**
@@ -725,11 +730,16 @@ const MoveChooserContent = ({ catalog, fields, initialSlot, onChange, onClose })
                                 </TableRow>
                             </TableHead>
                             <TableBody>
-                                {shownRows.map(({ option, learnable: canLearn }, index) =>
+                                {shownRows.map(({ option, learnable: canLearn, filteredOut }, index) =>
                                 {
                                     const firstUnlearnable = !canLearn && (index === 0 || shownRows[index - 1].learnable);
+                                    const firstFilteredOut = filteredOut && (index === 0 || !shownRows[index - 1].filteredOut);
                                     return (
                                         <React.Fragment key={option.key}>
+                                            {firstFilteredOut &&
+                                                <TableRow className="move-table-divider">
+                                                    <TableCell colSpan={columns.length}>Moves {speciesName} can learn that have been filtered out</TableCell>
+                                                </TableRow>}
                                             {firstUnlearnable &&
                                                 <TableRow className="move-table-divider">
                                                     <TableCell colSpan={columns.length}>Moves {speciesName} can't learn</TableCell>
