@@ -122,6 +122,7 @@ const CATALOG =
         MOVE_PHOTONGEYSER: { split: "SPLIT_SPECIAL", power: 100, effect: "EFFECT_HIT" },
         MOVE_PROTECT: { split: "SPLIT_STATUS", power: 0, effect: "EFFECT_PROTECT" },
         MOVE_TRICKROOM: { split: "SPLIT_STATUS", power: 0, effect: "EFFECT_TRICK_ROOM" },
+        MOVE_NATUREPOWER: { split: "SPLIT_STATUS", power: 0, effect: "EFFECT_NATURE_POWER" },
         MOVE_HIDDENPOWER: { split: "SPLIT_SPECIAL", power: 60, effect: "EFFECT_HIT" },
         MOVE_MYSTERY: { split: "SPLIT_PHYSICAL", power: null, effect: null },
     },
@@ -694,6 +695,14 @@ describe("IV auto-fix", () =>
 
         expect(getIvAutoFix(CATALOG, fields).changes).toEqual({ atkIv: 0, spAtkIv: 0 });
         expect(getMoveStatUse("MOVE_NATURESMADNESS", CATALOG.moves.MOVE_NATURESMADNESS)).toEqual({ atk: STAT_USE.UNUSED, spAtk: STAT_USE.UNUSED });
+    });
+
+    it("keeps 31 Sp. Atk IVs for Nature Power", () =>
+    {
+        const fix = getIvAutoFix(CATALOG, createFields({ spAtkIv: 12, moves: ["MOVE_NATUREPOWER", "MOVE_PROTECT", 0, 0] }));
+
+        expect(fix.uses).toEqual({ atk: STAT_USE.UNUSED, spAtk: STAT_USE.USED });
+        expect(fix.changes).toEqual({ atkIv: 0, spAtkIv: 31 });
     });
 
     it("keeps the attacking IV of variable power moves", () =>

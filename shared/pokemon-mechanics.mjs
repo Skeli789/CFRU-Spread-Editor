@@ -147,6 +147,9 @@ const OTHER_STAT_MOVES = new Set(["MOVE_FOULPLAY", "MOVE_BODYPRESS", "MOVE_METAL
 // CFRU picks these moves' category from the user's higher attacking stat
 const SPLIT_CHANGING_MOVES = new Set(["MOVE_PHOTONGEYSER", "MOVE_LIGHT_THAT_BURNS_THE_SKY", "MOVE_SHELLSIDEARM"]);
 
+// Nature Power is a status move that calls special moves
+const MOVE_NATURE_POWER = "MOVE_NATUREPOWER";
+
 const AUTO_FIX_STATS = [STAT_ATK, STAT_SP_ATK];
 
 
@@ -564,6 +567,8 @@ export function getMoveStatUse(move, details, raidRush = false)
     if (raidRush && details.split === SPLIT_PHYSICAL)
         return result(STAT_USE.USED, STAT_USE.UNUSED);
     if (raidRush && details.split === SPLIT_SPECIAL)
+        return result(STAT_USE.UNUSED, STAT_USE.USED);
+    if (move === MOVE_NATURE_POWER)
         return result(STAT_USE.UNUSED, STAT_USE.USED);
     if (details.split === SPLIT_STATUS || OTHER_STAT_MOVES.has(move))
         return result(STAT_USE.UNUSED, STAT_USE.UNUSED);
