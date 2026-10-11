@@ -17,9 +17,9 @@ import { alpha } from "@mui/material/styles";
 import { DragDropProvider, useDraggable, useDroppable } from "@dnd-kit/react";
 import { closestCenter } from "@dnd-kit/collision";
 
-import { LEARNSET_COMPLETE, LEGALITY, POWER_KIND, alwaysHits, getMoveLegality, getPowerKind } from "../../shared/catalog.mjs";
+import { LEARNSET_COMPLETE, LEGALITY, POWER_KIND, alwaysHits, getMoveLegality, getSpeciesLearnset, getPowerKind } from "../../shared/catalog.mjs";
 import { HIDDEN_POWER_TYPES, MOVE_HIDDEN_POWER, getHiddenPowerType } from "../../shared/pokemon-mechanics.mjs";
-import { MAX_MOVES } from "../../shared/spread-model.mjs";
+import { MAX_MOVES, SPECIES_TERAPAGOS_STELLAR } from "../../shared/spread-model.mjs";
 import { AdvancedPaper, SplitIcon, TypeIcon, filterBySearch, getEntry, getLabel, getSearchRank, scrollToEntry, useIncrementalList } from "./CatalogDisplay";
 
 const SORT_ASCENDING = "asc";
@@ -30,6 +30,8 @@ const MOVE_STRUGGLE = "MOVE_STRUGGLE";
 const EMPTY_MOVE = 0;
 const TARGET_PREFIX = "MOVE_TARGET_";
 const TARGET_BOTH = "MOVE_TARGET_BOTH";
+const MOVE_TERA_STARSTORM = "MOVE_TERASTARSTORM";
+const STELLAR_TARGET_LABEL = "Both";
 const SPLIT_STATUS = "SPLIT_STATUS";
 const SPLIT_LABELS = { SPLIT_PHYSICAL: "Physical", SPLIT_SPECIAL: "Special", [SPLIT_STATUS]: "Status" };
 const VARIABLE_POWER_LABEL = "Varies";
@@ -196,7 +198,7 @@ function getSortValue(option, key, catalog)
         case "pp":
             return option.pp;
         case "target":
-            return option.target == null ? null : getTargetLabel(option.target);
+            return option.targetLabel ?? (option.target == null ? null : getTargetLabel(option.target));
         default:
             return option.name;
     }
@@ -243,7 +245,7 @@ export function getMoveOptions(catalog)
  */
 export function getLearnableMoveOptions(catalog, species)
 {
-    const learnset = getEntry(catalog.learnsets, species);
+    const learnset = getSpeciesLearnset(catalog, species);
     if (learnset?.status !== LEARNSET_COMPLETE)
         return { options: getMoveOptions(catalog), complete: false };
 
@@ -275,16 +277,18 @@ export function getMoveOption(catalog, fields, move)
  *
  * @param {object} catalog The game catalog.
  * @param {{options: Array<object>}} learnable The learnable moves.
- * @param {object} filters The search text, the type, split and target or null for any, and the sort.
+ * @param {object} filters The search, type, split, target, sort, and optional stored species for move overrides.
  * @returns {Array<{option: object, learnable: boolean, filteredOut: boolean}>} The moves.
  */
-export function getChooserRows(catalog, learnable, { search, type, split, target, sort })
+export function getChooserRows(catalog, learnable, { search, type, split, target, sort, species = null })
 {
     const learnableKeys = new Set(learnable.options.map((option) => option.key));
     const direction = sort.direction === SORT_ASCENDING ? 1 : -1;
     const rows = [];
-    for (const option of getMoveOptions(catalog))
+    for (const catalogOption of getMoveOptions(catalog))
     {
+        const option = species === SPECIES_TERAPAGOS_STELLAR && catalogOption.move === MOVE_TERA_STARSTORM
+            ? { ...catalogOption, target: TARGET_BOTH, targetLabel: STELLAR_TARGET_LABEL } : catalogOption;
         const rank = getSearchRank(option.name, search);
         if (rank == null)
             continue;
@@ -408,7 +412,7 @@ function renderMoveCell(catalog, option, key, onChoose)
         case "pp":
             return option.pp ?? UNKNOWN_LABEL;
         default:
-            return option.target == null ? UNKNOWN_LABEL : getTargetLabel(option.target);
+            return option.targetLabel ?? (option.target == null ? UNKNOWN_LABEL : getTargetLabel(option.target));
     }
 }
 
@@ -469,7 +473,7 @@ const MoveChooserContent = ({ catalog, fields, initialSlot, onChange, onClose })
     const tableRef = useRef(null);
     const search = typed ?? "";
     const learnable = useMemo(() => getLearnableMoveOptions(catalog, fields.species), [catalog, fields.species]);
-    const rows = useMemo(() => getChooserRows(catalog, learnable, { search, type, split, target, sort }), [catalog, learnable, search, type, split, target, sort]);
+    const rows = useMemo(() => getChooserRows(catalog, learnable, { search, type, split, target, sort, species: fields.species }), [catalog, learnable, search, type, split, target, sort, fields.species]);
     const list = useIncrementalList(rows.length, JSON.stringify([search, type, split, target, sort]));
     const highlightKey = JSON.stringify([search, type, split, target, sort]);
     const navKey = `${highlightKey}${activeSlot}`;
@@ -481,13 +485,14 @@ const MoveChooserContent = ({ catalog, fields, initialSlot, onChange, onClose })
 
     const options = useMemo(() =>
     {
-        const moves = Object.values(catalog.moves);
+        const moves = Object.entries(catalog.moves).map(([move, details]) => fields.species === SPECIES_TERAPAGOS_STELLAR && move === MOVE_TERA_STARSTORM
+            ? { ...details, target: TARGET_BOTH } : details);
         return {
             types: Object.entries(catalog.types).map(([value, entry]) => ({ value, name: entry.name })),
             splits: Object.entries(SPLIT_LABELS).map(([value, name]) => ({ value, name })),
             targets: [...new Set(moves.map((move) => move.target).filter((value) => value != null))].sort().map((value) => ({ value, name: getTargetLabel(value) })),
         };
-    }, [catalog]);
+    }, [catalog, fields.species]);
     const statusOnly = split === SPLIT_STATUS;
     const columns = useMemo(() => COLUMNS.filter((column) => (statusOnly
         ? !POWER_COLUMNS.has(column.key)

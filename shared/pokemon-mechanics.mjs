@@ -27,7 +27,26 @@ const SPECIES_SHEDINJA = "SPECIES_SHEDINJA";
 const ZYGARDE_BASE_FORMS = new Set(["SPECIES_ZYGARDE", "SPECIES_ZYGARDE_10"]);
 const SPECIES_ZYGARDE_COMPLETE = "SPECIES_ZYGARDE_COMPLETE";
 const ABILITY_POWER_CONSTRUCT = "ABILITY_POWERCONSTRUCT";
+const ABILITY_HUGE_POWER = "ABILITY_HUGEPOWER";
+const HUGE_POWER_ATTACK_PERCENT = 140;
 const ITEM_ZYGARDITE = "ITEM_ZYGARDITE";
+const ORIGIN_FORM_ITEMS =
+[
+    { base: "SPECIES_DIALGA", origin: "SPECIES_DIALGA_ORIGIN", item: "ITEM_ADAMANT_ORB" },
+    { base: "SPECIES_PALKIA", origin: "SPECIES_PALKIA_ORIGIN", item: "ITEM_LUSTROUS_ORB" },
+    { base: "SPECIES_GIRATINA", origin: "SPECIES_GIRATINA_ORIGIN", item: "ITEM_GRISEOUS_ORB" },
+];
+// Battle-only forms are previewed but never stored
+const CROWNED_FORM_ITEMS =
+[
+    { base: "SPECIES_ZACIAN", origin: "SPECIES_ZACIAN_CROWNED", item: "ITEM_RUSTED_SWORD" },
+    { base: "SPECIES_ZAMAZENTA", origin: "SPECIES_ZAMAZENTA_CROWNED", item: "ITEM_RUSTED_SHIELD" },
+];
+const TERAPAGOS_FORMS = new Set(["SPECIES_TERAPAGOS", "SPECIES_TERAPAGOS_TERASTAL"]);
+const SPECIES_TERAPAGOS_TERASTAL = "SPECIES_TERAPAGOS_TERASTAL";
+const SPECIES_KELDEO = "SPECIES_KELDEO";
+const SPECIES_KELDEO_RESOLUTE = "SPECIES_KELDEO_RESOLUTE";
+const MOVE_SECRET_SWORD = "MOVE_SECRETSWORD";
 const SHEDINJA_HP = 1;
 const HP_LEVEL_BONUS = 10;
 const STAT_BONUS = 5;
@@ -224,6 +243,45 @@ export function getMegaSpecies(catalog, fields)
 }
 
 /**
+ * Returns the storable form determined by held items or moves, which excludes battle-only forms.
+ * @param {object} catalog The selected game's catalog.
+ * @param {object} fields The spread's fields.
+ * @returns {string} The species to store, or the unchanged species if unavailable.
+ */
+export function getStoredItemSpecies(catalog, fields)
+{
+    if (fields.species === SPECIES_KELDEO || fields.species === SPECIES_KELDEO_RESOLUTE)
+    {
+        const species = fields.moves?.includes(MOVE_SECRET_SWORD) ? SPECIES_KELDEO_RESOLUTE : SPECIES_KELDEO;
+        return Object.hasOwn(catalog.species, species) ? species : fields.species;
+    }
+    const form = ORIGIN_FORM_ITEMS.find(({ base, origin }) => fields.species === base || fields.species === origin);
+    if (form == null)
+        return fields.species;
+
+    const species = fields.item === form.item ? form.origin : form.base;
+    return Object.hasOwn(catalog.species, species) ? species : fields.species;
+}
+
+/**
+ * Returns the form displayed in battle, including battle-only forms that are never stored.
+ * @param {object} catalog The selected game's catalog.
+ * @param {object} fields The spread's fields.
+ * @returns {string} The displayed species, or the unchanged species if unavailable.
+ */
+export function getItemSpecies(catalog, fields)
+{
+    if (TERAPAGOS_FORMS.has(fields.species) && Object.hasOwn(catalog.species, SPECIES_TERAPAGOS_TERASTAL))
+        return SPECIES_TERAPAGOS_TERASTAL;
+    const form = CROWNED_FORM_ITEMS.find(({ base, origin }) => fields.species === base || fields.species === origin);
+    if (form == null)
+        return getStoredItemSpecies(catalog, fields);
+
+    const species = fields.item === form.item ? form.origin : form.base;
+    return Object.hasOwn(catalog.species, species) ? species : fields.species;
+}
+
+/**
  * Calculates the stats shown for a spread, using its Mega Evolution's base stats when previewing it.
  * The stored species never changes.
  *
@@ -237,7 +295,7 @@ export function getMegaSpecies(catalog, fields)
 export function calculateSpreadStats(catalog, fields, { level, mega = true })
 {
     const megaSpecies = mega ? getMegaSpecies(catalog, fields) : null;
-    const species = megaSpecies ?? fields.species;
+    const species = megaSpecies ?? getItemSpecies(catalog, fields);
     const baseStats = Object.hasOwn(catalog.species, species) ? catalog.species[species].baseStats : null;
     return { species, mega: megaSpecies != null, stats: calculateStats(species, baseStats, fields, level) };
 }
@@ -493,15 +551,20 @@ export function optimizeHiddenPowerIvs(ivs, type)
  *
  * @param {string|number} move The MOVE_* constant, or 0 for an empty slot.
  * @param {object|null} details The move's catalog details.
+ * @param {boolean} [raidRush=false] Whether damaging moves use their Max Move category.
  * @returns {{atk: string, spAtk: string}} A STAT_USE value for Attack and Special Attack.
  */
-export function getMoveStatUse(move, details)
+export function getMoveStatUse(move, details, raidRush = false)
 {
     const result = (atk, spAtk) => ({ [STAT_ATK]: atk, [STAT_SP_ATK]: spAtk });
     if (move === 0 || move === MOVE_NONE)
         return result(STAT_USE.UNUSED, STAT_USE.UNUSED);
     if (details == null || details.split == null)
         return result(STAT_USE.UNKNOWN, STAT_USE.UNKNOWN);
+    if (raidRush && details.split === SPLIT_PHYSICAL)
+        return result(STAT_USE.USED, STAT_USE.UNUSED);
+    if (raidRush && details.split === SPLIT_SPECIAL)
+        return result(STAT_USE.UNUSED, STAT_USE.USED);
     if (details.split === SPLIT_STATUS || OTHER_STAT_MOVES.has(move))
         return result(STAT_USE.UNUSED, STAT_USE.UNUSED);
     if (SPLIT_CHANGING_MOVES.has(move))
@@ -527,11 +590,12 @@ export function getMoveStatUse(move, details)
  *
  * @param {object} catalog The game catalog.
  * @param {Array<string|number>} moves The spread's moves.
+ * @param {boolean} [raidRush=false] Whether damaging moves use their Max Move category.
  * @returns {{atk: string, spAtk: string}} A STAT_USE value for Attack and Special Attack.
  */
-export function getSpreadStatUse(catalog, moves)
+export function getSpreadStatUse(catalog, moves, raidRush = false)
 {
-    const uses = moves.map((move) => getMoveStatUse(move, typeof move === "string" && Object.hasOwn(catalog.moves, move) ? catalog.moves[move] : null));
+    const uses = moves.map((move) => getMoveStatUse(move, typeof move === "string" && Object.hasOwn(catalog.moves, move) ? catalog.moves[move] : null, raidRush));
     return Object.fromEntries(AUTO_FIX_STATS.map((stat) =>
     {
         if (uses.some((use) => use[stat] === STAT_USE.USED))
@@ -541,6 +605,25 @@ export function getSpreadStatUse(catalog, moves)
 
         return [stat, STAT_USE.UNUSED];
     }));
+}
+
+/**
+ * Sums known base stats, excluding attacking stats that no move uses.
+ * @param {object|null} baseStats The displayed species' base stats.
+ * @param {{atk: string, spAtk: string}} uses The spread's offensive stat use.
+ * @param {string|null} [ability=null] The displayed species' effective ability.
+ * @returns {number|null} The effective total, or null for incomplete base stats.
+ */
+export function getEffectiveBaseStatTotal(baseStats, uses, ability = null)
+{
+    if (!STATS.every((stat) => baseStats?.[stat] != null))
+        return null;
+    return STATS.reduce((total, stat) =>
+    {
+        if (uses[stat] === STAT_USE.UNUSED)
+            return total;
+        return total + (stat === STAT_ATK && ability === ABILITY_HUGE_POWER ? baseStats[stat] * HUGE_POWER_ATTACK_PERCENT / PERCENT : baseStats[stat]);
+    }, 0);
 }
 
 /**
@@ -566,13 +649,14 @@ export function isSlowSpeedSpread(fields, teamTypes = [])
  * @param {object} catalog The game catalog.
  * @param {object} fields The spread's values.
  * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
+ * @param {boolean} [raidRush=false] Whether damaging moves use their Max Move category.
  * @returns {{changes: Object<string, number>, uses: {atk: string, spAtk: string}, unknown: Array<string>,
  *          hiddenPowerIvs: Array<string>}} The changed IV fields, how each stat is used, the stats left alone
  *          because a move's details are unknown, and the IV fields kept off their best value for Hidden Power.
  */
-export function getIvAutoFix(catalog, fields, teamTypes = [])
+export function getIvAutoFix(catalog, fields, teamTypes = [], raidRush = false)
 {
-    const uses = getSpreadStatUse(catalog, fields.moves);
+    const uses = getSpreadStatUse(catalog, fields.moves, raidRush);
     const lowered = AUTO_FIX_STATS.filter((stat) => uses[stat] === STAT_USE.UNUSED).map((stat) => IV_FIELDS[stat]);
     if (isSlowSpeedSpread(fields, teamTypes))
         lowered.push(IV_FIELDS.spd);
@@ -612,22 +696,23 @@ export function getIvAutoFix(catalog, fields, teamTypes = [])
  * @param {object} catalog The game catalog.
  * @param {object} fields The spread's values.
  * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
+ * @param {boolean} [raidRush=false] Whether damaging moves use their Max Move category.
  * @returns {Object<string, number>} All six IV fields.
  */
-export function getResetIvs(catalog, fields, teamTypes = [])
+export function getResetIvs(catalog, fields, teamTypes = [], raidRush = false)
 {
     let ivs = Object.fromEntries(Object.values(IV_FIELDS).map((key) => [key, MAX_IV]));
     if (fields.moves.includes(MOVE_HIDDEN_POWER))
         ivs = optimizeHiddenPowerIvs(ivs, getHiddenPowerType(fields)) ?? ivs;
 
-    return { ...ivs, ...getIvAutoFix(catalog, { ...fields, ...ivs }, teamTypes).changes };
+    return { ...ivs, ...getIvAutoFix(catalog, { ...fields, ...ivs }, teamTypes, raidRush).changes };
 }
 
 /**
  * Works out the auto-fix for many spreads, such as every filtered spread, so it can be previewed first.
  *
  * @param {object} catalog The game catalog.
- * @param {Array<{id: string, fields: object}>} spreads The spreads.
+ * @param {Array<{id: string, fields: object, raidRush?: boolean}>} spreads The spreads and their battle context.
  * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
  * @returns {{changes: Array<{id: string, fields: Object<string, number>, hiddenPowerIvs: Array<string>}>,
  *          skipped: Array<{id: string, stats: Array<string>}>}} The spreads that change, and the spreads with
@@ -637,9 +722,9 @@ export function planIvAutoFix(catalog, spreads, teamTypes = [])
 {
     const changes = [];
     const skipped = [];
-    for (const { id, fields } of spreads)
+    for (const { id, fields, raidRush = false } of spreads)
     {
-        const fix = getIvAutoFix(catalog, fields, teamTypes);
+        const fix = getIvAutoFix(catalog, fields, teamTypes, raidRush);
         if (Object.keys(fix.changes).length > 0)
             changes.push({ id, fields: fix.changes, hiddenPowerIvs: fix.hiddenPowerIvs });
         if (fix.unknown.length > 0)

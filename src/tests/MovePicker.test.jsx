@@ -351,6 +351,41 @@ describe("Move picker", () =>
 
 describe("Choose Moves dialog", () =>
 {
+    it.each(["SPECIES_TERAPAGOS_TERASTAL", "SPECIES_TERAPAGOS_STELLAR"])("uses base Terapagos's moves despite stale %s learnsets", async (species) =>
+    {
+        const catalog = createCatalog();
+        catalog.species[species] = { ...catalog.species.SPECIES_PICHU, name: "Terapagos Form" };
+        catalog.learnsets.SPECIES_TERAPAGOS = { status: "complete", moves: { MOVE_THUNDERBOLT: ["tm"] }, unknown: {} };
+        catalog.learnsets[species] = { status: "complete", moves: {}, unknown: {} };
+        expect(getLearnableMoveOptions(catalog, species).options.some(({ move }) => move === "MOVE_THUNDERBOLT")).toBe(true);
+        expect(getMoveLegality(catalog, species, "MOVE_THUNDERBOLT")).toMatchObject({ status: LEGALITY.ALLOWED, sources: ["tm"] });
+        expect(getChooserRows(catalog, getLearnableMoveOptions(catalog, species), { ...NO_FILTERS, species })
+            .find(({ option }) => option.move === "MOVE_THUNDERBOLT").learnable).toBe(true);
+        const { user } = renderEditor(createFields({ species, moves: ["MOVE_THUNDERBOLT", 0, 0, 0] }), catalog);
+        await user.click(screen.getByRole("button", { name: "Advanced search for Move 1" }));
+        const dialog = await screen.findByRole("dialog", { name: "Choose Moves for Terapagos Form" });
+        const row = within(dialog).getByRole("button", { name: "Thunderbolt" }).closest("tr");
+        expect(row).not.toHaveClass("move-illegal");
+        expect(catalog.learnsets[species].moves).toEqual({});
+    });
+
+    it.each(["SPECIES_TERAPAGOS", "SPECIES_TERAPAGOS_TERASTAL", "SPECIES_TERAPAGOS_STELLAR"])("shows the correct Tera Starstorm target for %s", async (species) =>
+    {
+        const catalog = createCatalog();
+        catalog.species[species] = { ...catalog.species.SPECIES_PICHU, name: "Terapagos Test" };
+        catalog.moves.MOVE_TERASTARSTORM = { ...catalog.moves.MOVE_THUNDERBOLT, name: "Tera Starstorm", target: "MOVE_TARGET_SELECTED" };
+        catalog.learnsets[species] = { status: "complete", moves: { MOVE_TERASTARSTORM: ["level"] }, unknown: {} };
+        const fields = createFields({ species, moves: ["MOVE_TERASTARSTORM", 0, 0, 0] });
+        const { user } = renderEditor(fields, catalog);
+        await user.click(screen.getByRole("button", { name: "Advanced search for Move 1" }));
+        const dialog = await screen.findByRole("dialog", { name: "Choose Moves for Terapagos Test" });
+        const row = within(dialog).getByRole("button", { name: "Tera Starstorm" }).closest("tr");
+        expect(within(row).getAllByRole("cell").at(-1)).toHaveTextContent(species === "SPECIES_TERAPAGOS_STELLAR" ? "Both" : "Selected");
+        expect(catalog.moves.MOVE_TERASTARSTORM.target).toBe("MOVE_TARGET_SELECTED");
+        const rows = getChooserRows(catalog, getLearnableMoveOptions(catalog, species), { ...NO_FILTERS, species, target: "MOVE_TARGET_BOTH" });
+        expect(rows.some(({ option }) => option.move === "MOVE_TERASTARSTORM")).toBe(species === "SPECIES_TERAPAGOS_STELLAR");
+    });
+
     it("uses the full type banner in the move table without changing slot symbols", async () =>
     {
         const catalog = { ...CATALOG, types: { ...CATALOG.types, TYPE_FIRE: { name: "Fire", symbol: "/symbol.png", icon: "/banner.png" } } };

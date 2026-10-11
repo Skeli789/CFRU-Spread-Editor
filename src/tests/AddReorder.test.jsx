@@ -5,7 +5,7 @@ import axios from "axios";
 import { vi } from "vitest";
 
 import App from "../App";
-import { DRAFTS_STORAGE_KEY, DRAFTS_VERSION, SETTINGS_STORAGE_KEY, SETTINGS_VERSION } from "../SpreadEditorState";
+import { DRAFTS_STORAGE_KEY, DRAFTS_VERSION, SETTINGS_STORAGE_KEY, SETTINGS_VERSION, getTransferProblem } from "../SpreadEditorState";
 import { FRONTIER_SET, LITTLE_CUP_SET, PALMER_SET, PATHS, SAVE_ROUTE, createCatalog, createFields, createSpreads, createWorkspace, createZygardeCatalog, mockServer } from "./EditorFixtures";
 
 vi.mock("axios", () => ({ default: { post: vi.fn() } }));
@@ -98,11 +98,13 @@ describe("Adding and reordering spreads", () =>
 
     afterEach(() => cleanup());
 
-    test.each(["Eternamax Eternatus", "Zygarde Complete"])("offers %s only for Raid Rush and blocks it after changing destination", async (name) =>
+    test.each(["Eternamax Eternatus", "Zygarde Complete", "Terapagos Stellar"])("offers %s only for Raid Rush and blocks it after changing destination", async (name) =>
     {
         const catalog = createZygardeCatalog();
         catalog.species.SPECIES_ETERNATUS = { ...catalog.species.SPECIES_GARCHOMP, name: "Eternatus", showdownName: "Eternatus", megas: [] };
         catalog.species.SPECIES_ETERNATUS_ETERNAMAX = { ...catalog.species.SPECIES_ETERNATUS, name: "Eternamax Eternatus", showdownName: "Eternatus-Eternamax" };
+        catalog.species.SPECIES_TERAPAGOS = { ...catalog.species.SPECIES_GARCHOMP, name: "Terapagos", showdownName: "Terapagos", megas: [] };
+        catalog.species.SPECIES_TERAPAGOS_STELLAR = { ...catalog.species.SPECIES_TERAPAGOS, name: "Terapagos Stellar", showdownName: "Terapagos-Stellar" };
         const spreads = createSpreads();
         spreads.sets.push({ ...spreads.sets[0], id: "raid-rush", file: "src/Tables/raid_rush_spreads.h", name: "sRaidRushEasySpreads", category: "raidRush", entryIds: [] });
         const { user } = await openEditor(spreads, { "/workspaces/:id/catalog": () => catalog });
@@ -112,6 +114,7 @@ describe("Adding and reordering spreads", () =>
         await user.click(speciesInput);
         expect(screen.queryByRole("option", { name: "Eternamax Eternatus" })).not.toBeInTheDocument();
         expect(screen.queryByRole("option", { name: "Zygarde Complete" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: "Terapagos Stellar" })).not.toBeInTheDocument();
         expect(screen.getByRole("option", { name: "Zygarde" })).toBeInTheDocument();
         expect(screen.getByRole("option", { name: "Zygarde 10%" })).toBeInTheDocument();
         await user.keyboard("{Escape}");
@@ -129,6 +132,61 @@ describe("Adding and reordering spreads", () =>
         await user.click(await screen.findByRole("option", { name: "Frontier Spreads" }));
         expect(within(dialog).getByRole("button", { name: "Add", exact: true })).toBeDisabled();
         expect(within(dialog).queryByLabelText("Species preview")).not.toBeInTheDocument();
+    });
+
+    test.each(["Choose Species", "Import Showdown Text"])("adds base Terapagos as Stellar in Raid Rush through %s and blocks ordinary destinations", async (method) =>
+    {
+        const catalog = createCatalog();
+        catalog.species.SPECIES_TERAPAGOS = { ...catalog.species.SPECIES_PICHU, name: "Terapagos", showdownName: "Terapagos", megas: [] };
+        catalog.species.SPECIES_TERAPAGOS_STELLAR = { ...catalog.species.SPECIES_TERAPAGOS, name: "Terapagos Stellar", showdownName: "Terapagos-Stellar" };
+        catalog.learnsets.SPECIES_TERAPAGOS_STELLAR = catalog.learnsets.SPECIES_PICHU;
+        const spreads = createSpreads();
+        spreads.sets[0].category = "raidRush";
+        const { user } = await openEditor(spreads, { "/workspaces/:id/catalog": () => catalog });
+        if (method === "Choose Species")
+        {
+            await chooseSpecies(user, "Terapagos");
+            await user.click(within(screen.getByRole("dialog", { name: "Add Spread" })).getByRole("button", { name: "Add", exact: true }));
+            const dialog = await screen.findByRole("dialog", { name: "Add Terapagos Stellar" });
+            const setInput = within(dialog).getByRole("combobox", { name: "Spread Set" });
+            await user.clear(setInput);
+            await user.type(setInput, "Little");
+            expect(await screen.findByRole("option", { name: /Little Cup/ })).toHaveAttribute("aria-disabled", "true");
+            await user.keyboard("{Escape}");
+            await user.click(within(dialog).getByRole("button", { name: "Add", exact: true }));
+        }
+        else
+        {
+            await user.click(screen.getByRole("button", { name: "Add Spread" }));
+            const dialog = screen.getByRole("dialog", { name: "Add Spread" });
+            await user.click(within(dialog).getByRole("tab", { name: method }));
+            await user.type(within(dialog).getByRole("textbox", { name: /Showdown/ }), "Terapagos\n- Thunderbolt");
+            await user.click(await within(dialog).findByRole("button", { name: "Import 1 Spread" }));
+        }
+        const entries = Object.values(JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).newEntries);
+        expect(entries[0].fields.species).toBe("SPECIES_TERAPAGOS_STELLAR");
+        const entry = entries[0];
+        const state = { newEntries: { [entry.id]: entry }, drafts: {}, spreadIndex: { entries: new Map(), sets: new Map(spreads.sets.map((set) => [set.id, set])) } };
+        expect(getTransferProblem(state, entry.id, LITTLE_CUP_SET)).toBe("Terapagos Stellar is only available in Raid Rush.");
+        cleanup();
+        spreads.sets[0].category = "battleTower";
+        await openEditor(spreads, { "/workspaces/:id/catalog": () => catalog });
+        expect(screen.queryByRole("article", { name: "Terapagos Stellar spread" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /^Save Changes/ })).not.toBeInTheDocument();
+    });
+
+    test("keeps base Terapagos when adding outside Raid Rush", async () =>
+    {
+        const catalog = createCatalog();
+        catalog.species.SPECIES_TERAPAGOS = { ...catalog.species.SPECIES_PICHU, name: "Terapagos", showdownName: "Terapagos", megas: [] };
+        catalog.species.SPECIES_TERAPAGOS_STELLAR = { ...catalog.species.SPECIES_TERAPAGOS, name: "Terapagos Stellar", showdownName: "Terapagos-Stellar" };
+        catalog.learnsets.SPECIES_TERAPAGOS = catalog.learnsets.SPECIES_PICHU;
+        const { user } = await openEditor(createSpreads(), { "/workspaces/:id/catalog": () => catalog });
+        await chooseSpecies(user, "Terapagos");
+        await user.click(within(screen.getByRole("dialog", { name: "Add Spread" })).getByRole("button", { name: "Add", exact: true }));
+        const dialog = await screen.findByRole("dialog", { name: "Add Terapagos" });
+        await user.click(within(dialog).getByRole("button", { name: "Add", exact: true }));
+        expect(Object.values(JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).newEntries)[0].fields.species).toBe("SPECIES_TERAPAGOS");
     });
 
     test("drops a cached saved order and does not offer a no-op Revert Order", async () =>

@@ -3,15 +3,15 @@
  * It is the spread editor page, which requires repositories and a game to be loaded first.
  */
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Alert, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Fab, Stack, Tooltip, Typography } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import UndoIcon from '@mui/icons-material/Undo';
 import { toast } from 'react-toastify';
 
-import { EV_FIELDS, IV_FIELDS, getSpreadLevel } from '../shared/pokemon-mechanics.mjs';
+import { EV_FIELDS, IV_FIELDS, calculateSpreadStats, getEffectiveAbility, getEffectiveBaseStatTotal, getSpreadStatUse, getSpreadLevel } from '../shared/pokemon-mechanics.mjs';
 import { DEFAULT_FILTERS, DEFAULT_PAGE_SIZE, createFilterContext, getDefaultFilters, matchesFilters } from '../shared/spread-layout.mjs';
-import { AUTO_FIX_CATEGORY, BATTLE_TYPES, MOVE_REMOVAL, compactMoves, createNewSpreadFields, getBattleType, planSpreadAutoFix, setMove } from '../shared/spread-model.mjs';
+import { AUTO_FIX_CATEGORY, BATTLE_TYPES, MOVE_REMOVAL, RAID_RUSH_CATEGORY, SPECIES_TERAPAGOS_STELLAR, STELLAR_SET_REASON, compactMoves, createNewSpreadFields, getBattleType, planSpreadAutoFix, setMove } from '../shared/spread-model.mjs';
 import RepositorySetup from './components/RepositorySetup';
 import SpreadCard from './components/SpreadCard';
 import { AddSpreadDialog, AutoFixDialog, DiscardNewSpreadDialog, EditSpreadDialog, ExportSpreadsDialog } from './components/SpreadDialogs';
@@ -32,6 +32,7 @@ const SAVE_BLUE = "#1976d2";
 const SAVE_BLUE_HOVER = "#1565c0";
 const SAVE_BUTTON_STYLE = { bgcolor: SAVE_BLUE, color: "#fff", "&:hover": { bgcolor: SAVE_BLUE_HOVER } };
 const PENDING_ID = "pending-spread";
+const SPECIES_TERAPAGOS = "SPECIES_TERAPAGOS";
 const LOCKED_REASON = "This spread's source cannot be changed safely.";
 const AUTO_FIX_LABELS = { [AUTO_FIX_CATEGORY.MOVES]: "moves", [AUTO_FIX_CATEGORY.IVS]: "IVs", [AUTO_FIX_CATEGORY.EVS]: "EVs" };
 const REMOVAL_REASONS =
@@ -200,7 +201,8 @@ const SpreadEditorView = () =>
     {
         const matching = results.map(({ id }) => spreadIndex.entries.get(id)).filter((entry) => !entry.placeholder);
         const editable = matching.filter((entry) => entry.editable);
-        const entries = editable.map((entry) => ({ id: entry.id, fields: drafts[entry.id] ?? entry.fields }));
+        const entries = editable.map((entry) => ({ id: entry.id, fields: drafts[entry.id] ?? entry.fields,
+            raidRush: spreadIndex.sets.get(entry.setId).category === RAID_RUSH_CATEGORY }));
         const plans = Object.fromEntries(Object.values(AUTO_FIX_CATEGORY).map((category) => [category, planSpreadAutoFix(catalog, entries, category, spreads.teamTypes)]));
 
         /**
@@ -318,6 +320,20 @@ const SpreadEditorView = () =>
         );
     };
 
+    /**
+     * Returns a Raid Rush card's effective BST using its current fields and displayed species.
+     * @param {string} id The spread ID.
+     * @returns {number|null} The effective BST, or null for incomplete base stats.
+     */
+    const getEffectiveBst = useCallback((id) =>
+    {
+        const entry = spreadIndex.entries.get(id);
+        const fields = drafts[id] ?? entry.fields;
+        const stats = calculateSpreadStats(catalog, fields, { level: preview.level });
+        const speciesInfo = catalog.species[stats.species];
+        return getEffectiveBaseStatTotal(speciesInfo?.baseStats, getSpreadStatUse(catalog, fields.moves, true), getEffectiveAbility(speciesInfo, fields.ability));
+    }, [spreadIndex, drafts, catalog, preview.level]);
+
     return (
         <>
             <SpreadFilters
@@ -342,6 +358,7 @@ const SpreadEditorView = () =>
                 availableSpreads={availableSpreads}
                 renderCard={renderCard}
                 getSetHeading={getSetHeading}
+                getEffectiveBst={getEffectiveBst}
                 pageSize={pageSize}
                 onPageSizeChange={setPageSize}
                 resetKey={JSON.stringify(filters)}
@@ -372,6 +389,9 @@ const SpreadEditorView = () =>
                 defaultSpecies={filters.species.length === 1 ? filters.species[0] : undefined}
                 onClose={() => setAddOpen(false)} onAdd={(setId, species) =>
                 {
+                    if (species === SPECIES_TERAPAGOS && spreadIndex.sets.get(setId).category === RAID_RUSH_CATEGORY
+                        && Object.hasOwn(catalog.species, SPECIES_TERAPAGOS_STELLAR))
+                        species = SPECIES_TERAPAGOS_STELLAR;
                     // The first move is filled in, so pressing Enter again adds the spread
                     const [firstMove] = getLearnableMoveOptions(catalog, species).options;
                     const fields = createNewSpreadFields(species, catalog.species[species]);
@@ -379,7 +399,10 @@ const SpreadEditorView = () =>
                     setAddOpen(false);
                 }} onImport={(setId, fieldsList) =>
                 {
-                    const ids = editor.addSpreads(setId, fieldsList);
+                    const stellarAvailable = spreadIndex.sets.get(setId).category === RAID_RUSH_CATEGORY
+                        && Object.hasOwn(catalog.species, SPECIES_TERAPAGOS_STELLAR);
+                    const ids = editor.addSpreads(setId, fieldsList.map((fields) => stellarAvailable && fields.species === SPECIES_TERAPAGOS
+                        ? { ...fields, species: SPECIES_TERAPAGOS_STELLAR } : fields));
                     setReveal({ id: ids[0], key: Date.now() });
                     setAddOpen(false);
                     toast.success(ids.length === 1 ? "Imported 1 spread." : `Imported ${ids.length} spreads.`);
@@ -392,6 +415,8 @@ const SpreadEditorView = () =>
                                   getSetProblem={(setId) =>
                                   {
                                       const set = spreadIndex.sets.get(setId);
+                                      if (pendingEntry.fields.species === SPECIES_TERAPAGOS_STELLAR && set.category !== RAID_RUSH_CATEGORY)
+                                          return STELLAR_SET_REASON;
                                       return set.canInsert ? "" : set.insertBlockedReason ?? "Spreads cannot be added to this set.";
                                   }}
                                   onSetChange={(setId) => setPending((current) => ({ ...current, setId }))}

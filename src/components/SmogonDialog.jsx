@@ -11,6 +11,7 @@ import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { SMOGON_CATEGORIES, SMOGON_TABS, expandSmogonSet, getSmogonSpeciesNames } from "../../shared/smogon.mjs";
 import { applyOverwrite, resolveImportedSet } from "../../shared/showdown.mjs";
 import { getIvAutoFix } from "../../shared/pokemon-mechanics.mjs";
+import { RAID_RUSH_CATEGORY } from "../../shared/spread-model.mjs";
 import { getSpeciesFormName } from "../subcomponents/CatalogDisplay";
 import OperationProgress from "../subcomponents/OperationProgress";
 import SpreadCard from "./SpreadCard";
@@ -126,7 +127,7 @@ export default function SmogonDialog({ catalog, species, set, teamTypes = EMPTY_
                 ? applyOverwrite(catalog, currentFields, resolved.fields, { teamTypes, saved: savedFields, ballProvided: false }) : null;
             if (overwrite)
             {
-                const optimizedFields = { ...overwrite.fields, ...getIvAutoFix(catalog, overwrite.fields, teamTypes).changes };
+                const optimizedFields = { ...overwrite.fields, ...getIvAutoFix(catalog, overwrite.fields, teamTypes, set.category === RAID_RUSH_CATEGORY).changes };
                 overwrite = applyOverwrite(catalog, currentFields, optimizedFields, { teamTypes, saved: savedFields, ballProvided: false });
             }
             const fields = multiple && resolved.errors.length === 0

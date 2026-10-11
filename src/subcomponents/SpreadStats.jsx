@@ -13,7 +13,7 @@ import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import RemoveIcon from "@mui/icons-material/Remove";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 
-import { EV_FIELDS, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV, STATS, getEvTotal, getNatureEffect, getResetIvs, stepEv } from "../../shared/pokemon-mechanics.mjs";
+import { EV_FIELDS, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV, STATS, STAT_USE, getEffectiveAbility, getEffectiveBaseStatTotal, getSpreadStatUse, getEvTotal, getNatureEffect, getResetIvs, stepEv } from "../../shared/pokemon-mechanics.mjs";
 import { getFieldSymbol, setEv, setIv } from "../../shared/spread-model.mjs";
 import { STAT_LABELS } from "./CatalogDisplay";
 
@@ -230,15 +230,19 @@ const StepperInput = ({ label, canLower, canRaise, onStep, children }) =>
  * @param {Array<{name: string, value: number|null}>} [props.teamTypes=[]] - The snapshot's resolved team enum.
  * @param {React.ReactNode} [props.footer] - Controls shown at the right of the Total row.
  * @param {object} [props.highlightedFields] EV and IV fields highlighted in a comparison.
+ * @param {boolean} [props.raidRush=false] Whether to display effective BST and reset IVs for Max Moves.
  * @returns {JSX.Element} The stat table.
  */
-const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange, name, catalog = null, teamTypes = [], footer = null, highlightedFields = null }) =>
+const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange, name, catalog = null, teamTypes = [], footer = null, highlightedFields = null, raidRush = false }) =>
 {
     const theme = useTheme();
     const nature = getNatureEffect(getFieldSymbol(fields, "nature"));
     const evTotal = getEvTotal(fields);
     const baseTotal = STATS.every((stat) => baseStats?.[stat] != null) ? STATS.reduce((sum, stat) => sum + baseStats[stat], 0) : null;
-    const resetIvFields = editing && catalog != null ? getResetIvs(catalog, fields, teamTypes) : null;
+    const uses = raidRush && !editing && catalog != null ? getSpreadStatUse(catalog, fields.moves, true) : {};
+    const ability = raidRush && !editing && catalog != null ? getEffectiveAbility(catalog.species[preview.species], fields.ability) : null;
+    const effectiveTotal = getEffectiveBaseStatTotal(baseStats, uses, ability);
+    const resetIvFields = editing && catalog != null ? getResetIvs(catalog, fields, teamTypes, raidRush) : null;
     const ivsAreReset = resetIvFields == null || STATS.every((stat) => fields[IV_FIELDS[stat]] === resetIvFields[IV_FIELDS[stat]]);
 
     /**
@@ -270,7 +274,7 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
      */
     const resetIvs = () => onChange((current) =>
     {
-        const ivs = getResetIvs(catalog, current, teamTypes);
+        const ivs = getResetIvs(catalog, current, teamTypes, raidRush);
         return STATS.reduce((next, stat) => setIv(next, stat, ivs[IV_FIELDS[stat]]), current);
     });
 
@@ -354,7 +358,7 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
                                 {nature?.decreased === stat &&
                                     <Tooltip title={LOWERED_LABEL}><span role="img" aria-label={LOWERED_LABEL} className="nature-down"><ArrowDownwardIcon fontSize="inherit" /></span></Tooltip>}
                             </th>
-                            <td>{baseStats?.[stat] ?? UNKNOWN_STAT}</td>
+                            <td>{uses[stat] === STAT_USE.UNUSED ? <s>{baseStats?.[stat] ?? UNKNOWN_STAT}</s> : baseStats?.[stat] ?? UNKNOWN_STAT}</td>
                             <td data-highlighted-field={highlightedFields?.[EV_FIELDS[stat]] ? EV_FIELDS[stat] : undefined}
                                 style={{ color: !editing && evInvalid ? theme.palette.error.main : undefined,
                                     backgroundColor: highlightedFields?.[EV_FIELDS[stat]] ? DIFF_BACKGROUND : undefined }}>
@@ -385,7 +389,9 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
             <tfoot>
                 <tr>
                     <th scope="row">Total</th>
-                    <td>{baseTotal ?? UNKNOWN_STAT}</td>
+                    <td>{effectiveTotal !== baseTotal && baseTotal != null
+                        ? <Tooltip title={`Original BST: ${baseTotal}`}><em>{effectiveTotal}</em></Tooltip>
+                        : baseTotal ?? UNKNOWN_STAT}</td>
                     <td className={`stat-ev-total${evTotal > MAX_EV_TOTAL ? " ev-total-error" : ""}`} aria-label={`EV total ${evTotal} of ${MAX_EV_TOTAL}`}>
                         {!editing ? evTotal : evTotal > MAX_EV_TOTAL ? `${evTotal - MAX_EV_TOTAL} Over` : `${MAX_EV_TOTAL - evTotal} Left`}
                     </td>

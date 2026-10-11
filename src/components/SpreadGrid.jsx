@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, FormControl, IconButton, InputLabel, MenuItem, Pagination, PaginationItem, Select, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, FormControl, FormControlLabel, IconButton, InputLabel, MenuItem, Pagination, PaginationItem, Select, Stack, Switch, TextField, Tooltip, Typography } from "@mui/material";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable } from "@dnd-kit/react";
 import { closestCenter } from "@dnd-kit/collision";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
@@ -18,6 +18,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 
 import { GROUP_MOVE_PREFIX, PAGE_SIZES, buildRows, canDropSpread, findPage, getGapTarget, getRowCapacity, groupSpreads, hasOrderChange, moveSpeciesGroup, moveSpread, paginateRows } from "../../shared/spread-layout.mjs";
+import { RAID_RUSH_CATEGORY } from "../../shared/spread-model.mjs";
 
 // The narrowest a card can be while keeping the sprite column beside the stats and their - and + buttons
 export const MIN_CARD_WIDTH = 340;
@@ -39,6 +40,7 @@ const RIGHT_EDGE_REASON = "This is the last spread in its species group.";
 const REORDER_BLOCKED_REASON = "This spread set cannot be reordered safely.";
 const HIDDEN_SPREADS_REASON = "Some spreads are hidden by the filters.";
 const INSERT_BLOCKED_REASON = "Spreads cannot be added to this set.";
+const SORT_EFFECTIVE_BST = "Sort Effective BST";
 
 // A row one card short of full widens its cards to fill it, but a lone card never stretches across the page
 const MIN_WIDENED_CAPACITY = 3;
@@ -264,6 +266,7 @@ function getSections(rows)
  * @param {Array<object>} [props.availableSpreads] All nonhidden spreads in current source order, before filtering.
  * @param {Function} props.renderCard - Returns the card for a spread ID.
  * @param {Function} props.getSetHeading - Returns a set's title and file for its section.
+ * @param {Function} [props.getEffectiveBst] Returns the displayed effective BST for a spread ID.
  * @param {number} props.pageSize - The most cards on a page, unless one species has more.
  * @param {Function} props.onPageSizeChange - Called with a new page size.
  * @param {string} props.resetKey - Changes whenever the results should go back to the first page.
@@ -288,12 +291,14 @@ function getSections(rows)
  */
 const SpreadGrid = ({ spreads, renderCard, getSetHeading, pageSize, onPageSizeChange, resetKey, onClearFilters, getSpeciesName,
     activeSet, allEntries, orders, reveal, hiddenIds = NO_IDS, onOrder, onRevertOrder, movedGroups = NO_GROUPS, movedSpreadIds = NO_IDS,
-    onRevertGroup = null, onRevertSpread = null, onTransfer = null, getTransferProblem = null, onAdd = null, sets = NO_SETS, availableSpreads = spreads }) =>
+    onRevertGroup = null, onRevertSpread = null, onTransfer = null, getTransferProblem = null, onAdd = null, sets = NO_SETS, availableSpreads = spreads,
+    getEffectiveBst = null }) =>
 {
     const containerRef = useRef(null);
     const width = useWidth(containerRef);
     const capacity = width > 0 ? getRowCapacity(width, MIN_CARD_WIDTH, CARD_GAP) : DEFAULT_CAPACITY;
     const [placing, setPlacing] = useState(null);
+    const [sortedSets, setSortedSets] = useState(new Set());
     // Show matching spreads, plus the filtered-out peers of any expanded species group that has a match
     const [expansion, setExpansion] = useState({ resetKey, keys: new Set() });
     const expandedKeys = expansion.resetKey === resetKey ? expansion.keys : NO_IDS;
@@ -335,7 +340,28 @@ const SpreadGrid = ({ spreads, renderCard, getSetHeading, pageSize, onPageSizeCh
     }, [groups, sets, activeSet, orders, hiddenIds, items]);
     const placingGroup = placing != null && placing.resetKey === resetKey && reorderReasons.get(placing.setId) === "" ? placing : null;
 
-    const rows = useMemo(() => buildRows(groups, capacity), [groups, capacity]);
+    const rows = useMemo(() =>
+    {
+        const layoutGroups = [];
+        const visited = new Set();
+        for (const group of groups)
+        {
+            if (!sortedSets.has(group.setId) || getEffectiveBst == null)
+            {
+                layoutGroups.push(group);
+                continue;
+            }
+            if (visited.has(group.setId))
+                continue;
+            visited.add(group.setId);
+            const ranked = displayedSpreads.filter((item) => item.setId === group.setId)
+                .map((item) => ({ ...item, bst: getEffectiveBst(item.id) ?? Infinity }))
+                .sort((first, second) => first.bst - second.bst);
+            layoutGroups.push(...ranked.map((item) => ({ setId: item.setId, species: item.species, ids: [item.id] })));
+        }
+        return buildRows(layoutGroups, capacity);
+    }, [groups, capacity, displayedSpreads, sortedSets, getEffectiveBst]);
+    const lastRows = useMemo(() => new Set([...new Map(rows.map((row) => [row.setId, row])).values()]), [rows]);
     const blockSizes = useMemo(() => rows.reduce((sizes, row) => sizes.set(row.block, (sizes.get(row.block) ?? 0) + 1), new Map()), [rows]);
     const pages = useMemo(() => paginateRows(rows, pageSize), [rows, pageSize]);
     const [dragging, setDragging] = useState(null);
@@ -567,6 +593,23 @@ const SpreadGrid = ({ spreads, renderCard, getSetHeading, pageSize, onPageSizeCh
      */
     const renderRow = (row) =>
     {
+        if (sortedSets.has(row.setId) && getEffectiveBst != null)
+        {
+            const set = sets.get(row.setId) ?? activeSet;
+            const addCard = lastRows.has(row) && onAdd != null
+                ? <AddSpreadCard disabled={set?.canInsert === false} reason={set?.insertBlockedReason ?? INSERT_BLOCKED_REASON} onAdd={() => onAdd(row.setId)} /> : null;
+            const addInRow = addCard != null && row.ids.length < capacity;
+            const rowStyle = { gridTemplateColumns: `repeat(${capacity}, minmax(0, 1fr))` };
+            return (
+                <React.Fragment key={row.ids[0]}>
+                    <div className="spread-row" style={rowStyle}>
+                        {row.ids.map((id) => <div key={id} className="spread-ranked-card">{renderCard(id)}</div>)}
+                        {addInRow && addCard}
+                    </div>
+                    {addCard != null && !addInRow && <div className="spread-row" style={rowStyle}>{addCard}</div>}
+                </React.Fragment>
+            );
+        }
         const setGroups = groups.filter((group) => group.setId === row.setId);
         const placingHere = placingGroup?.setId === row.setId;
         const source = placingHere ? setGroups.findIndex((group) => group.species === placingGroup.species) : -1;
@@ -730,11 +773,25 @@ const SpreadGrid = ({ spreads, renderCard, getSetHeading, pageSize, onPageSizeCh
                 const heading = getSetHeading(section.setId);
                 return (
                     <section key={section.setId} className="spread-section" aria-label={`${heading.title} spreads`}>
-                        <SetHeading setId={section.setId} dropAllowed={canDrop({ setId: section.setId })}>
+                        <SetHeading setId={section.setId} dropAllowed={!sortedSets.has(section.setId) && canDrop({ setId: section.setId })}>
                             <Typography component="h2" variant="subtitle1" className="spread-section-title">
                                 {heading.title}{index === 0 && section.setId === continuedSet ? " (continued)" : ""}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">{heading.file}</Typography>
+                            {getEffectiveBst != null && (sets.get(section.setId) ?? activeSet)?.category === RAID_RUSH_CATEGORY &&
+                                <FormControlLabel sx={{ ml: "auto", mr: 0 }} label={SORT_EFFECTIVE_BST}
+                                    control={<Switch size="small" checked={sortedSets.has(section.setId)} onChange={(event) =>
+                                    {
+                                        const next = new Set(sortedSets);
+                                        if (event.target.checked)
+                                            next.add(section.setId);
+                                        else
+                                            next.delete(section.setId);
+                                        setSortedSets(next);
+                                        setPlacing(null);
+                                        setExpansion({ resetKey, keys: new Set() });
+                                        setAnchor({ resetKey, id: null });
+                                    }} />} />}
                             {hasOrderChange(sets.get(section.setId) ?? (activeSet?.id === section.setId ? activeSet : null), orders[section.setId], allEntries)
                                 && <Button size="small" onClick={() => onRevertOrder(section.setId)}>Revert Order</Button>}
                         </SetHeading>

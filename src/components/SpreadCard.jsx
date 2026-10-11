@@ -28,12 +28,12 @@ import { SPREAD_PRESETS, getSuggestedSpread } from "../../shared/spread-suggesti
 import
 {
     EV_FIELDS, STATS, LITTLE_CUP_LEVEL, calculateSpreadStats, getAbilityLabel, getAbilityOptions, getEffectiveAbility, getMegaAbility, getMegaSpecies,
-    getNatureEffect, getSpreadLevel,
+    getItemSpecies, getNatureEffect, getSpreadLevel,
 } from "../../shared/pokemon-mechanics.mjs";
 import
 {
-    ANY_TEAM_TYPE, BATTLE_TYPES, MAX_MOVES, changeBattleType, getBattleType, getFieldSymbol, getTeamType, getTeamTypeLabel, setFieldSymbol,
-    setMove, setTeamType,
+    ANY_TEAM_TYPE, BATTLE_TYPES, MAX_MOVES, RAID_RUSH_CATEGORY, changeBattleType, getBattleType, getFieldSymbol, getTeamType, getTeamTypeLabel, setFieldSymbol,
+    setHeldItem, setMove, setTeamType,
 } from "../../shared/spread-model.mjs";
 import { GameImage, OverflowText, STAT_SHORT_LABELS, TypeIcon, filterBySearch, getEntry, getLabel } from "../subcomponents/CatalogDisplay";
 import ItemPicker, { ITEM_NONE, NO_ITEM_LABEL } from "../subcomponents/ItemPicker";
@@ -315,8 +315,9 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
     const [menuAnchor, setMenuAnchor] = useState(null);
     const [presetAnchor, setPresetAnchor] = useState(null);
     const [selectedPreset, setSelectedPreset] = useState(null);
-    const speciesInfo = getEntry(catalog.species, fields.species);
-    const name = speciesInfo?.name ?? String(fields.species);
+    const species = getItemSpecies(catalog, fields);
+    const speciesInfo = getEntry(catalog.species, species);
+    const name = speciesInfo?.name ?? String(species);
     const level = getSpreadLevel(set, preview.level);
     const statLevel = editing && !showLevelFive ? preview.level : level;
     const stats = useMemo(() => calculateSpreadStats(catalog, fields, { level: statLevel, mega: showMega }), [catalog, fields, statLevel, showMega]);
@@ -591,8 +592,9 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                     name={name}
                     catalog={catalog}
                     teamTypes={teamTypes}
+                    raidRush={set.category === RAID_RUSH_CATEGORY}
                     highlightedFields={highlights}
-                    footer={editing ? <Stack alignItems="flex-end">{levelToggle}{megaToggle}</Stack> : null}
+                    footer={editing ? <Stack sx={{ alignItems: "flex-end" }}>{levelToggle}{megaToggle}</Stack> : null}
                 />
             </div>
 
@@ -609,7 +611,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
                 {editing
                     ? <MoveEditor catalog={catalog} fields={fields} onFieldCommit={onFieldCommit}
                                   onReorder={(moves) => update((current) => ({ ...current, moves }))}
-                                  onChange={(slot, move, type) => update((current) => setMove(current, slot, move, type))} />
+                                  onChange={(slot, move, type) => update((current) => setMove(current, slot, move, type, catalog))} />
                     : Array.from({ length: MAX_MOVES }, (_, slot) =>
                     {
                         const option = getMoveOption(catalog, fields, fields.moves[slot]);
@@ -629,7 +631,7 @@ const SpreadCard = ({ entry, fields, set, catalog, teamTypes, preview, editing, 
             {editing &&
                 <div className="spread-card-held spread-details-edit">
                     <ItemPicker catalog={catalog} value={item} speciesName={name} onFieldCommit={onFieldCommit}
-                                onChange={(value) => update((current, saved) => setFieldSymbol(current, "item", value, saved))} />
+                                onChange={(value) => update((current, saved) => setHeldItem(catalog, current, value, saved))} />
                     <FieldAutocomplete label="Ability" value={fields.ability} options={abilityOptions} onFieldCommit={onFieldCommit}
                                        onChange={(value) => update((current) => ({ ...current, ability: value }))} />
                 </div>}

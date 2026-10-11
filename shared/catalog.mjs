@@ -96,7 +96,7 @@ export function getMoveLegality(catalog, species, move)
         return { status: LEGALITY.UNDEFINED, sources: [], reason: `${move} is not a move in ${catalog.name}.` };
 
     // Without a complete learnset nothing can be ruled out
-    const learnset = Object.hasOwn(catalog.learnsets, species) ? catalog.learnsets[species] : null;
+    const learnset = getSpeciesLearnset(catalog, species);
     if (learnset == null || learnset.status !== LEARNSET_COMPLETE)
         return { status: LEGALITY.UNKNOWN, sources: [], reason: `The Dynamic Pokemon Expansion has no learnset for ${species}.` };
 
@@ -106,6 +106,19 @@ export function getMoveLegality(catalog, species, move)
         return { status: LEGALITY.UNKNOWN, sources: [], reason: learnset.unknown[move] };
 
     return { status: LEGALITY.ILLEGAL, sources: [], reason: null };
+}
+
+/**
+ * Returns the learnset, using base Terapagos's moves for its battle forms even when theirs are stale.
+ * @param {object} catalog The game catalog.
+ * @param {string} species The stored species.
+ * @returns {object|null} The learnset, or null when unavailable.
+ */
+export function getSpeciesLearnset(catalog, species)
+{
+    const base = BATTLE_ONLY_BASE_FORMS[species];
+    const source = base === "SPECIES_TERAPAGOS" && Object.hasOwn(catalog.learnsets, base) ? base : species;
+    return Object.hasOwn(catalog.learnsets, source) ? catalog.learnsets[source] : null;
 }
 
 /**

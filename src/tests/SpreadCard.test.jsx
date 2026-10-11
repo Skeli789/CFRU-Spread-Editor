@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { ThemeProvider, alpha, getContrastRatio } from "@mui/material/styles";
 import { vi } from "vitest";
 
-import { calculateSpreadStats, getHiddenPowerType, getResetIvs, stepEv } from "../../shared/pokemon-mechanics.mjs";
+import { calculateSpreadStats, getHiddenPowerType, getItemSpecies, getResetIvs, stepEv } from "../../shared/pokemon-mechanics.mjs";
 import { getSuggestedSpread } from "../../shared/spread-suggestions.mjs";
 import { hasIllegalMove } from "../../shared/spread-layout.mjs";
 import SpreadCard from "../components/SpreadCard";
@@ -47,7 +47,7 @@ function renderCard(options = {})
         editing: false, changed: false, problems: [], actions, ...options,
     };
     render(<ThemeProvider theme={options.theme ?? APP_THEME}><SpreadCard {...cardProps} /></ThemeProvider>);
-    return { card: screen.getByRole("article", { name: `${cardProps.catalog.species[fields.species].name} spread` }), actions, user: userEvent.setup() };
+    return { card: screen.getByRole("article", { name: `${cardProps.catalog.species[getItemSpecies(cardProps.catalog, fields)].name} spread` }), actions, user: userEvent.setup() };
 }
 
 /**
@@ -67,9 +67,10 @@ function precedes(first, second)
  *
  * @param {object} props The component props.
  * @param {object} props.initialFields The starting fields.
+ * @param {object} [props.catalog] The game catalog.
  * @returns {JSX.Element} The editable card.
  */
-function HeldStatCard({ initialFields })
+function HeldStatCard({ initialFields, catalog = createCatalog() })
 {
     const [fields, setFields] = useState(initialFields);
     const spreads = createSpreads();
@@ -81,7 +82,7 @@ function HeldStatCard({ initialFields })
 
     return (
         <ThemeProvider theme={APP_THEME}>
-            <SpreadCard entry={spreads.entries[2]} fields={fields} set={spreads.sets[0]} catalog={createCatalog()}
+            <SpreadCard entry={spreads.entries[2]} fields={fields} set={spreads.sets[0]} catalog={catalog}
                         teamTypes={spreads.teamTypes} preview={PREVIEW} editing changed={false} problems={[]} actions={actions} />
         </ThemeProvider>
     );
@@ -89,6 +90,152 @@ function HeldStatCard({ initialFields })
 
 describe("Spread card", () =>
 {
+    it("changes Keldeo to Resolute when choosing Secret Sword and back when removing it", async () =>
+    {
+        const catalog = createCatalog();
+        catalog.species.SPECIES_KELDEO = { ...catalog.species.SPECIES_GARCHOMP, name: "Keldeo" };
+        catalog.species.SPECIES_KELDEO_RESOLUTE = { ...catalog.species.SPECIES_GARCHOMP, name: "Keldeo Resolute" };
+        catalog.moves.MOVE_SECRETSWORD = { ...catalog.moves.MOVE_FLAMETHROWER, name: "Secret Sword" };
+        const user = userEvent.setup();
+        render(<HeldStatCard initialFields={createFields({ species: "SPECIES_KELDEO", moves: [0, 0, 0, 0] })} catalog={catalog} />);
+        const input = screen.getByRole("combobox", { name: "Move 1" });
+        await user.type(input, "Secret Sword{Enter}");
+        expect(screen.getByRole("article", { name: "Keldeo Resolute spread" })).toBeInTheDocument();
+        await user.clear(input);
+        await user.tab();
+        expect(screen.getByRole("article", { name: "Keldeo spread" })).toBeInTheDocument();
+    });
+
+    it.each([
+        ["SPECIES_ZACIAN", "SPECIES_ZACIAN_CROWNED", "ITEM_RUSTED_SWORD", "Zacian Crowned"],
+        ["SPECIES_ZAMAZENTA", "SPECIES_ZAMAZENTA_CROWNED", "ITEM_RUSTED_SHIELD", "Zamazenta Crowned"],
+        ["SPECIES_TERAPAGOS", "SPECIES_TERAPAGOS_TERASTAL", "ITEM_NONE", "Terapagos Terastal"],
+    ])("displays the effective form for %s", (species, form, item, name) =>
+    {
+        const catalog = createCatalog();
+        catalog.species[species] = { ...catalog.species.SPECIES_CHARIZARD, name: species, megas: [] };
+        catalog.species[form] = { ...catalog.species.SPECIES_PICHU, name, megas: [] };
+        const fields = createFields({ species, item });
+        const { card, actions } = renderCard({ catalog, fields });
+        expect(within(card).getByRole("heading", { name })).toBeInTheDocument();
+        expect(within(card).getByRole("img", { name })).toBeInTheDocument();
+        expect(within(card).getByRole("rowheader", { name: "HP" }).closest("tr").querySelector("td")).toHaveTextContent("20");
+        expect(actions.updateSpread).not.toHaveBeenCalled();
+        expect(fields.species).toBe(species);
+    });
+
+    it.each([false, true])("keeps Stellar presentation when Terastal is available, editing=%s", (editing) =>
+    {
+        const catalog = createCatalog();
+        catalog.species.SPECIES_TERAPAGOS_TERASTAL = { ...catalog.species.SPECIES_CHARIZARD, name: "Terapagos Terastal", megas: [] };
+        catalog.species.SPECIES_TERAPAGOS_STELLAR = { ...catalog.species.SPECIES_PICHU, name: "Terapagos Stellar", megas: [] };
+        const fields = createFields({ species: "SPECIES_TERAPAGOS_STELLAR", item: "ITEM_NONE" });
+        const { card, actions } = renderCard({ catalog, fields, editing, set: { ...createSpreads().sets[0], category: "raidRush" } });
+        expect(within(card).getByRole("heading", { name: "Terapagos Stellar" })).toBeInTheDocument();
+        expect(within(card).getByRole("img", { name: "Terapagos Stellar" })).toBeInTheDocument();
+        expect(within(card).getByRole("rowheader", { name: "HP" }).closest("tr").querySelector("td")).toHaveTextContent("20");
+        expect(actions.updateSpread).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("weights Huge Power effective BST without changing raw stats, editing=%s", async (editing) =>
+    {
+        const catalog = createCatalog();
+        catalog.species.SPECIES_CHARIZARD.abilities = [null, "ABILITY_HUGEPOWER", null];
+        catalog.abilities.ABILITY_HUGEPOWER = "Huge Power";
+        const fields = createFields({ item: "ITEM_NONE", ability: 1, moves: ["MOVE_DRAGONCLAW", "MOVE_FLAMETHROWER", 0, 0] });
+        const { card, user } = renderCard({ catalog, fields, editing, set: { ...createSpreads().sets[0], category: "raidRush" } });
+        const total = within(card).getByRole("rowheader", { name: "Total" }).closest("tr").querySelector("td");
+        expect(total).toHaveTextContent(editing ? "534" : "567.6");
+        expect(within(card).getByRole("rowheader", { name: /^Attack/ }).closest("tr").querySelector("td")).toHaveTextContent("84");
+        if (!editing)
+        {
+            await user.hover(total.querySelector("em"));
+            expect(await screen.findByRole("tooltip")).toHaveTextContent("Original BST: 534");
+        }
+    });
+
+    it("keeps stat footer alignment out of DOM props", () =>
+    {
+        const consoleError = vi.spyOn(console, "error");
+        try
+        {
+            const { card } = renderCard({ editing: true });
+            expect(card.querySelector("[alignitems]")).toBeNull();
+            expect(consoleError.mock.calls.some((args) => args.some((value) => String(value).includes("alignItems")))).toBe(false);
+        }
+        finally
+        {
+            consoleError.mockRestore();
+        }
+    });
+
+    it.each(
+    [
+        ["Dialga", "ITEM_ADAMANT_ORB", "Adamant Orb"],
+        ["Palkia", "ITEM_LUSTROUS_ORB", "Lustrous Orb"],
+        ["Giratina", "ITEM_GRISEOUS_ORB", "Griseous Orb"],
+    ])("switches %s's species and stats when selecting and removing its Origin Orb", async (name, item, itemName) =>
+    {
+        const catalog = createCatalog();
+        const species = `SPECIES_${name.toUpperCase()}`;
+        const origin = `${species}_ORIGIN`;
+        catalog.species[species] = { ...catalog.species.SPECIES_GARCHOMP, name };
+        catalog.species[origin] = { ...catalog.species.SPECIES_CHARIZARD_MEGA_Y, name: `${name} Origin` };
+        catalog.items[item] = { name: itemName, icon: null, itemType: "ITEM_TYPE_HELD_ITEM" };
+        const user = userEvent.setup();
+        render(<HeldStatCard initialFields={createFields({ species, item: 0 })} catalog={catalog} />);
+        expect(screen.getByRole("heading", { name })).toBeInTheDocument();
+        await user.clear(screen.getByRole("combobox", { name: "Item" }));
+        await user.type(screen.getByRole("combobox", { name: "Item" }), `${itemName}{Enter}`);
+        expect(screen.getByRole("article", { name: `${name} Origin spread` })).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: `${name} Origin` })).toBeInTheDocument();
+        expect(screen.getByRole("textbox", { name: `${name} Origin Sp. Atk IV` })).toBeInTheDocument();
+        const spAtk = screen.getByRole("rowheader", { name: /^Sp\. Atk/ }).closest("tr");
+        expect(spAtk.querySelector("td")).toHaveTextContent("159");
+        await user.clear(screen.getByRole("combobox", { name: "Item" }));
+        await user.type(screen.getByRole("combobox", { name: "Item" }), "No Item{Enter}");
+        expect(screen.getByRole("article", { name: `${name} spread` })).toBeInTheDocument();
+        expect(spAtk.querySelector("td")).toHaveTextContent("80");
+    });
+
+    it("displays an existing Orb-holding spread as Origin without creating a draft", () =>
+    {
+        const catalog = createCatalog();
+        catalog.species.SPECIES_DIALGA = { ...catalog.species.SPECIES_GARCHOMP, name: "Dialga" };
+        catalog.species.SPECIES_DIALGA_ORIGIN = { ...catalog.species.SPECIES_CHARIZARD_MEGA_Y, name: "Dialga Origin" };
+        const actions = { updateSpread: vi.fn(), setEditing: vi.fn() };
+        const fields = createFields({ species: "SPECIES_DIALGA", item: "ITEM_ADAMANT_ORB" });
+        render(<ThemeProvider theme={APP_THEME}><SpreadCard entry={createSpreads().entries[2]} fields={fields}
+            set={createSpreads().sets[0]} catalog={catalog} teamTypes={[]} preview={PREVIEW} problems={[]} actions={actions} /></ThemeProvider>);
+        expect(screen.getByRole("heading", { name: "Dialga Origin" })).toBeInTheDocument();
+        expect(actions.updateSpread).not.toHaveBeenCalled();
+        expect(fields.species).toBe("SPECIES_DIALGA");
+    });
+
+    it.each([false, true])("shows effective Raid Rush BST only outside editing=%s", async (editing) =>
+    {
+        const fields = createFields({ item: "ITEM_NONE", moves: ["MOVE_FLAMETHROWER", "MOVE_PROTECT", 0, 0] });
+        const { card, user } = renderCard({ fields, editing, set: { ...createSpreads().sets[0], category: "raidRush" } });
+        const attack = within(card).getByRole("rowheader", { name: /^Attack/ }).closest("tr").querySelector("td");
+        const total = within(card).getByRole("rowheader", { name: "Total" }).closest("tr").querySelector("td");
+        expect(attack.querySelector("s") != null).toBe(!editing);
+        expect(total.querySelector("em") != null).toBe(!editing);
+        expect(total).toHaveTextContent(editing ? "534" : "450");
+        if (!editing)
+        {
+            await user.hover(total.querySelector("em"));
+            expect(await screen.findByRole("tooltip")).toHaveTextContent("Original BST: 534");
+        }
+    });
+
+    it("does not reduce Raid Rush BST when both offensive stats are used", () =>
+    {
+        const { card } = renderCard({ fields: createFields({ item: "ITEM_NONE", moves: ["MOVE_FLAMETHROWER", "MOVE_DRAGONCLAW", 0, 0] }),
+            set: { ...createSpreads().sets[0], category: "raidRush" } });
+        expect(card.querySelector(".spread-stats s")).toBeNull();
+        expect(card.querySelector(".spread-stats em")).toBeNull();
+    });
+
     it("omits change indicators in editing", () =>
     {
         const entry = createSpreads().entries[2];

@@ -229,6 +229,26 @@ describe("Game data parser", () =>
 
 describe("Learnsets", () =>
 {
+    it("should give all Terapagos forms the base learnset and completeness", () =>
+    {
+        const forms = ["SPECIES_TERAPAGOS", "SPECIES_TERAPAGOS_TERASTAL", "SPECIES_TERAPAGOS_STELLAR"];
+        const dpe = parseDpeSources(getDpeSources());
+        const species = Object.fromEntries(forms.map((target) => [target, { types: ["TYPE_NORMAL"], dex: "NATIONAL_DEX_TERAPAGOS" }]));
+        dpe.levelUp.SPECIES_TERAPAGOS = [{ move: "MOVE_TACKLE", level: 1 }];
+        dpe.eggMoves.SPECIES_TERAPAGOS = ["MOVE_BITE"];
+        dpe.tmCompatibility.push({ file: "1.txt", number: 1, moveName: null, species: ["SPECIES_TERAPAGOS"] });
+        dpe.tutorCompatibility.push({ file: "1.txt", number: 1, moveName: null, species: ["SPECIES_TERAPAGOS"] });
+        const options = { dpe, species, moveNames: {}, gameMoves: ["MOVE_TACKLE", "MOVE_BITE", "MOVE_FOCUSPUNCH", "MOVE_MEGAPUNCH"], cfruMacros: new Map() };
+        const { learnsets } = buildLearnsets(options);
+        for (const target of forms)
+            expect(learnsets[target]).to.deep.equal(learnsets.SPECIES_TERAPAGOS);
+        expect(learnsets.SPECIES_TERAPAGOS_STELLAR.status).to.equal("complete");
+        delete dpe.levelUp.SPECIES_TERAPAGOS;
+        const missing = buildLearnsets(options).learnsets;
+        for (const target of forms)
+            expect(missing[target]).to.deep.equal(missing.SPECIES_TERAPAGOS);
+    });
+
     it("should allow real-layout Minior TM and tutor names on Shield and every core", () =>
     {
         const dpe = parseDpeSources(getDpeSources(createMiniorDpeFiles()));

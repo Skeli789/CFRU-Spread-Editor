@@ -1028,6 +1028,39 @@ describe("Spread editor", () =>
         expect(calls.find((call) => call.route.endsWith("/save")).body.operations).toEqual([{ type: "delete", entryId: "e0" }]);
     });
 
+    test.each(["Reset IVs", "IVs", "All"])("uses Max Move attacking stats for Raid Rush %s", async (action) =>
+    {
+        const spreads = createSpreads();
+        spreads.sets[0].category = "raidRush";
+        spreads.entries[0].fields = createFields({ moves: ["MOVE_FOULPLAY", "MOVE_SONICBOOM", 0, 0], atkIv: 0, spAtkIv: 0 });
+        const catalog = createCatalog();
+        catalog.moves.MOVE_FOULPLAY = { ...catalog.moves.MOVE_DRAGONCLAW, name: "Foul Play" };
+        catalog.moves.MOVE_SONICBOOM = { ...catalog.moves.MOVE_FLAMETHROWER, name: "Sonicboom", power: 1, effect: "EFFECT_SONICBOOM" };
+        catalog.learnsets.SPECIES_CHARIZARD.moves.MOVE_FOULPLAY = ["level"];
+        catalog.learnsets.SPECIES_CHARIZARD.moves.MOVE_SONICBOOM = ["level"];
+        const { user } = await openEditor({ "/workspaces/load": () => createWorkspace("workspace-1", spreads), [CATALOG_ROUTE]: () => catalog });
+        if (action === "Reset IVs")
+        {
+            const card = await editCard(user, "Charizard");
+            await user.click(within(card).getByRole("button", { name: "Reset IVs" }));
+            expect(within(card).getByLabelText("Charizard Attack IV")).toHaveValue("31");
+            expect(within(card).getByLabelText("Charizard Sp. Atk IV")).toHaveValue("31");
+            await closeEditDialog(user, "Done");
+        }
+        else
+        {
+            await user.click(screen.getByRole("button", { name: "Auto-Fix" }));
+            const dialog = await screen.findByRole("dialog", { name: "Auto-Fix Spreads" });
+            if (action === "IVs")
+                await user.click(within(dialog).getByRole("tab", { name: /^IVs/ }));
+            expect(within(dialog).getByText("Raising Atk IV 0 to 31")).toBeInTheDocument();
+            expect(within(dialog).getByText("Raising SpA IV 0 to 31")).toBeInTheDocument();
+            await user.click(within(dialog).getByRole("button", { name: `Apply ${action}` }));
+        }
+        const drafts = JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY)).drafts;
+        expect(drafts.e0).toMatchObject({ atkIv: 31, spAtkIv: 31, moves: ["MOVE_FOULPLAY", "MOVE_SONICBOOM", 0, 0] });
+    });
+
     test("previews the IV auto-fix for every matching spread before applying it", async () =>
     {
         const { user } = await openEditor();

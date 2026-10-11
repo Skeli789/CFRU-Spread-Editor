@@ -15,7 +15,7 @@ import
     GROUP_MOVE_PREFIX, getMovedIds, getMovedSpreadIds, getSavedOrder, hasOrderChange, insertSpread, restoreGroupPosition,
     restoreSpreadInGroup,
 } from "../shared/spread-layout.mjs";
-import { BATTLE_TYPES, compactMoves, getBattleType, getChangedFields, isSpreadChanged, setMove, validateSpreadFields } from "../shared/spread-model.mjs";
+import { BATTLE_TYPES, RAID_RUSH_CATEGORY, SPECIES_TERAPAGOS_STELLAR, STELLAR_SET_REASON, compactMoves, getBattleType, getChangedFields, isSpreadChanged, setMove, validateSpreadFields } from "../shared/spread-model.mjs";
 import { config } from "./components/ServerConfig";
 import { getLearnableMoveOptions } from "./subcomponents/MovePicker";
 
@@ -315,6 +315,8 @@ function restoreDrafts(state, stored)
     const newEntries = Object.fromEntries(Object.entries(stored.newEntries ?? {}).filter(([id, entry]) =>
         /^new-[A-Za-z0-9_-]{1,59}$/.test(id) && entry?.id === id && state.spreadIndex.sets.get(entry.setId)?.canInsert
         && state.catalog?.species?.[entry.fields?.species] && Array.isArray(stored.drafts?.[id]?.moves)
+        && ((stored.drafts?.[id] ?? entry.fields)?.species !== SPECIES_TERAPAGOS_STELLAR
+            || state.spreadIndex.sets.get(entry.setId)?.category === RAID_RUSH_CATEGORY)
         && (entry.movedFrom == null || deleted.has(entry.movedFrom))));
     const spreadIndex = { ...state.spreadIndex, entries: new Map([...state.spreadIndex.entries, ...Object.entries(newEntries)]) };
     const drafts = {};
@@ -526,6 +528,8 @@ export function getTransferProblem(state, id, setId)
         return "The spread is already in this set.";
     if (!entry.editable)
         return "This spread's source cannot be changed safely.";
+    if ((state.drafts[id] ?? entry.fields).species === SPECIES_TERAPAGOS_STELLAR && target.category !== RAID_RUSH_CATEGORY)
+        return STELLAR_SET_REASON;
 
     // Coming back to the set it was saved in needs no new spread
     const original = state.spreadIndex.entries.get(entry.movedFrom);
@@ -798,7 +802,8 @@ function reducer(state, action)
         case ACTION.ADD_SPREAD:
         {
             const set = state.spreadIndex.sets.get(action.setId);
-            const spreads = action.spreads.filter(({ fields }) => state.catalog?.species?.[fields.species]);
+            const spreads = action.spreads.filter(({ fields }) => state.catalog?.species?.[fields.species]
+                && (fields.species !== SPECIES_TERAPAGOS_STELLAR || set?.category === RAID_RUSH_CATEGORY));
             if (!set?.canInsert || spreads.length === 0)
                 return state;
 
@@ -1775,7 +1780,8 @@ export const SpreadEditorProvider = ({ children }) =>
         loadSmogonSets,
         addSpreads: (setId, fieldsList, { edit = false } = {}) =>
         {
-            const spreads = fieldsList.map((fields) =>
+            const target = stateRef.current.spreadIndex.sets.get(setId);
+            const spreads = fieldsList.filter((fields) => fields.species !== SPECIES_TERAPAGOS_STELLAR || target?.category === RAID_RUSH_CATEGORY).map((fields) =>
             {
                 do
                     newEntryCounter.current++;

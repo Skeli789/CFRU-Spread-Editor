@@ -7,11 +7,14 @@
 import { LEGALITY, getMoveLegality } from "./catalog.mjs";
 import
 {
-    EV_FIELDS, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV, MOVE_HIDDEN_POWER, STATS, getAbilityOptions, getEvTotal, getIvAutoFix,
+    EV_FIELDS, IV_FIELDS, MAX_EV, MAX_EV_TOTAL, MAX_IV, MOVE_HIDDEN_POWER, STATS, getAbilityOptions, getEvTotal, getIvAutoFix, getStoredItemSpecies,
     optimizeHiddenPowerIvs,
 } from "./pokemon-mechanics.mjs";
 
 export const MAX_MOVES = 4;
+export const RAID_RUSH_CATEGORY = "raidRush";
+export const SPECIES_TERAPAGOS_STELLAR = "SPECIES_TERAPAGOS_STELLAR";
+export const STELLAR_SET_REASON = "Terapagos Stellar is only available in Raid Rush.";
 const EMPTY_MOVE = 0;
 const MOVE_NONE = "MOVE_NONE";
 
@@ -144,6 +147,20 @@ export function setFieldSymbol(fields, name, symbol, saved = fields)
 }
 
 /**
+ * Changes the held item and its available Origin form while preserving omitted item values.
+ * @param {object} catalog The selected game's catalog.
+ * @param {object} fields The current spread fields.
+ * @param {string} item The selected item constant.
+ * @param {object} [saved] The saved spread fields.
+ * @returns {object} The updated item and species fields.
+ */
+export function setHeldItem(catalog, fields, item, saved = fields)
+{
+    const changed = setFieldSymbol(fields, "item", item, saved);
+    return { ...changed, species: getStoredItemSpecies(catalog, changed) };
+}
+
+/**
  * Returns the doubles team type a spread needs a teammate for. An omitted value is the first type, which
  * needs nothing.
  *
@@ -266,15 +283,17 @@ export function setIv(fields, stat, value)
  * @param {number} slot The move slot, 0 to 3.
  * @param {string|number|null} move The MOVE_* constant, or 0 or null to empty the slot.
  * @param {string|null} [hiddenPowerType] The TYPE_* constant chosen for Hidden Power.
+ * @param {object|null} [catalog] The game catalog for resolving move-dependent species forms.
  * @returns {object} The new values.
  */
-export function setMove(fields, slot, move, hiddenPowerType = null)
+export function setMove(fields, slot, move, hiddenPowerType = null, catalog = null)
 {
     const moves = [...fields.moves];
     moves[slot] = move ?? EMPTY_MOVE;
 
     const ivs = move === MOVE_HIDDEN_POWER && hiddenPowerType != null ? optimizeHiddenPowerIvs(fields, hiddenPowerType) : null;
-    return { ...fields, ...ivs, moves };
+    const changed = { ...fields, ...ivs, moves };
+    return catalog == null ? changed : { ...changed, species: getStoredItemSpecies(catalog, changed) };
 }
 
 /**
@@ -344,16 +363,17 @@ export function getEvAutoFix(fields)
  * @param {object} catalog The game catalog.
  * @param {object} fields The spread's values.
  * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
+ * @param {boolean} [raidRush=false] Whether damaging moves use their Max Move category.
  * @returns {{fields: object, cappedIvs: Array<string>, removedMoves: Array<{move: string, reason: string}>,
  *          compacted: boolean, ivFix: object, evFix: object, categoryFields: object, categoryIvFix: object}}
  *          The combined changes and independent category changes, with IV-only fixes based on current moves.
  */
-export function getSpreadAutoFix(catalog, fields, teamTypes = [])
+export function getSpreadAutoFix(catalog, fields, teamTypes = [], raidRush = false)
 {
     const cappedIvs = Object.values(IV_FIELDS).filter((key) => Number.isInteger(fields[key]) && fields[key] > MAX_IV);
     const evFix = getEvAutoFix(fields);
     const cappedFields = Object.fromEntries(cappedIvs.map((key) => [key, MAX_IV]));
-    const categoryIvFix = getIvAutoFix(catalog, { ...fields, ...cappedFields }, teamTypes);
+    const categoryIvFix = getIvAutoFix(catalog, { ...fields, ...cappedFields }, teamTypes, raidRush);
     const categoryFields =
     {
         [AUTO_FIX_CATEGORY.IVS]: getChangedFields({ ...fields, ...cappedFields, ...categoryIvFix.changes }, fields),
@@ -378,7 +398,7 @@ export function getSpreadAutoFix(catalog, fields, teamTypes = [])
     const compacted = next.moves !== moves;
     categoryFields[AUTO_FIX_CATEGORY.MOVES] = getChangedFields({ ...fields, moves: next.moves }, fields);
 
-    const ivFix = getIvAutoFix(catalog, next, teamTypes);
+    const ivFix = getIvAutoFix(catalog, next, teamTypes, raidRush);
     next = { ...next, ...ivFix.changes };
     return { fields: getChangedFields(next, fields), cappedIvs, removedMoves, compacted, ivFix, evFix, categoryFields, categoryIvFix };
 }
@@ -387,7 +407,7 @@ export function getSpreadAutoFix(catalog, fields, teamTypes = [])
  * Works out the auto-fix for many spreads, such as every filtered spread, so it can be previewed first.
  *
  * @param {object} catalog The game catalog.
- * @param {Array<{id: string, fields: object, placeholder?: boolean}>} spreads The spreads.
+ * @param {Array<{id: string, fields: object, placeholder?: boolean, raidRush?: boolean}>} spreads The spreads and their battle context.
  * @param {string} [category] The category to apply, or all for the combined fix.
  * @param {Array<{name: string, value: number|null}>} [teamTypes=[]] The snapshot's resolved team enum.
  * @returns {{changes: Array<object>, skipped: Array<{id: string, stats: Array<string>}>}} The spreads that change,
@@ -398,12 +418,12 @@ export function planSpreadAutoFix(catalog, spreads, category = AUTO_FIX_CATEGORY
 {
     const changes = [];
     const skipped = [];
-    for (const { id, fields, placeholder } of spreads)
+    for (const { id, fields, placeholder, raidRush = false } of spreads)
     {
         if (placeholder)
             continue;
 
-        const fix = getSpreadAutoFix(catalog, fields, teamTypes);
+        const fix = getSpreadAutoFix(catalog, fields, teamTypes, raidRush);
         if (category !== AUTO_FIX_CATEGORY.ALL)
         {
             fix.fields = fix.categoryFields[category];

@@ -78,6 +78,41 @@ function renderFixtureGrid(overrides = {})
 
 describe("Spread grid movement and section endings", () =>
 {
+    test("ranks all Raid Rush spreads across species without changing source order", async () =>
+    {
+        const user = userEvent.setup();
+        const spreads = ["a", "b", "c", "d"].map((id, index) => ({ id, setId: "raid", species: index % 2 ? "SPECIAL" : "PHYSICAL" }));
+        const totals = { a: 400, b: 600, c: 500, d: 500 };
+        const { container, onOrder } = renderFixtureGrid({ spreads, sets: new Map([["raid", { id: "raid", category: "raidRush", entryIds: spreads.map(({ id }) => id) }]]),
+            getEffectiveBst: (id) => totals[id], onAdd: null });
+        expect([...container.querySelectorAll(".movable-spread")].map((node) => node.textContent)).toEqual(["a", "c", "b", "d"]);
+        await user.click(screen.getByRole("switch", { name: "Sort Effective BST" }));
+        expect([...container.querySelectorAll(".spread-ranked-card")].map((node) => node.textContent)).toEqual(["a", "c", "d", "b"]);
+        expect(onOrder).not.toHaveBeenCalled();
+        await user.click(screen.getByRole("switch", { name: "Sort Effective BST" }));
+        expect([...container.querySelectorAll(".movable-spread")].map((node) => node.textContent)).toEqual(["a", "c", "b", "d"]);
+    });
+
+    test("does not offer effective BST sorting for ordinary sets", () =>
+    {
+        renderFixtureGrid({ getEffectiveBst: () => 500 });
+        expect(screen.queryByRole("switch", { name: "Sort Effective BST" })).not.toBeInTheDocument();
+    });
+
+    test("sorts beyond the current page and puts missing BST last", async () =>
+    {
+        const user = userEvent.setup();
+        const spreads = Array.from({ length: PAGE_SIZE + 3 }, (_, index) => ({ id: `rank-${index}`, species: TEST_SPECIES, setId: "raid" }));
+        const { container } = renderFixtureGrid({ spreads, sets: new Map([["raid", { id: "raid", category: "raidRush", entryIds: spreads.map(({ id }) => id) }]]),
+            getEffectiveBst: (id) => id === "rank-0" ? null : Number(id.split("-")[1]), onAdd: null });
+        await user.click(screen.getByRole("switch", { name: "Sort Effective BST" }));
+        expect(container.querySelector(".spread-ranked-card")).toHaveTextContent("rank-1");
+        expect(container.querySelectorAll(".spread-ranked-card")).toHaveLength(PAGE_SIZE);
+        await user.click(screen.getAllByRole("button", { name: "Go to next page" })[0]);
+        expect([...container.querySelectorAll(".spread-ranked-card")].map((node) => node.textContent)).toEqual(["rank-13", "rank-14", "rank-0"]);
+        expect(screen.getByRole("switch", { name: "Sort Effective BST" })).toBeChecked();
+    });
+
     /**
      * Unmounts the grid and restores its measured width.
      * @returns {void} Nothing.

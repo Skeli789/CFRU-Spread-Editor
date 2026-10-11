@@ -4,18 +4,59 @@ import { createZygardeCatalog } from "./EditorFixtures";
 import
 {
     DEFAULT_PREVIEW_LEVEL, HIDDEN_POWER_TYPES, LITTLE_CUP_LEVEL, MOVE_HIDDEN_POWER, STAT_USE, calculateSpreadStats,
-    calculateStats, getAbilityLabel, getAbilityOptions, getEffectiveAbility, getHiddenPowerType, getIvAutoFix,
+    calculateStats, getAbilityLabel, getAbilityOptions, getEffectiveAbility, getEffectiveBaseStatTotal, getSpreadStatUse, getHiddenPowerType, getIvAutoFix,
     getMaxEv, getMegaAbility, getMegaSpecies, getMoveStatUse, getNatureEffect, getResetIvs, getSpreadLevel, optimizeHiddenPowerIvs, planIvAutoFix,
-    isSlowSpeedSpread, stepEv,
+    getItemSpecies, isSlowSpeedSpread, stepEv,
 } from "../../shared/pokemon-mechanics.mjs";
 import
 {
     BATTLE_TYPES, applyBattleType, changeBattleType, createNewSpreadFields, getBattleType, getChangedFields, getFieldSymbol, getTeamType, getTeamTypeLabel,
-    isSpreadChanged, setEv, setFieldSymbol, setIv, setMove, setTeamType, validateSpreadFields,
+    isSpreadChanged, setEv, setFieldSymbol, setHeldItem, setIv, setMove, setTeamType, validateSpreadFields,
 } from "../../shared/spread-model.mjs";
 
 const UP = 1;
 const DOWN = -1;
+describe("Raid Rush offensive IVs", () =>
+{
+    it("counts other-stat and fixed-damage attacks only as Max Moves", () =>
+    {
+        const fields = createFields({ moves: ["MOVE_FOULPLAY", "MOVE_NATURESMADNESS", 0, 0], atkIv: 0, spAtkIv: 0 });
+        expect(getIvAutoFix(CATALOG, fields).changes).toEqual({});
+        expect(getIvAutoFix(CATALOG, fields, [], true).changes).toEqual({ atkIv: 31, spAtkIv: 31 });
+        expect(getResetIvs(CATALOG, fields)).toMatchObject({ atkIv: 0, spAtkIv: 0 });
+        expect(getResetIvs(CATALOG, fields, [], true)).toMatchObject({ atkIv: 31, spAtkIv: 31 });
+    });
+
+    it("excludes only known unused attacks from effective BST", () =>
+    {
+        expect(getEffectiveBaseStatTotal(GARCHOMP_STATS, getSpreadStatUse(CATALOG, ["MOVE_EARTHQUAKE"], true))).toBe(520);
+        expect(getEffectiveBaseStatTotal(GARCHOMP_STATS, getSpreadStatUse(CATALOG, ["MOVE_PROTECT", 0], true))).toBe(390);
+        expect(getEffectiveBaseStatTotal(GARCHOMP_STATS, getSpreadStatUse(CATALOG, ["MOVE_UNKNOWN"], true))).toBe(600);
+        expect(getEffectiveBaseStatTotal(null, { atk: STAT_USE.UNUSED, spAtk: STAT_USE.UNUSED })).toBeNull();
+    });
+
+    it("weights included Attack by 1.4 for Huge Power only", () =>
+    {
+        const physical = getSpreadStatUse(CATALOG, ["MOVE_EARTHQUAKE"], true);
+        const special = getSpreadStatUse(CATALOG, ["MOVE_FLAMETHROWER"], true);
+        expect(getEffectiveBaseStatTotal(GARCHOMP_STATS, physical, "ABILITY_HUGEPOWER")).toBe(572);
+        expect(getEffectiveBaseStatTotal(GARCHOMP_STATS, physical, "ABILITY_PUREPOWER")).toBe(520);
+        expect(getEffectiveBaseStatTotal(GARCHOMP_STATS, special, "ABILITY_HUGEPOWER")).toBe(470);
+        expect(getEffectiveBaseStatTotal({ ...GARCHOMP_STATS, atk: 83 }, physical, "ABILITY_HUGEPOWER")).toBe(506.2);
+    });
+
+    it.each(HIDDEN_POWER_TYPES)("preserves %s while maximizing Max Move attacks", (type) =>
+    {
+        const fields = { ...createFields({ moves: ["MOVE_FOULPLAY", "MOVE_HIDDENPOWER", 0, 0], atkIv: 0, spAtkIv: 0 }),
+            ...optimizeHiddenPowerIvs(createFields({ atkIv: 0, spAtkIv: 0 }), type) };
+        const fixed = { ...fields, ...getIvAutoFix(CATALOG, fields, [], true).changes };
+        const reset = getResetIvs(CATALOG, fields, [], true);
+        expect(getHiddenPowerType(fixed)).toBe(type);
+        expect(getHiddenPowerType(reset)).toBe(type);
+        expect(fixed.atkIv).toBeGreaterThanOrEqual(30);
+        expect(fixed.spAtkIv).toBeGreaterThanOrEqual(30);
+    });
+});
 const IV_KEYS = ["hpIv", "atkIv", "defIv", "spdIv", "spAtkIv", "spDefIv"];
 const GARCHOMP_STATS = { hp: 108, atk: 130, def: 95, spAtk: 80, spDef: 85, spd: 102 };
 const CHARIZARD_STATS = { hp: 78, atk: 84, def: 78, spAtk: 109, spDef: 85, spd: 100 };
@@ -123,6 +164,86 @@ function showdownIvs([hpIv, atkIv, defIv, spAtkIv, spDefIv, spdIv])
 
 describe("Final stats", () =>
 {
+    it.each([0, 1, 2, 3])("resolves Keldeo from Secret Sword in slot %s", (slot) =>
+    {
+        const catalog = { ...CATALOG, species: { ...CATALOG.species,
+            SPECIES_KELDEO: { baseStats: GARCHOMP_STATS, megas: [] },
+            SPECIES_KELDEO_RESOLUTE: { baseStats: GARCHOMP_STATS, megas: [] } } };
+        const fields = createFields({ species: "SPECIES_KELDEO", moves: [0, 0, 0, 0] });
+        const changed = setMove(fields, slot, "MOVE_SECRETSWORD", null, catalog);
+        expect(changed).toEqual({ ...fields, species: "SPECIES_KELDEO_RESOLUTE", moves: fields.moves.map((move, index) => index === slot ? "MOVE_SECRETSWORD" : move) });
+        expect(calculateSpreadStats(catalog, { ...changed, species: fields.species }, { level: 50 }).species).toBe("SPECIES_KELDEO_RESOLUTE");
+        expect(setMove(changed, slot, null, null, catalog)).toEqual(fields);
+        const duplicate = setMove(changed, (slot + 1) % 4, "MOVE_SECRETSWORD", null, catalog);
+        expect(setMove(duplicate, slot, "MOVE_PROTECT", null, catalog).species).toBe("SPECIES_KELDEO_RESOLUTE");
+        delete catalog.species.SPECIES_KELDEO_RESOLUTE;
+        expect(setMove(fields, slot, "MOVE_SECRETSWORD", null, catalog).species).toBe("SPECIES_KELDEO");
+        expect(fields.moves).toEqual([0, 0, 0, 0]);
+    });
+
+    it.each([
+        ["SPECIES_ZACIAN", "SPECIES_ZACIAN_CROWNED", "ITEM_RUSTED_SWORD"],
+        ["SPECIES_ZAMAZENTA", "SPECIES_ZAMAZENTA_CROWNED", "ITEM_RUSTED_SHIELD"],
+    ])("previews %s in its item-dependent Crowned form", (species, crowned, item) =>
+    {
+        const catalog = { ...CATALOG, species: { ...CATALOG.species,
+            [species]: { baseStats: GARCHOMP_STATS, megas: [] }, [crowned]: { baseStats: MEGA_Y_STATS, megas: [] } } };
+        const fields = createFields({ species, item });
+        expect(getItemSpecies(catalog, fields)).toBe(crowned);
+        expect(calculateSpreadStats(catalog, fields, { level: 100 }).species).toBe(crowned);
+        expect(getItemSpecies(catalog, { ...fields, item: "ITEM_NONE" })).toBe(species);
+        expect(fields.species).toBe(species);
+    });
+
+    it.each(["SPECIES_ZACIAN", "SPECIES_ZAMAZENTA", "SPECIES_TERAPAGOS"])("never stores a battle-only form when editing %s", (species) =>
+    {
+        const catalog = { ...CATALOG, species: { ...CATALOG.species, [species]: { baseStats: GARCHOMP_STATS, megas: [] },
+            [`${species}_CROWNED`]: { baseStats: MEGA_Y_STATS, megas: [] }, SPECIES_TERAPAGOS_TERASTAL: { baseStats: MEGA_Y_STATS, megas: [] } } };
+        const fields = createFields({ species });
+        expect(setHeldItem(catalog, fields, "ITEM_RUSTED_SWORD", fields).species).toBe(species);
+        expect(setHeldItem(catalog, fields, "ITEM_RUSTED_SHIELD", fields).species).toBe(species);
+        expect(setMove(fields, 0, "MOVE_TACKLE", null, catalog).species).toBe(species);
+    });
+
+    it.each(["SPECIES_TERAPAGOS", "SPECIES_TERAPAGOS_TERASTAL", "SPECIES_TERAPAGOS_STELLAR"])("preserves Stellar and previews ordinary %s as Terastal", (species) =>
+    {
+        const catalog = { ...CATALOG, species: { ...CATALOG.species,
+            [species]: { baseStats: GARCHOMP_STATS, megas: [] }, SPECIES_TERAPAGOS_TERASTAL: { baseStats: MEGA_Y_STATS, megas: [] } } };
+        const fields = createFields({ species });
+        const expected = species === "SPECIES_TERAPAGOS_STELLAR" ? species : "SPECIES_TERAPAGOS_TERASTAL";
+        expect(getItemSpecies(catalog, fields)).toBe(expected);
+        expect(calculateSpreadStats(catalog, fields, { level: 100 }).species).toBe(expected);
+        expect(fields.species).toBe(species);
+    });
+
+    it.each(
+    [
+        ["SPECIES_DIALGA", "ITEM_ADAMANT_ORB"],
+        ["SPECIES_PALKIA", "ITEM_LUSTROUS_ORB"],
+        ["SPECIES_GIRATINA", "ITEM_GRISEOUS_ORB"],
+    ])("uses item-dependent Origin forms for %s", (species, item) =>
+    {
+        const origin = `${species}_ORIGIN`;
+        const catalog = { ...CATALOG, species: { ...CATALOG.species,
+            [species]: { baseStats: GARCHOMP_STATS, megas: [] }, [origin]: { baseStats: MEGA_Y_STATS, megas: [] } } };
+        const fields = createFields({ species, item: 0 });
+        const changed = setHeldItem(catalog, fields, item, fields);
+        expect(changed).toEqual({ ...fields, species: origin, item });
+        expect(setHeldItem(catalog, changed, "ITEM_NONE", fields)).toEqual(fields);
+        expect(setHeldItem(catalog, changed, "ITEM_LEFTOVERS", fields)).toEqual({ ...fields, item: "ITEM_LEFTOVERS" });
+        expect(getItemSpecies(catalog, { ...fields, item: "ITEM_WRONG_ORB" })).toBe(species);
+        for (const mega of [true, false])
+        {
+            const stats = calculateSpreadStats(catalog, { ...fields, item }, { level: 100, mega });
+            expect(stats).toMatchObject({ species: origin, mega: false, stats: { spAtk: 354 } });
+            expect(calculateSpreadStats(catalog, { ...changed, item: 0 }, { level: 100, mega }).species).toBe(species);
+        }
+        delete catalog.species[origin];
+        expect(setHeldItem(catalog, fields, item).species).toBe(species);
+        expect(fields).toEqual(createFields({ species, item: 0 }));
+        expect(getItemSpecies(catalog, createFields({ item }))).toBe("SPECIES_GARCHOMP");
+    });
+
     it("match reference values at levels 50 and 100", () =>
     {
         const fields = createFields({ nature: "NATURE_ADAMANT", hpEv: 4, atkEv: 252, spdEv: 252 });
