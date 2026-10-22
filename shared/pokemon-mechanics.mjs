@@ -613,19 +613,23 @@ export function getSpreadStatUse(catalog, moves, raidRush = false)
 }
 
 /**
- * Sums known base stats, excluding attacking stats that no move uses.
+ * Sums known base stats, excluding attacking stats that no move uses. Raid Rush mixed attackers count only their higher offensive stat.
  * @param {object|null} baseStats The displayed species' base stats.
  * @param {{atk: string, spAtk: string}} uses The spread's offensive stat use.
  * @param {string|null} [ability=null] The displayed species' effective ability.
+ * @param {boolean} [raidRush=false] Whether to count only the higher used offensive stat when both are used.
  * @returns {number|null} The effective total, or null for incomplete base stats.
  */
-export function getEffectiveBaseStatTotal(baseStats, uses, ability = null)
+export function getEffectiveBaseStatTotal(baseStats, uses, ability = null, raidRush = false)
 {
     if (!STATS.every((stat) => baseStats?.[stat] != null))
         return null;
+    const excludedRaidRushStat = raidRush && uses[STAT_ATK] === STAT_USE.USED && uses[STAT_SP_ATK] === STAT_USE.USED
+        ? baseStats[STAT_ATK] < baseStats[STAT_SP_ATK] ? STAT_ATK : STAT_SP_ATK
+        : null;
     return STATS.reduce((total, stat) =>
     {
-        if (uses[stat] === STAT_USE.UNUSED)
+        if (uses[stat] === STAT_USE.UNUSED || stat === excludedRaidRushStat)
             return total;
         return total + (stat === STAT_ATK && ability === ABILITY_HUGE_POWER ? baseStats[stat] * HUGE_POWER_ATTACK_PERCENT / PERCENT : baseStats[stat]);
     }, 0);

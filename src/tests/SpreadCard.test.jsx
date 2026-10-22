@@ -137,7 +137,7 @@ describe("Spread card", () =>
         expect(actions.updateSpread).not.toHaveBeenCalled();
     });
 
-    it.each([false, true])("weights Huge Power effective BST without changing raw stats, editing=%s", async (editing) =>
+    it.each([false, true])("uses the higher stat for mixed Raid Rush BST without changing raw stats, editing=%s", async (editing) =>
     {
         const catalog = createCatalog();
         catalog.species.SPECIES_CHARIZARD.abilities = [null, "ABILITY_HUGEPOWER", null];
@@ -145,10 +145,13 @@ describe("Spread card", () =>
         const fields = createFields({ item: "ITEM_NONE", ability: 1, moves: ["MOVE_DRAGONCLAW", "MOVE_FLAMETHROWER", 0, 0] });
         const { card, user } = renderCard({ catalog, fields, editing, set: { ...createSpreads().sets[0], category: "raidRush" } });
         const total = within(card).getByRole("rowheader", { name: "Total" }).closest("tr").querySelector("td");
-        expect(total).toHaveTextContent(editing ? "534" : "567.6");
+        expect(total).toHaveTextContent(editing ? "534" : "450");
         expect(within(card).getByRole("rowheader", { name: /^Attack/ }).closest("tr").querySelector("td")).toHaveTextContent("84");
         if (!editing)
         {
+            expect(within(card).getByRole("rowheader", { name: /^Attack/ }).closest("tr").querySelector("td").querySelector("s")).toBeNull();
+            expect(within(card).getByRole("rowheader", { name: /^Sp\. Atk/ }).closest("tr").querySelector("td").querySelector("s")).toBeNull();
+            expect(total.querySelector("em")).toHaveTextContent("450");
             await user.hover(total.querySelector("em"));
             expect(await screen.findByRole("tooltip")).toHaveTextContent("Original BST: 534");
         }
@@ -228,12 +231,12 @@ describe("Spread card", () =>
         }
     });
 
-    it("does not reduce Raid Rush BST when both offensive stats are used", () =>
+    it("keeps both offensive stats visible and adjusts Raid Rush BST when both are used", () =>
     {
         const { card } = renderCard({ fields: createFields({ item: "ITEM_NONE", moves: ["MOVE_FLAMETHROWER", "MOVE_DRAGONCLAW", 0, 0] }),
             set: { ...createSpreads().sets[0], category: "raidRush" } });
         expect(card.querySelector(".spread-stats s")).toBeNull();
-        expect(card.querySelector(".spread-stats em")).toBeNull();
+        expect(card.querySelector(".spread-stats em")).toHaveTextContent("450");
     });
 
     it("omits change indicators in editing", () =>

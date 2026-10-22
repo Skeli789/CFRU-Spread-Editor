@@ -241,7 +241,7 @@ const SpreadStats = ({ fields, preview, baseStats, littleCup, editing, onChange,
     const baseTotal = STATS.every((stat) => baseStats?.[stat] != null) ? STATS.reduce((sum, stat) => sum + baseStats[stat], 0) : null;
     const uses = raidRush && !editing && catalog != null ? getSpreadStatUse(catalog, fields.moves, true) : {};
     const ability = raidRush && !editing && catalog != null ? getEffectiveAbility(catalog.species[preview.species], fields.ability) : null;
-    const effectiveTotal = getEffectiveBaseStatTotal(baseStats, uses, ability);
+    const effectiveTotal = getEffectiveBaseStatTotal(baseStats, uses, ability, raidRush && !editing);
     const resetIvFields = editing && catalog != null ? getResetIvs(catalog, fields, teamTypes, raidRush) : null;
     const ivsAreReset = resetIvFields == null || STATS.every((stat) => fields[IV_FIELDS[stat]] === resetIvFields[IV_FIELDS[stat]]);
 

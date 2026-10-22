@@ -35,6 +35,14 @@ describe("Raid Rush offensive IVs", () =>
         expect(getEffectiveBaseStatTotal(null, { atk: STAT_USE.UNUSED, spAtk: STAT_USE.UNUSED })).toBeNull();
     });
 
+    it("counts only the higher offensive stat for mixed Raid Rush attacks", () =>
+    {
+        const mixed = getSpreadStatUse(CATALOG, ["MOVE_EARTHQUAKE", "MOVE_FLAMETHROWER"], true);
+        expect(getEffectiveBaseStatTotal(GARCHOMP_STATS, mixed)).toBe(600);
+        expect(getEffectiveBaseStatTotal(GARCHOMP_STATS, mixed, null, true)).toBe(520);
+        expect(getEffectiveBaseStatTotal(GARCHOMP_STATS, mixed, "ABILITY_HUGEPOWER", true)).toBe(572);
+    });
+
     it("weights included Attack by 1.4 for Huge Power only", () =>
     {
         const physical = getSpreadStatUse(CATALOG, ["MOVE_EARTHQUAKE"], true);

@@ -331,7 +331,7 @@ const SpreadEditorView = () =>
         const fields = drafts[id] ?? entry.fields;
         const stats = calculateSpreadStats(catalog, fields, { level: preview.level });
         const speciesInfo = catalog.species[stats.species];
-        return getEffectiveBaseStatTotal(speciesInfo?.baseStats, getSpreadStatUse(catalog, fields.moves, true), getEffectiveAbility(speciesInfo, fields.ability));
+        return getEffectiveBaseStatTotal(speciesInfo?.baseStats, getSpreadStatUse(catalog, fields.moves, true), getEffectiveAbility(speciesInfo, fields.ability), true);
     }, [spreadIndex, drafts, catalog, preview.level]);
 
     return (
